@@ -1,6 +1,6 @@
 // Jalankan: node smoke-test.mjs [provider] [kata-kunci]
 // Contoh : node smoke-test.mjs            (semua provider)
-//          node smoke-test.mjs softkomik "solo leveling"
+//          node smoke-test.mjs lumos "solo leveling"
 import scrapers from '../src/scrapers/index.js'
 
 const only = process.argv[2]

@@ -9,9 +9,8 @@
  *      route, cache, dan image proxy otomatis ikut.
  */
 import lumos from './lumos.js'
-import softkomik from './softkomik.js'
 
-const PROVIDERS = [lumos, softkomik]
+const PROVIDERS = [lumos]
 const METHODS = ['search', 'latest', 'popular', 'browse', 'genres', 'detail', 'chapter']
 
 const providers = new Map()

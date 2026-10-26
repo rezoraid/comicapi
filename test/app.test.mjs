@@ -129,6 +129,19 @@ test('image proxy: tolak host asing (anti-SSRF), non-gambar, url rusak', async (
   assert.equal((await fetch(`${api.url}/api/image`)).status, 400)
 })
 
+test('image proxy: redirect ke alamat internal ditolak, pesan menyebut host', async () => {
+  const redir = await listen((req, res) => {
+    res.writeHead(302, { location: `http://localhost:${img.port}/img/1.png` })
+    res.end()
+  })
+  const r = await fetch(`${api.url}/api/image?url=${encodeURIComponent(`http://127.0.0.1:${redir.port}/x.png`)}`)
+  const body = await r.json()
+  redir.server.close()
+  assert.equal(r.status, 403)
+  assert.equal(body.error.code, 'FORBIDDEN_HOST')
+  assert.match(body.error.message, /localhost/)
+})
+
 test('404 endpoint, 405 method, CORS preflight', async () => {
   assert.equal((await fetch(`${api.url}/tidak-ada`)).status, 404)
   assert.equal((await fetch(`${api.url}/api/sources`, { method: 'POST' })).status, 405)
@@ -169,4 +182,10 @@ test('cache: stale-if-error saat sumber down', async () => {
   })
   assert.deepEqual(r, { value: 'lama', state: 'STALE' })
   await assert.rejects(c.remember('lain', 1, async () => { throw new Error('down') }))
+})
+
+test('registry asli: cuma lumos', async () => {
+  const { default: real } = await import('../src/scrapers/index.js')
+  assert.deepEqual(real.list().map(x => x.id), ['lumos'])
+  assert.equal(real.has('softkomik'), false)
 })

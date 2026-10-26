@@ -1,3 +1,5 @@
+import dns from 'node:dns/promises'
+import net from 'node:net'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { badRequest, HttpError } from './lib/errors.js'
@@ -27,10 +29,16 @@ export function imageProxy(registry) {
     try {
       target = parse(raw)
       for (let hop = 0; ; hop++) {
-        provider = registry.findByImageHost(target.hostname)
-        if (!provider) throw new HttpError(403, 'FORBIDDEN_HOST', 'Host gambar tidak diizinkan')
+        const known = registry.findByImageHost(target.hostname)
+        if (hop === 0) {
+          provider = known
+          if (!provider) throw new HttpError(403, 'FORBIDDEN_HOST', `Host gambar tidak diizinkan: ${target.hostname}`)
+        } else if (!known && !(await isPublicHost(target.hostname))) {
+          // redirect dari host sumber ke CDN lain boleh, asal bukan alamat internal
+          throw new HttpError(403, 'FORBIDDEN_HOST', `Redirect ke host tidak diizinkan: ${target.hostname}`)
+        }
 
-        upstream = await fetch(target, { headers: provider.imageHeaders, signal: ac.signal, redirect: 'manual' })
+        upstream = await fetch(target, { headers: (known || provider).imageHeaders, signal: ac.signal, redirect: 'manual' })
         if (upstream.status >= 300 && upstream.status < 400 && upstream.headers.get('location')) {
           if (hop >= MAX_REDIRECTS) throw new HttpError(502, 'SOURCE_ERROR', 'Terlalu banyak redirect')
           target = parse(new URL(upstream.headers.get('location'), target).href)
@@ -88,4 +96,30 @@ function parse(raw) {
   }
   if (u.protocol !== 'https:' && u.protocol !== 'http:') throw badRequest('URL gambar tidak valid')
   return u
+}
+
+/** true kalau hostname me-resolve ke alamat publik saja (anti-SSRF untuk redirect). */
+async function isPublicHost(hostname) {
+  try {
+    const ips = net.isIP(hostname) ? [{ address: hostname }] : await dns.lookup(hostname, { all: true })
+    return ips.length > 0 && ips.every(a => isPublicIp(a.address))
+  } catch {
+    return false
+  }
+}
+
+function isPublicIp(ip) {
+  if (net.isIPv4(ip)) {
+    const [a, b] = ip.split('.').map(Number)
+    return !(
+      a === 0 || a === 10 || a === 127 || a >= 224 ||
+      (a === 100 && b >= 64 && b <= 127) ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168)
+    )
+  }
+  const v = ip.toLowerCase()
+  if (v.startsWith('::ffff:')) return isPublicIp(v.slice(7))
+  return !(v === '::' || v === '::1' || v.startsWith('fc') || v.startsWith('fd') || v.startsWith('fe8') || v.startsWith('fe9') || v.startsWith('fea') || v.startsWith('feb'))
 }

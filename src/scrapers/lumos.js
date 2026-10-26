@@ -120,8 +120,15 @@ export async function search(query, { limit = 10 } = {}) {
 }
 
 export async function latest({ page = 1 } = {}) {
-  const data = await http.get(`/api/home-latest?page=${page}`, { json: true, ttl: MIN })
-  return (data?.data?.items || []).map(i =>
+  let data = null
+  try {
+    data = await http.get(`/api/home-latest?page=${page}`, { json: true, ttl: MIN })
+  } catch {}
+  if (!(data?.data?.items || []).length) {
+    // API kosong → pakai halaman /all-series urut terbaru
+    return (await allSeries({ sort: 'latest', page })).items
+  }
+  return (data.data.items || []).map(i =>
     item({
       title: i.title,
       slug: i.slug,
@@ -134,6 +141,61 @@ export async function latest({ page = 1 } = {}) {
       }))
     })
   )
+}
+
+/**
+ * Halaman /all-series?sort=popular&page=N (urutan populer resmi situs).
+ * Parser dibuat toleran: kartu apa pun yang punya link /comic/<slug> dibaca,
+ * jadi tetap jalan walau nama class-nya berubah.
+ */
+export async function allSeries({ sort = 'popular', page = 1, type = '', status = '', genre = [] } = {}) {
+  const qs = new URLSearchParams()
+  if (sort) qs.set('sort', sort)
+  if (type) qs.set('type', type)
+  if (status) qs.set('status', status)
+  const g = [].concat(genre).filter(Boolean)
+  if (g.length) qs.set('genre', g.join(','))
+  qs.set('page', String(page))
+
+  const html = await http.get(`/all-series?${qs}`, { ttl: MIN })
+  readImgCfg(html)
+  const $ = cheerio.load(html)
+  const root = $('#main-content').length ? $('#main-content') : $('body')
+
+  const CARD = '.htg-card, article, li, [class*="card"], [class*="item"]'
+  const map = new Map()
+  root.find('a[href*="/comic/"]').each((_, a) => {
+    const $a = $(a)
+    const slug = slugOf($a.attr('href'))
+    if (!slug) return
+    // abaikan link di navbar/footer/sidebar populer
+    if ($a.closest('header, nav, footer').length) return
+    const $card = $a.closest(CARD).length ? $a.closest(CARD).first() : $a
+    const cur = map.get(slug) || { slug, title: '', cover: '', rating: null, type: '', status: '', chapterCount: null }
+
+    if (!cur.title) {
+      cur.title =
+        clean($card.find('h1,h2,h3,h4').first().text()) ||
+        clean($card.find('[class*="title"]').first().text()) ||
+        clean($a.attr('title')) ||
+        clean($card.find('img').first().attr('alt'))
+    }
+    if (!cur.cover) cur.cover = resolveImage(imgSrc($card.find('img').first()))
+    if (cur.rating == null) cur.rating = num($card.find('[class*="score"], [class*="rating"], [class*="star"]').first().text())
+    if (!cur.type) cur.type = (clean($card.text()).match(/\b(manga|manhwa|manhua|novel)\b/i) || [])[1]?.toLowerCase() || ''
+    if (!cur.status) cur.status = (clean($card.text()).match(/\b(ongoing|completed|hiatus)\b/i) || [])[1]?.toLowerCase() || ''
+    if (cur.chapterCount == null) cur.chapterCount = num(clean($card.find('span.font-medium').first().text())) || null
+    map.set(slug, cur)
+  })
+
+  const items = [...map.values()].filter(x => x.title || x.cover).map(x => item({ ...x, title: x.title || x.slug }))
+
+  let pages = 1
+  $('a[href*="page="]').each((_, a) => {
+    const m = String($(a).attr('href')).match(/[?&]page=(\d+)/)
+    if (m) pages = Math.max(pages, parseInt(m[1]))
+  })
+  return { items, page, pages: Math.max(pages, page), total: items.length }
 }
 
 /** period: 'weekly' | 'monthly' | 'alltime' (dari beranda) — selain itu pakai API trending */
@@ -158,8 +220,13 @@ export async function popular({ period = '', limit = 10 } = {}) {
     })
     return out.slice(0, limit)
   }
+  // utama: halaman resmi /all-series?sort=popular ; cadangan: API trending
+  try {
+    const { items } = await allSeries({ sort: 'popular', page: 1 })
+    if (items.length) return items.slice(0, limit)
+  } catch {}
   const data = await http.get(`/api/popular?tab=komik&period=all&perPage=${limit}`, { json: true, ttl: 5 * MIN })
-  return pickList(data).map(fromApi).filter(x => x.slug)
+  return pickList(data).map(fromApi).filter(x => x.slug).slice(0, limit)
 }
 
 export async function browse({ q = '', sort = '', status = '', type = '', genre = [], minChapters = '', page = 1 } = {}) {
@@ -372,6 +439,9 @@ export async function chapter(slug, chapterSlug) {
 }
 
 /* ───────────── provider export ───────────── */
+
+/** Kosongkan cache HTTP (dipakai test). */
+export const resetCache = () => http.clear()
 
 export default {
   id: 'lumos',

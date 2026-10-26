@@ -29,7 +29,7 @@ test('GET /playground: HTML, gzip, ETag/304, CSP', async () => {
   assert.match(r.headers.get('content-type'), /text\/html/)
   assert.equal(r.headers.get('content-encoding'), 'gzip')
   assert.match(r.headers.get('content-security-policy'), /frame-ancestors 'none'/)
-  assert.match(await r.text(), /comic-api/)
+  assert.match(await r.text(), /comic-api \/ playground/)
   const etag = r.headers.get('etag')
   assert.equal((await fetch(`${api.url}/playground`, { headers: { 'if-none-match': etag } })).status, 304)
 })
@@ -61,25 +61,47 @@ test('playground: JS jalan end-to-end terhadap server (DOM di-stub)', async () =
   })
   vm.runInContext(js, ctx)
 
-  // init: health + daftar sumber
-  for (let i = 0; i < 40 && !el('#srcs').innerHTML.includes('mock'); i++) await new Promise(r => setTimeout(r, 25))
+  for (let i = 0; i < 40 && !el('#src').innerHTML.includes('mock'); i++) await new Promise(r => setTimeout(r, 25))
   assert.match(el('#dot').className, /ok/)
-  assert.match(el('#srcs').innerHTML, /mock/)
+  assert.match(el('#src').innerHTML, /mock/)
   assert.match(el('#form').innerHTML, /data-k="q"/)
 
-  // execute (search) → preview berisi item
   await el('#run').onclick()
   assert.match(el('#res').innerHTML, /Komik 0/)
-  assert.match(el('#res').innerHTML, /class="badge ok">200/)
+  assert.match(el('#res').innerHTML, /class="st">200/)
 
-  // tes beruntun: search → ... → gambar via proxy, semua ✅
-  await el('#chain').onclick()
-  const out = el('#res').innerHTML
-  for (const step of ['search', 'latest', 'popular', 'browse', 'genres', 'detail', 'chapter', 'gambar (proxy)']) {
-    assert.ok(out.includes(`<td>${step}</td>`), `langkah ${step} tidak ada`)
-  }
-  assert.ok(!out.includes('❌'), 'ada langkah gagal:\n' + out.replace(/<[^>]+>/g, ' '))
-  assert.equal((out.match(/✅/g) || []).length, 8)
+  await el('#all').onclick()
+  const out = el('#tests').innerHTML
+  const steps = ['GET /health', 'GET /api/sources', 'GET /api/search (semua sumber)', 'validasi: tanpa q', 'validasi: sumber ngawur',
+    'search', 'latest', 'popular', 'browse', 'genres', 'detail', 'chapter', 'gambar (proxy)']
+  for (const step of steps) assert.ok(out.includes(`<td>${step}`), `langkah ${step} tidak ada`)
+  assert.ok(!out.includes('FAIL</td>'), 'ada langkah gagal:\n' + out.replace(/<[^>]+>/g, ' '))
+  assert.ok(!out.includes('SKIP</td>'), 'ada langkah dilewati')
+  assert.equal((out.match(/PASS<\/td>/g) || []).length, steps.length)
+  assert.match(out, /SEMUA LOLOS/)
+})
+
+test('playground: tes otomatis menandai FAIL kalau endpoint rusak', async () => {
+  const broken = { ...registry, get: id => ({ ...registry.get(id), genres: async () => [] }) }
+  const a = createApp({ registry: broken, config: loadConfig({ LOG_REQUESTS: 'false' }), logger: quiet })
+  const s = await listen(a.handler)
+  const html = readFileSync(new URL('../src/public/playground.html', import.meta.url), 'utf8')
+  const els = new Map()
+  const el = sel => (els.has(sel) || els.set(sel, { value: '', innerHTML: '', textContent: '', hidden: false, className: '', title: '', disabled: false, dataset: {} }), els.get(sel))
+  const ctx = vm.createContext({
+    document: { querySelector: el, querySelectorAll: () => [] },
+    localStorage: { getItem: () => null, setItem() {} },
+    location: { origin: s.url },
+    fetch, URL, URLSearchParams, performance, setTimeout, clearTimeout, console, JSON, Promise, Object, String, Number, Math, Error, Array
+  })
+  vm.runInContext(html.match(/<script>([\s\S]*)<\/script>/)[1], ctx)
+  for (let i = 0; i < 40 && !el('#src').innerHTML.includes('mock'); i++) await new Promise(r => setTimeout(r, 25))
+  await el('#all').onclick()
+  const out = el('#tests').innerHTML
+  assert.match(out, /ADA YANG GAGAL/)
+  assert.equal((out.match(/FAIL<\/td>/g) || []).length, 1)
+  s.server.close()
+  a.close()
 })
 
 test('playground: API key salah → pesan jelas', async () => {

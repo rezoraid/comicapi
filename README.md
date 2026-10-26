@@ -1,6 +1,6 @@
 # comic-api
 
-Server scraper komik untuk aplikasi (APK). Sumber saat ini: **lumos**, **softkomik**.
+Server scraper komik untuk aplikasi (APK). Sumber saat ini: **lumos**.
 Satu pintu API, semua sumber punya bentuk data yang sama.
 
 ## Jalankan
@@ -18,13 +18,16 @@ Butuh Node 20+. Dependensi cuma `cheerio`.
 ## Playground (halaman tes)
 
 Buka `http://localhost:3000/playground` (atau `https://server-kamu.com/playground`).
-Satu file HTML tanpa library (~24 KB, gzip ~7 KB), jalan di HP maupun desktop.
+Satu file HTML tanpa library, tampilan kotak polos, jalan di HP maupun desktop.
 
-- Pilih sumber + endpoint, isi parameter, **Execute** (atau Ctrl+Enter). Terlihat status, waktu (ms), ukuran, dan `x-cache`.
-- **Preview**: daftar komik + cover, detail + chapter, thumbnail gambar chapter (hijau = berhasil dimuat, merah = gagal). Klik item/chapter untuk lanjut ke langkah berikutnya. **JSON** untuk respons mentah.
-- **Tes 1 sumber / Tes semua sumber**: menjalankan search → latest → popular → browse → genres → detail → chapter → gambar (proxy) dan menampilkan ✅/❌ per langkah beserta waktunya. Semua sumber dites paralel.
-- Server URL & API key disimpan di browser (localStorage), tidak dikirim ke mana pun selain server kamu.
-- Matikan di production dengan env `PLAYGROUND=false`.
+1. **Tes otomatis**: klik **Tes semua endpoint**. Yang dites:
+   - Server: `/health`, `/api/sources`, `/api/search` (semua sumber), validasi `400` (tanpa `q`) dan `404` (sumber tidak ada).
+   - Tiap sumber: search → latest → popular → browse → genres → detail → chapter → gambar (proxy).
+   - Hasil per langkah `PASS` / `FAIL` / `SKIP` + waktu (ms) + keterangan, ringkasan di atas.
+2. **Coba manual**: pilih sumber + endpoint, isi parameter, **Execute** (atau Ctrl+Enter). Terlihat status, waktu, ukuran, `x-cache`. Preview (daftar, detail, thumbnail chapter) atau JSON mentah; klik item/chapter untuk lanjut.
+
+Server URL & API key disimpan di browser (localStorage), tidak dikirim ke mana pun selain server kamu.
+Matikan di production dengan env `PLAYGROUND=false`.
 
 ## Hosting
 
@@ -91,7 +94,6 @@ src/
   scrapers/
     index.js         registry — daftar sumber
     lumos.js
-    softkomik.js
     utils.js         HTTP client (retry, cache, dedupe)
 test/                tes server
 scripts/smoke-test.mjs   tes scraper ke situs asli
@@ -105,11 +107,3 @@ scripts/smoke-test.mjs   tes scraper ke situs asli
 2. Import dan tambahkan ke array `PROVIDERS` di `src/scrapers/index.js`.
 
 Route, cache, rate limit, pencarian gabungan, dan image proxy langsung ikut. Cek dengan `npm run smoke namabaru`.
-
-## Catatan SoftKomik
-
-Halaman detail & chapter SoftKomik mengirim datanya terenkripsi (`pageProps._stk`,
-AES CryptoJS format OpenSSL). Scraper otomatis mendekripsinya
-(`src/scrapers/softkomik-crypto.js`). Kalau suatu saat endpoint mendadak error
-"Gagal mendekripsi data SoftKomik", situs kemungkinan mengganti kuncinya — ambil
-nilai `NEXT_PUBLIC_ENCRYPTION_KEY` dari bundle JS situs dan set env `SOFTKOMIK_KEY`.
