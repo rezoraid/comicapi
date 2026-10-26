@@ -1,9 +1,7 @@
 import * as cheerio from 'cheerio'
 import { createHttp, clean, num, trackHost } from './utils.js'
 
-// komiku.id redirects to komiku.org; use the canonical host to avoid an
-// unnecessary redirect (and keep page, image, and referer URLs consistent).
-const BASE = 'https://komiku.org'
+const BASE = 'https://komiku.id'
 const API = 'https://api.komiku.org'
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
 
@@ -106,24 +104,18 @@ function parseCards($) {
 
 const hasNext = (items, $) => items.length >= 10 || $('a.next, .pagination .next, .hpage .r').length > 0
 
-/** Coba endpoint publik satu per satu sampai ada hasil yang bisa diparse. */
+/** Coba URL satu per satu (api.komiku.org dulu, lalu situs utama) sampai ada yang jalan. */
 async function list(paths, page, ttl = MIN) {
   let lastErr
-  let emptyResult
   for (const path of paths) {
     try {
       const $ = cheerio.load(await http.get(path, { ttl }))
       const items = parseCards($)
-      const result = { items, page, pages: hasNext(items, $) ? page + 1 : page, total: items.length }
-      // A successful HTTP response can still be an empty page or a changed
-      // template. Give the next public endpoint a chance before returning it.
-      if (items.length) return result
-      emptyResult ??= result
+      return { items, page, pages: hasNext(items, $) ? page + 1 : page, total: items.length }
     } catch (e) {
       lastErr = e
     }
   }
-  if (emptyResult) return emptyResult
   throw lastErr
 }
 
@@ -132,21 +124,13 @@ const pageSeg = page => (page > 1 ? `page/${page}/` : '')
 function typeListPaths(type, page, sort) {
   const order = sort === 'popular' ? 'meta_value_num' : 'modified'
   const q = `tipe=${encodeURIComponent(type)}&orderby=${order}`
-  return [
-    `${BASE}/daftar-komik/${pageSeg(page)}?${q}`,
-    `${API}/manga/${pageSeg(page)}?${q}`
-  ]
+  return [`${API}/manga/${pageSeg(page)}?${q}`, `${BASE}/daftar-komik/${pageSeg(page)}?tipe=${encodeURIComponent(type)}`]
 }
 
 /* ───────────── list endpoints ───────────── */
 
 export async function search(query, { limit = 10 } = {}) {
-  const q = encodeURIComponent(query)
-  const { items } = await list([
-    `${BASE}/?s=${q}&post_type=manga`,
-    `${BASE}/?s=${q}`,
-    `${API}/?post_type=manga&s=${q}`
-  ], 1)
+  const { items } = await list([`${API}/?post_type=manga&s=${encodeURIComponent(query)}`], 1)
   return items.slice(0, limit)
 }
 
@@ -159,10 +143,7 @@ export async function latest({ page = 1 } = {}) {
   ])
   const a = manga.status === 'fulfilled' ? manga.value.items : []
   const b = manhwa.status === 'fulfilled' ? manhwa.value.items : []
-  if (!a.length && !b.length) {
-    const failed = [manga, manhwa].find(r => r.status === 'rejected')
-    if (failed) throw failed.reason
-  }
+  if (!a.length && !b.length && manga.status === 'rejected') throw manga.reason
   const out = []
   for (let i = 0; i < Math.max(a.length, b.length); i++) {
     if (a[i]) out.push(a[i])
@@ -172,14 +153,7 @@ export async function latest({ page = 1 } = {}) {
 }
 
 export async function popular({ limit = 10 } = {}) {
-  let items
-  try {
-    items = (await list(typeListPaths('manhwa', 1, 'popular'), 1, 5 * MIN)).items
-  } catch {
-    // Popular and latest use the same source; if the popular listing is
-    // unavailable, latest is still a useful public fallback.
-    return (await latest({ page: 1 })).slice(0, limit)
-  }
+  let items = (await list(typeListPaths('manhwa', 1, 'popular'), 1, 5 * MIN)).items
   if (!items.length) items = (await latest({ page: 1 })).slice(0, limit)
   return items.slice(0, limit)
 }
@@ -189,7 +163,7 @@ export async function browse({ q = '', type = '', sort = '', genre = [], page = 
   if (g) {
     if (TYPES.includes(g)) return list(typeListPaths(g, page, sort), page)
     const slug = encodeURIComponent(genreSlug(g))
-    return list([`${BASE}/genre/${slug}/${pageSeg(page)}`, `${API}/genre/${slug}/${pageSeg(page)}`], page)
+    return list([`${API}/genre/${slug}/${pageSeg(page)}`, `${BASE}/genre/${slug}/${pageSeg(page)}`], page)
   }
   if (q) {
     const items = await search(q, { limit: 30 })
