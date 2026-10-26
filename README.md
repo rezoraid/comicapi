@@ -1,6 +1,6 @@
 # comic-api
 
-Server scraper komik untuk aplikasi (APK). Sumber: **Lumos**, **Manta**, **Luvyaa**, **Shinigami**.
+Server scraper komik untuk aplikasi (APK). Sumber: **Lumos**, **Manta**, **Komiku**, **Shinigami**.
 Satu pintu API, semua sumber punya bentuk data yang sama — cepat, ringan, cache agresif.
 
 ## Jalankan
@@ -95,7 +95,7 @@ src/
     index.js         registry — daftar sumber
     lumos.js         Lumos (03.lumosgg.com)
     manta.js         Manta Comics
-    luvyaa.js        Luvyaa
+    komiku.js        Komiku (komiku.id)
     shinigami.js     Shinigami
     utils.js         HTTP client (retry, cache, dedupe) + trackHost
 test/                tes server
