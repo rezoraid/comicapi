@@ -9,8 +9,11 @@
  *      route, cache, dan image proxy otomatis ikut.
  */
 import lumos from './lumos.js'
+import manta from './manta.js'
+import luvyaa from './luvyaa.js'
+import shinigami from './shinigami.js'
 
-const PROVIDERS = [lumos]
+const PROVIDERS = [lumos, manta, luvyaa, shinigami]
 const METHODS = ['search', 'latest', 'popular', 'browse', 'genres', 'detail', 'chapter']
 
 const providers = new Map()

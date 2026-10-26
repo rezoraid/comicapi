@@ -1,7 +1,7 @@
 {
   "name": "comic-api",
   "version": "1.0.0",
-  "description": "API scraper komik (Lumos, ...) untuk server aplikasi",
+  "description": "API scraper komik (Lumos, Manta, Luvyaa, Shinigami) untuk server aplikasi baca komik",
   "private": true,
   "type": "module",
   "main": "src/server.js",

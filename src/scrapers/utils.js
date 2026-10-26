@@ -1,3 +1,5 @@
+import net from 'node:net'
+
 export const UA =
   'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36'
 
@@ -6,6 +8,16 @@ export const clean = s => String(s ?? '').replace(/\s+/g, ' ').trim()
 export const num = s => {
   const m = String(s ?? '').match(/\d+(?:\.\d+)?/)
   return m ? parseFloat(m[0]) : null
+}
+
+/** Daftarkan host gambar dari respons sumber ke allowlist image proxy (https + domain, bukan IP). */
+export function trackHost(hosts, url) {
+  try {
+    const u = new URL(url)
+    const h = u.hostname.toLowerCase()
+    if (u.protocol === 'https:' && h.includes('.') && !net.isIP(h) && !hosts.includes(h)) hosts.push(h)
+  } catch {}
+  return url
 }
 
 /**
