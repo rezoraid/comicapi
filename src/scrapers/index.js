@@ -10,10 +10,10 @@
  */
 import lumos from './lumos.js'
 import manta from './manta.js'
-import komiku from './komiku.js'
+import luvyaa from './luvyaa.js'
 import shinigami from './shinigami.js'
 
-const PROVIDERS = [lumos, manta, komiku, shinigami]
+const PROVIDERS = [lumos, manta, luvyaa, shinigami]
 const METHODS = ['search', 'latest', 'popular', 'browse', 'genres', 'detail', 'chapter']
 
 const providers = new Map()

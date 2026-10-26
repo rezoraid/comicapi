@@ -1,24 +1,17 @@
 import { createHttp, trackHost } from './utils.js'
 
-const BASE = 'https://app.shinigami.asia'
+const BASE = 'https://shinigami.id'
 const API = 'https://api.shngm.io'
 const UA = 'Mozilla/5.0 (Android 14; Mobile; rv:153.0) Gecko/153.0 Firefox/153.0'
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i
 
 const MIN = 60 * 1000
-const imageHosts = [
-  'shinigami.id',
-  'app.shinigami.asia',
-  'api.shngm.io',
-  'assets.shngm.id',
-  'storage.shngm.id',
-  '11.shinigami.asia'
-]
+const imageHosts = ['shinigami.id', 'api.shngm.io', '11.shinigami.asia']
 
 const http = createHttp({
   base: API,
   referer: `${BASE}/`,
-  headers: { 'user-agent': UA, origin: BASE, accept: 'application/json' }
+  headers: { 'user-agent': UA, origin: BASE }
 })
 
 /* ───────────── helpers ───────────── */
@@ -68,7 +61,7 @@ function fromApi(m) {
 async function list({ q = '', page = 1, size = 24 } = {}) {
   const qs = new URLSearchParams({ page: String(page), page_size: String(size) })
   if (q) qs.set('q', q)
-  const res = await api(`/v1/manga/list?${qs}`)
+  const res = await api(`/manga/list?${qs}`)
   const items = (Array.isArray(res.data) ? res.data : []).map(fromApi).filter(Boolean)
   const total = Number(res.meta?.total_record) || items.length
   const pages = Number(res.meta?.total_page) || (total ? Math.ceil(total / size) : 1)
@@ -94,20 +87,12 @@ export function browse({ q = '', page = 1 } = {}) {
 async function allChapters(mangaId) {
   const size = 100
   const page = n =>
-    api(
-      `/v1/chapter/${encodeURIComponent(mangaId)}/list?${new URLSearchParams({
-        page: String(n),
-        page_size: String(size),
-        sort_by: 'chapter_number',
-        sort_order: 'desc'
-      })}`
-    )
+    api(`/chapter/${encodeURIComponent(mangaId)}/list?${new URLSearchParams({ page: String(n), page_size: String(size), sort_by: 'chapter_number', sort_order: 'desc' })}`)
 
   const first = await page(1)
   const records = Number(first.meta?.total_record) || 0
-  const pages = Math.max(Number(first.meta?.total_page) || 1, records ? Math.ceil(records / size) : 1)
-  // Ambil semua halaman (full chapter list, tanpa batasan artifisial)
-  const rest = await Promise.all(Array.from({ length: Math.max(0, pages - 1) }, (_, i) => page(i + 2).catch(() => null)))
+  const pages = Math.min(50, Math.max(Number(first.meta?.total_page) || 1, records ? Math.ceil(records / size) : 1))
+  const rest = await Promise.all(Array.from({ length: pages - 1 }, (_, i) => page(i + 2).catch(() => null)))
 
   const seen = new Set()
   const out = []
@@ -135,10 +120,7 @@ export async function detail(slug) {
   const id = idOf(slug)
   if (!id) throw badRequest('Slug Shinigami harus berupa UUID manga')
 
-  const [res, chapters] = await Promise.all([
-    api(`/v1/manga/detail/${encodeURIComponent(id)}`, 5 * MIN),
-    allChapters(id)
-  ])
+  const [res, chapters] = await Promise.all([api(`/manga/detail/${encodeURIComponent(id)}`, 5 * MIN), allChapters(id)])
   const d = res?.data
   if (!d) throw Object.assign(new Error('Manga tidak ditemukan'), { status: 404 })
   const tax = d.taxonomy ?? {}
@@ -171,7 +153,7 @@ export async function chapter(slug, chapterSlug) {
   const id = idOf(chapterSlug)
   if (!id) throw badRequest('Chapter ID Shinigami harus berupa UUID')
 
-  const res = await api(`/v1/chapter/detail/${id}`, 5 * MIN)
+  const res = await api(`/chapter/detail/${id}`, 5 * MIN)
   const d = res?.data
   if (!d) throw Object.assign(new Error('Detail chapter tidak ditemukan'), { status: 404 })
 
