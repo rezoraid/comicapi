@@ -1,0 +1,416 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>comic-api playground</title>
+<style>
+:root{--bg:#f4f5f7;--card:#fff;--fg:#14171f;--mut:#6b7280;--line:#e3e6eb;--acc:#3b6df5;--ok:#16a34a;--bad:#dc2626;--warn:#d97706;--code:#f0f2f6}
+@media(prefers-color-scheme:dark){:root{--bg:#0e1015;--card:#171a21;--fg:#e6e8ee;--mut:#8b93a3;--line:#262b36;--acc:#6f95ff;--ok:#34d399;--bad:#f87171;--warn:#fbbf24;--code:#10131a}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+main{max-width:860px;margin:0 auto;padding:12px}
+header{display:flex;align-items:center;gap:8px;margin:4px 0 10px}
+h1{font-size:17px;margin:0}h1 small{color:var(--mut);font-weight:400}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--mut);margin-left:auto}.dot.ok{background:var(--ok)}.dot.bad{background:var(--bad)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:10px}
+label{display:block;font-size:12px;color:var(--mut);margin:0 0 8px}
+input,select{display:block;width:100%;margin-top:3px;padding:8px 10px;font:inherit;font-size:16px;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:7px}
+input:focus,select:focus{outline:2px solid var(--acc);outline-offset:-1px}
+.cfg{display:grid;grid-template-columns:1fr 1fr;gap:0 10px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}.dim{opacity:.4}
+.chip,button{font:inherit;font-size:13px;padding:6px 11px;border-radius:999px;border:1px solid var(--line);background:var(--bg);color:var(--fg);cursor:pointer}
+.chip.on,button.pri{background:var(--acc);border-color:var(--acc);color:#fff}
+button:active{transform:scale(.97)}button:disabled{opacity:.5}
+.form{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:0 10px}
+.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}.actions button{border-radius:8px;padding:8px 14px}
+.bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:13px;margin-bottom:8px}
+.badge{padding:1px 8px;border-radius:5px;color:#fff;font-weight:600}.badge.ok{background:var(--ok)}.badge.bad{background:var(--bad)}
+.tag{padding:0 6px;border:1px solid var(--line);border-radius:5px;color:var(--mut)}
+.url{color:var(--mut);word-break:break-all;font-size:12px;flex-basis:100%}
+.mini{padding:2px 8px;font-size:12px;border-radius:6px}
+.tabs{display:flex;gap:6px;margin-bottom:8px}.tabs .chip{padding:3px 12px}
+pre{margin:0;padding:10px;background:var(--code);border-radius:8px;overflow:auto;max-height:70vh;font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-word}
+.k{color:#8b5cf6}.s{color:#16a34a}.n{color:#d97706}.b{color:#e11d48}
+@media(prefers-color-scheme:dark){.k{color:#c4a7ff}.s{color:#86efac}.n{color:#fbbf24}.b{color:#fda4af}}
+.row{display:flex;gap:10px;padding:7px 4px;border-bottom:1px solid var(--line);cursor:pointer;align-items:center}
+.row:last-child{border:0}.row:hover{background:var(--bg)}
+.row img,.row i{width:40px;height:56px;border-radius:5px;background:var(--code);object-fit:cover;flex:none}
+.row div{min-width:0}.row b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+small{color:var(--mut);font-size:12px}
+.muted{color:var(--mut)}
+.head{display:flex;gap:12px}.head img{width:90px;height:128px;border-radius:7px;object-fit:cover;background:var(--code);flex:none}
+.head h2{margin:0 0 4px;font-size:16px}
+.cl{display:flex;flex-wrap:wrap;gap:5px;margin:8px 0}.cl .chip{padding:3px 9px;font-size:12px}
+.thumbs{display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:6px;margin-top:8px}
+.thumbs img{width:100%;aspect-ratio:2/3;object-fit:cover;border-radius:5px;background:var(--code);border:2px solid transparent}
+.thumbs img.ok{border-color:var(--ok)}.thumbs img.bad{border-color:var(--bad)}
+table{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:12px}
+td,th{padding:5px 6px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{color:var(--mut);font-weight:500}
+td.ms{white-space:nowrap;color:var(--mut)}.ok{color:var(--ok)}.bad{color:var(--bad)}.skip{color:var(--warn)}
+h3{font-size:14px;margin:6px 0}
+@media(max-width:520px){.cfg{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<main>
+<header><h1>comic-api <small>playground</small></h1><span id="dot" class="dot" title="health"></span></header>
+
+<section class="card cfg">
+  <label>Server URL<input id="base" placeholder="https://server-kamu.com" autocomplete="off" autocapitalize="off"></label>
+  <label>API key<input id="key" type="password" placeholder="x-api-key (kosongkan jika tidak dipakai)" autocomplete="off"></label>
+</section>
+
+<section class="card">
+  <div class="chips" id="srcs"></div>
+  <div class="chips" id="eps"></div>
+  <div class="form" id="form"></div>
+  <div class="actions">
+    <button id="run" class="pri">Execute ▶</button>
+    <button id="chain">Tes 1 sumber</button>
+    <button id="all">Tes semua sumber</button>
+  </div>
+</section>
+
+<section class="card" id="res" hidden></section>
+</main>
+
+<script>
+'use strict'
+const $ = s => document.querySelector(s)
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+const store = {
+  get(k, d) { try { const v = localStorage.getItem('cp.' + k); return v == null ? d : JSON.parse(v) } catch { return d } },
+  set(k, v) { try { localStorage.setItem('cp.' + k, JSON.stringify(v)) } catch {} }
+}
+
+/* ───── definisi endpoint ───── */
+const F = {
+  q: { label: 'q (kata kunci)', def: 'solo' },
+  limit: { label: 'limit', num: 1, def: '10' },
+  page: { label: 'page', num: 1, def: '1' },
+  period: { label: 'period', ph: 'weekly | monthly | alltime' },
+  genre: { label: 'genre (pisah koma)', ph: 'action,fantasy' },
+  type: { label: 'type', sel: 'types' },
+  status: { label: 'status', sel: 'statuses' },
+  sort: { label: 'sort', sel: 'sorts' },
+  min: { label: 'min chapter', num: 1 },
+  slug: { label: 'slug *', req: 1 },
+  chapter: { label: 'chapter *', req: 1 },
+  url: { label: 'url gambar *', req: 1 }
+}
+const EP = {
+  search: { t: 'search', path: '/api/{src}/search', f: ['q', 'limit'], scoped: 1 },
+  latest: { t: 'latest', path: '/api/{src}/latest', f: ['page'], scoped: 1 },
+  popular: { t: 'popular', path: '/api/{src}/popular', f: ['period', 'limit'], scoped: 1 },
+  browse: { t: 'browse', path: '/api/{src}/browse', f: ['q', 'genre', 'type', 'status', 'sort', 'min', 'page'], scoped: 1 },
+  genres: { t: 'genres', path: '/api/{src}/genres', f: [], scoped: 1 },
+  comic: { t: 'detail', path: '/api/{src}/comic/{slug}', f: ['slug'], scoped: 1 },
+  chapter: { t: 'chapter', path: '/api/{src}/chapter/{slug}/{chapter}', f: ['slug', 'chapter'], scoped: 1 },
+  all: { t: 'cari semua', path: '/api/search', f: ['q', 'limit'] },
+  image: { t: 'image', path: '/api/image', f: ['url'] },
+  sources: { t: 'sources', path: '/api/sources', f: [] }
+}
+
+/* ───── state ───── */
+let sources = [], src = store.get('src', ''), ep = store.get('ep', 'search'), vals = store.get('vals', {}), view = store.get('view', 'preview')
+let last = null, full = false
+$('#base').value = store.get('base', location.origin === 'null' ? '' : location.origin)
+$('#key').value = store.get('key', '')
+if (!EP[ep]) ep = 'search'
+
+const baseUrl = () => ($('#base').value.trim() || (location.origin === 'null' ? '' : location.origin)).replace(/\/+$/, '')
+const hdr = () => { const k = $('#key').value.trim(); return k ? { 'x-api-key': k } : {} }
+const filters = () => sources.find(s => s.id === src)?.filters || {}
+
+/* ───── request ───── */
+async function call(path, q = {}) {
+  const base = baseUrl()
+  if (!base) throw new Error('Isi Server URL dulu')
+  const url = new URL(base + path)
+  for (const [k, v] of Object.entries(q)) if (v !== '' && v != null) url.searchParams.set(k, v)
+  const t = performance.now()
+  let r, text
+  try {
+    r = await fetch(url, { headers: hdr(), cache: 'no-store' })
+    text = await r.text()
+  } catch (e) {
+    return { status: 0, ms: performance.now() - t, size: 0, url: url.href, text: '', err: e.message }
+  }
+  let json = null
+  try { json = JSON.parse(text) } catch {}
+  return { status: r.status, ms: performance.now() - t, size: text.length, cache: r.headers.get('x-cache'), url: url.href, text, json }
+}
+
+function build(name) {
+  const e = EP[name]
+  let path = e.path.replace('{src}', encodeURIComponent(src))
+  const q = {}
+  for (const k of e.f) {
+    const v = String(vals[k] ?? F[k].def ?? '').trim()
+    if (path.includes('{' + k + '}')) path = path.replace('{' + k + '}', encodeURIComponent(v))
+    else if (v !== '') q[k] = v
+  }
+  return { path, q }
+}
+
+/* ───── UI: chips & form ───── */
+function renderChips() {
+  $('#srcs').innerHTML = sources.map(s => `<button class="chip${s.id === src ? ' on' : ''}" data-src="${esc(s.id)}">${esc(s.id)}</button>`).join('') || '<small class="muted">memuat sumber…</small>'
+  $('#srcs').classList.toggle('dim', !EP[ep].scoped)
+  $('#eps').innerHTML = Object.entries(EP).map(([k, e]) => `<button class="chip${k === ep ? ' on' : ''}" data-ep="${k}">${e.t}</button>`).join('')
+}
+function renderForm() {
+  const f = filters()
+  const html = EP[ep].f.map(k => {
+    const d = F[k], v = vals[k] ?? d.def ?? ''
+    if (d.sel) {
+      const opts = f[d.sel] || []
+      if (!opts.length) return ''
+      return `<label>${d.label}<select data-k="${k}"><option value="">(semua)</option>${opts.map(o => `<option${o === v ? ' selected' : ''}>${esc(o)}</option>`).join('')}</select></label>`
+    }
+    return `<label>${d.label}<input data-k="${k}" value="${esc(v)}" placeholder="${esc(d.ph || '')}"${d.num ? ' inputmode="numeric"' : ''} autocomplete="off" autocapitalize="off"></label>`
+  }).join('')
+  $('#form').innerHTML = html || '<small class="muted">Tanpa parameter.</small>'
+}
+const setSrc = id => { src = id; store.set('src', id); renderChips(); renderForm() }
+const setEp = k => { ep = k; store.set('ep', k); renderChips(); renderForm() }
+
+$('#srcs').onclick = e => { const b = e.target.closest('[data-src]'); if (b) setSrc(b.dataset.src) }
+$('#eps').onclick = e => { const b = e.target.closest('[data-ep]'); if (b) setEp(b.dataset.ep) }
+$('#form').oninput = e => { const k = e.target.dataset.k; if (k) { vals[k] = e.target.value; store.set('vals', vals) } }
+$('#form').onkeydown = e => { if (e.key === 'Enter') run() }
+document.onkeydown = e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) run() }
+
+/* ───── gambar (fetch + blob, karena <img> tidak bisa kirim x-api-key) ───── */
+let blobs = [], active = 0
+const queue = []
+const io = new IntersectionObserver(es => es.forEach(e => {
+  if (e.isIntersecting) { io.unobserve(e.target); queue.push(e.target); pump() }
+}), { rootMargin: '400px' })
+function pump() {
+  while (active < 6 && queue.length) {
+    const img = queue.shift()
+    active++
+    loadImg(img).finally(() => { active--; pump(); stat() })
+  }
+}
+async function loadImg(img) {
+  try {
+    const r = await fetch(baseUrl() + img.dataset.src, { headers: hdr() })
+    if (!r.ok) throw new Error(r.status)
+    const b = await r.blob()
+    if (!b.type.startsWith('image/')) throw new Error('bukan gambar')
+    const u = URL.createObjectURL(b)
+    blobs.push(u)
+    img.src = u
+    img.classList.add('ok')
+  } catch (e) {
+    img.classList.add('bad')
+    img.title = 'gagal: ' + e.message
+  }
+}
+function stat() {
+  const el = $('#imgstat'); if (!el) return
+  const n = document.querySelectorAll('.thumbs img').length
+  const ok = document.querySelectorAll('.thumbs img.ok').length, bad = document.querySelectorAll('.thumbs img.bad').length
+  el.innerHTML = `<span class="ok">${ok} ok</span> · <span class="bad">${bad} gagal</span> · ${n - ok - bad} menunggu`
+}
+function resetImages() { io.disconnect(); queue.length = 0; blobs.forEach(URL.revokeObjectURL); blobs = [] }
+const watchImages = () => document.querySelectorAll('#res img[data-src]').forEach(i => io.observe(i))
+
+/* ───── render hasil ───── */
+function hl(s) {
+  const re = /("(?:\\.|[^"\\])*")(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g
+  let out = '', i = 0
+  for (const m of s.matchAll(re)) {
+    out += esc(s.slice(i, m.index))
+    const c = m[1] ? (m[2] ? 'k' : 's') : m[3] ? 'b' : 'n'
+    out += `<span class="${c}">${esc(m[1] ?? m[0])}</span>` + (m[2] ? esc(m[2]) : '')
+    i = m.index + m[0].length
+  }
+  return out + esc(s.slice(i))
+}
+const imgTag = u => u ? `<img data-src="/api/image?url=${encodeURIComponent(u)}" alt="">` : '<i></i>'
+
+function row(it) {
+  const meta = [it.source, it.type, it.status, it.rating != null && '★' + it.rating, it.chapterCount != null && it.chapterCount + ' ch',
+    it.chapters?.[0] && 'ch ' + it.chapters[0].number, it.features && it.features.join(', '), it.slug].filter(Boolean).join(' · ')
+  const act = it.slug ? ` data-act="open" data-slug="${esc(it.slug)}"${it.source ? ` data-src="${esc(it.source)}"` : ''}` : ''
+  return `<div class="row"${act}>${imgTag(it.cover)}<div><b>${esc(it.title || it.name || it.id || it.slug)}</b><small>${esc(meta)}</small></div></div>`
+}
+function preview(j) {
+  const d = j?.data
+  if (!j?.ok || !d) return null
+  if (Array.isArray(d.items)) {
+    if (!d.items.length) return '<p class="muted">Kosong (0 item)</p>'
+    if (typeof d.items[0] === 'string') return `<div class="cl">${d.items.map(g => `<button class="chip" data-act="genre" data-g="${esc(g)}">${esc(g)}</button>`).join('')}</div>`
+    const info = [d.page != null && `hal ${d.page}${d.pages ? '/' + d.pages : ''}`, d.total != null && `total ${d.total}`, d.failed?.length && `gagal: ${d.failed.join(', ')}`].filter(Boolean).join(' · ')
+    return `<small>${d.items.length} item${info ? ' · ' + esc(info) : ''}</small>` + d.items.map(row).join('')
+  }
+  if (d.chapters && d.title) {
+    const meta = [d.type, d.status, d.author, d.rating != null && '★' + d.rating, d.totalChapters + ' chapter'].filter(Boolean).join(' · ')
+    const cl = d.chapters.slice(0, 80).map(c => `<button class="chip" data-act="chap" data-slug="${esc(d.slug)}" data-ch="${esc(c.slug)}">ch ${esc(c.number)}</button>`).join('')
+    return `<div class="head">${imgTag(d.cover)}<div><h2>${esc(d.title)}</h2><small>${esc(meta)}</small><div class="cl">${(d.genres || []).map(g => `<span class="tag">${esc(g)}</span>`).join('')}</div></div></div>` +
+      `<p>${esc((d.synopsis || '').slice(0, 400))}</p><h3>Chapter (klik untuk buka${d.chapters.length > 80 ? `, 80 dari ${d.chapters.length}` : ''})</h3><div class="cl">${cl}</div>`
+  }
+  if (d.images && d.proxy) {
+    const nav = (s, label) => s ? `<button class="chip" data-act="chap" data-slug="${esc(d.comic)}" data-ch="${esc(s)}">${label}</button>` : ''
+    return `<small>${esc(d.comic)} · chapter ${esc(d.chapter)} · ${d.images.length} gambar · <span id="imgstat"></span></small><div class="cl">${nav(d.prev, '◀ prev')}${nav(d.next, 'next ▶')}</div>` +
+      `<div class="thumbs">${d.proxy.map(p => `<img data-src="${esc(p)}" alt="">`).join('')}</div>`
+  }
+  return null
+}
+
+function renderResult() {
+  if (!last) return
+  const r = last, ok = r.status >= 200 && r.status < 300
+  const p = view === 'preview' ? preview(r.json) : null
+  const isJson = view === 'json' || p == null
+  const MAX = 150000
+  const shown = full || r.text.length <= MAX ? r.text : r.text.slice(0, MAX)
+  let pretty = shown
+  try { if (shown === r.text) pretty = JSON.stringify(JSON.parse(r.text), null, 2) } catch {}
+  const errMsg = r.err || (!ok && r.json?.error ? `${r.json.error.code}: ${r.json.error.message}` : '')
+  resetImages()
+  $('#res').hidden = false
+  $('#res').innerHTML =
+    `<div class="bar"><span class="badge ${ok ? 'ok' : 'bad'}">${r.status || 'ERR'}</span><b>${r.ms.toFixed(0)} ms</b><span>${(r.size / 1024).toFixed(1)} KB</span>` +
+    (r.cache ? `<span class="tag">${esc(r.cache)}</span>` : '') + `<button class="mini" data-act="copy">copy URL</button><span class="url">${esc(r.url)}</span></div>` +
+    (errMsg ? `<p class="bad"><b>${esc(errMsg)}</b></p>` : '') +
+    `<div class="tabs"><button class="chip${!isJson ? ' on' : ''}" data-act="tab" data-v="preview">Preview</button><button class="chip${isJson ? ' on' : ''}" data-act="tab" data-v="json">JSON</button></div>` +
+    (isJson ? `<pre>${hl(pretty)}</pre>${shown.length < r.text.length ? '<button class="mini" data-act="more" style="margin-top:8px">tampilkan semua</button>' : ''}` : p)
+  watchImages()
+}
+
+$('#res').onclick = e => {
+  const t = e.target.closest('[data-act]')
+  if (!t) return
+  const a = t.dataset.act
+  if (a === 'copy') { navigator.clipboard?.writeText(last.url); t.textContent = 'tersalin ✓' }
+  else if (a === 'tab') { view = t.dataset.v; store.set('view', view); renderResult() }
+  else if (a === 'more') { full = true; renderResult() }
+  else if (a === 'open') { if (t.dataset.src) setSrc(t.dataset.src); vals.slug = t.dataset.slug; store.set('vals', vals); setEp('comic'); run() }
+  else if (a === 'chap') { vals.slug = t.dataset.slug; vals.chapter = t.dataset.ch; store.set('vals', vals); setEp('chapter'); run() }
+  else if (a === 'genre') { vals.genre = t.dataset.g.toLowerCase(); store.set('vals', vals); setEp('browse'); run() }
+}
+
+/* ───── execute ───── */
+async function run() {
+  const e = EP[ep]
+  const miss = e.f.find(k => F[k].req && !String(vals[k] ?? '').trim())
+  if (e.scoped && !src) return fail('Belum ada sumber — cek Server URL / API key')
+  if (miss) return fail(`Parameter "${miss}" wajib diisi`)
+  const btn = $('#run'); btn.disabled = true; btn.textContent = '⏳ …'
+  try {
+    const { path, q } = build(ep)
+    last = await call(path, q); full = false
+    renderResult()
+  } catch (err) { fail(err.message) }
+  btn.disabled = false; btn.textContent = 'Execute ▶'
+}
+function fail(msg) {
+  last = null; resetImages(); $('#res').hidden = false
+  $('#res').innerHTML = `<p class="bad"><b>${esc(msg)}</b></p>`
+}
+$('#run').onclick = run
+
+/* ───── tes beruntun per sumber ───── */
+async function chain(id, q, report) {
+  const rows = []
+  const P = `/api/${encodeURIComponent(id)}`
+  let first, ch, img
+  const step = async (name, fn) => {
+    const t = performance.now(); let row
+    try { row = { name, ok: true, note: await fn() } }
+    catch (e) { row = { name, ok: e.skip ? null : false, note: e.message } }
+    row.ms = performance.now() - t; rows.push(row); report(rows); return row.ok === true
+  }
+  const need = (r, cond, msg) => {
+    if (r.status === 501) throw Object.assign(new Error('tidak didukung'), { skip: 1 })
+    if (r.err) throw new Error(r.err)
+    if (r.status !== 200 || !r.json?.ok) throw new Error(`HTTP ${r.status} ${r.json?.error?.message || ''}`)
+    if (!cond) throw new Error(msg)
+  }
+  const list = (name, path, params, pick) => step(name, async () => {
+    const r = await call(path, params), items = r.json?.data?.items
+    need(r, items?.length, 'kosong')
+    if (pick) first = items[0]
+    return `${items.length} item · ${r.ms.toFixed(0)}ms${r.cache ? ' · ' + r.cache : ''}`
+  })
+  const okSearch = await list('search', P + '/search', { q, limit: 10 }, true)
+  await list('latest', P + '/latest', { page: 1 })
+  await list('popular', P + '/popular', { limit: 10 })
+  await step('browse', async () => {
+    const r = await call(P + '/browse', { page: 1 }); need(r, r.json?.data?.items?.length, 'kosong')
+    return `${r.json.data.items.length} item, ${r.json.data.pages ?? '?'} hal`
+  })
+  await list('genres', P + '/genres', {})
+  if (okSearch && first) {
+    const okDetail = await step('detail', async () => {
+      const r = await call(`${P}/comic/${encodeURIComponent(first.slug)}`)
+      const d = r.json?.data; need(r, d?.title && d.chapters?.length, 'chapter kosong')
+      ch = d.chapters[d.chapters.length - 1].slug
+      return `${d.title} · ${d.chapters.length} chapter · cover ${d.cover ? 'ada' : 'KOSONG'}`
+    })
+    if (okDetail && await step('chapter', async () => {
+      const r = await call(`${P}/chapter/${encodeURIComponent(first.slug)}/${encodeURIComponent(ch)}`)
+      const d = r.json?.data; need(r, d?.images?.length, 'gambar kosong')
+      img = d.proxy[0]; return `ch ${ch}: ${d.images.length} gambar`
+    })) {
+      await step('gambar (proxy)', async () => {
+        const t = performance.now()
+        const r = await fetch(baseUrl() + img, { headers: hdr() })
+        if (!r.ok) throw new Error('HTTP ' + r.status)
+        const b = await r.blob()
+        if (!b.type.startsWith('image/')) throw new Error('bukan gambar: ' + b.type)
+        return `${b.type} · ${(b.size / 1024).toFixed(0)} KB · ${(performance.now() - t).toFixed(0)}ms`
+      })
+    }
+  }
+  return rows
+}
+const icon = ok => ok === true ? '<span class="ok">✅</span>' : ok === false ? '<span class="bad">❌</span>' : '<span class="skip">⏭️</span>'
+function chainHTML(id, rows) {
+  const pass = rows.filter(r => r.ok === true).length, fail = rows.filter(r => r.ok === false).length
+  return `<h3>${esc(id)} — ${fail ? `<span class="bad">${fail} gagal</span>` : '<span class="ok">lolos</span>'} <small>(${pass}/${rows.length} ok)</small></h3><table>` +
+    rows.map(r => `<tr><td>${icon(r.ok)}</td><td>${r.name}</td><td class="ms">${r.ms.toFixed(0)} ms</td><td class="${r.ok === false ? 'bad' : ''}">${esc(r.note)}</td></tr>`).join('') + '</table>'
+}
+async function runChains(ids) {
+  if (!ids.length) return fail('Belum ada sumber — cek Server URL / API key')
+  resetImages(); last = null
+  const q = String(vals.q ?? F.q.def).trim() || 'solo'
+  const blocks = {}
+  const draw = () => { $('#res').hidden = false; $('#res').innerHTML = `<small>Tes dengan q="${esc(q)}"</small>` + ids.map(i => blocks[i] || `<h3>${esc(i)} …</h3>`).join('') }
+  draw()
+  for (const b of ['#chain', '#all', '#run']) $(b).disabled = true
+  await Promise.all(ids.map(id => chain(id, q, rows => { blocks[id] = chainHTML(id, rows); draw() }).catch(e => { blocks[id] = `<h3>${esc(id)} <span class="bad">${esc(e.message)}</span></h3>`; draw() })))
+  for (const b of ['#chain', '#all', '#run']) $(b).disabled = false
+}
+$('#chain').onclick = () => runChains(src ? [src] : [])
+$('#all').onclick = () => runChains(sources.map(s => s.id))
+
+/* ───── init ───── */
+async function loadSources() {
+  store.set('base', $('#base').value.trim()); store.set('key', $('#key').value.trim())
+  const base = baseUrl()
+  $('#dot').className = 'dot'
+  if (!base) { sources = []; renderChips(); return fail('Isi Server URL (mis. https://server-kamu.com)') }
+  const h = await call('/health').catch(() => null)
+  $('#dot').className = 'dot ' + (h && h.status === 200 ? 'ok' : 'bad')
+  $('#dot').title = h && h.status === 200 ? `online · uptime ${h.json.data.uptime}s` : 'server tidak terjangkau'
+  const r = await call('/api/sources').catch(() => null)
+  sources = r?.json?.data?.items || []
+  if (!sources.some(s => s.id === src)) src = sources[0]?.id || ''
+  renderChips(); renderForm()
+  if (r && r.status === 401) fail('API key salah / belum diisi')
+  else if (!sources.length) fail('Tidak bisa memuat sumber' + (r?.err ? ': ' + r.err : ''))
+  else if ($('#res').textContent.includes('Isi Server') || $('#res').textContent.includes('API key') || $('#res').textContent.includes('Tidak bisa')) $('#res').hidden = true
+}
+let tm
+for (const id of ['#base', '#key']) $(id).oninput = () => { clearTimeout(tm); tm = setTimeout(loadSources, 500) }
+renderChips(); renderForm(); loadSources()
+</script>
+</body>
+</html>

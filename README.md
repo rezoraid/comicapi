@@ -1,1 +1,107 @@
-# comicapi
+# comic-api
+
+Server scraper komik untuk aplikasi (APK). Sumber saat ini: **lumos**, **softkomik**.
+Satu pintu API, semua sumber punya bentuk data yang sama.
+
+## Jalankan
+
+```bash
+npm install
+cp .env.example .env     # isi API_KEY
+npm start                # http://localhost:3000
+npm test                 # tes server + playground (offline, pakai mock)
+npm run smoke            # tes scraper ke situs asli (butuh internet)
+```
+
+Butuh Node 20+. Dependensi cuma `cheerio`.
+
+## Playground (halaman tes)
+
+Buka `http://localhost:3000/playground` (atau `https://server-kamu.com/playground`).
+Satu file HTML tanpa library (~24 KB, gzip ~7 KB), jalan di HP maupun desktop.
+
+- Pilih sumber + endpoint, isi parameter, **Execute** (atau Ctrl+Enter). Terlihat status, waktu (ms), ukuran, dan `x-cache`.
+- **Preview**: daftar komik + cover, detail + chapter, thumbnail gambar chapter (hijau = berhasil dimuat, merah = gagal). Klik item/chapter untuk lanjut ke langkah berikutnya. **JSON** untuk respons mentah.
+- **Tes 1 sumber / Tes semua sumber**: menjalankan search → latest → popular → browse → genres → detail → chapter → gambar (proxy) dan menampilkan ✅/❌ per langkah beserta waktunya. Semua sumber dites paralel.
+- Server URL & API key disimpan di browser (localStorage), tidak dikirim ke mana pun selain server kamu.
+- Matikan di production dengan env `PLAYGROUND=false`.
+
+## Hosting
+
+- **Railway / Heroku / Render**: push repo, `Procfile` sudah ada. Set env `API_KEY`.
+- **Docker / VPS**: `docker build -t comic-api . && docker run -p 3000:3000 -e API_KEY=rahasia comic-api`
+- Health check: `GET /health`
+
+## Endpoint
+
+Semua response JSON: `{ "ok": true, "data": ... }` atau `{ "ok": false, "error": { "code", "message" } }`.
+Kalau `API_KEY` diisi, kirim header `x-api-key`.
+
+| Endpoint | Keterangan |
+|---|---|
+| `GET /health` | status server (tanpa auth) |
+| `GET /playground` | halaman tes (tanpa auth, lihat bawah) |
+| `GET /api/sources` | daftar sumber + filter yang didukung |
+| `GET /api/search?q=&limit=` | cari di **semua** sumber sekaligus (hasil `source` per item) |
+| `GET /api/:source/search?q=&limit=` | cari di satu sumber |
+| `GET /api/:source/latest?page=` | update terbaru |
+| `GET /api/:source/popular?period=&limit=` | populer (lumos: `weekly`/`monthly`/`alltime`) |
+| `GET /api/:source/browse?q=&genre=&type=&status=&sort=&min=&page=` | filter lengkap |
+| `GET /api/:source/genres` | daftar genre |
+| `GET /api/:source/comic/:slug` | detail + daftar chapter (terbaru → terlama) |
+| `GET /api/:source/chapter/:slug/:chapter` | gambar chapter + `prev`/`next` |
+| `GET /api/image?url=` | image proxy (lihat bawah) |
+
+Filter per sumber ada di `/api/sources` → `filters` (mis. lumos: `types`, `statuses`, `sorts`).
+
+### Menampilkan gambar di APK
+
+Banyak situs memblokir gambar tanpa header referer. Response `chapter` berisi `images`
+(URL asli) dan `proxy` (path relatif lewat server ini). Pakai `proxy`:
+
+```
+https://server-kamu.com + data.proxy[0]   →  gambar langsung bisa dimuat
+```
+
+Kalau `API_KEY` aktif, kirim juga `x-api-key` di request gambar (atau pasang di interceptor
+Glide/Coil/OkHttp). Hanya host gambar milik scraper yang boleh di-proxy.
+
+## Kenapa cepat
+
+- Cache respons di memori (TTL per endpoint: search 1 mnt, detail 5 mnt, genre 1 jam, dst.), sudah
+  dalam bentuk JSON + gzip + ETag → request berikutnya hampir tanpa kerja. Header `x-cache: HIT|MISS|STALE`.
+- Request identik yang datang barengan hanya memicu **1** scrape.
+- Kalau situs sumber down, data lama tetap disajikan (maks 6 jam, `x-cache: STALE`).
+- Klien bisa kirim `If-None-Match` → `304` tanpa body.
+- Cache tambahan di level scraper (HTML/API sumber), retry otomatis, timeout per request.
+
+## Struktur
+
+```
+src/
+  server.js          entry: listen, graceful shutdown
+  app.js             pipeline request: CORS → auth → rate limit → cache → handler
+  routes.js          semua endpoint + validasi
+  image-proxy.js     streaming gambar (anti-SSRF)
+  playground.js      sajikan public/playground.html (gzip di-cache)
+  public/playground.html   halaman tes API
+  config.js          baca env
+  http/              router, respond (JSON+gzip+ETag), middleware
+  lib/               cache TTL, errors, timeout
+  scrapers/
+    index.js         registry — daftar sumber
+    lumos.js
+    softkomik.js
+    utils.js         HTTP client (retry, cache, dedupe)
+test/                tes server
+scripts/smoke-test.mjs   tes scraper ke situs asli
+```
+
+## Nambah scraper baru
+
+1. Buat `src/scrapers/namabaru.js`, export default:
+   `{ id, name, base, imageHeaders, imageHosts, filters?, search, latest, popular, browse, genres, detail, chapter }`
+   (bentuk item/detail ikuti `lumos.js`). Method yang tidak didukung boleh dihilangkan → endpoint jawab `501`.
+2. Import dan tambahkan ke array `PROVIDERS` di `src/scrapers/index.js`.
+
+Route, cache, rate limit, pencarian gabungan, dan image proxy langsung ikut. Cek dengan `npm run smoke namabaru`.

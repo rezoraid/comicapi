@@ -1,0 +1,103 @@
+import test, { before, after } from 'node:test'
+import assert from 'node:assert/strict'
+import vm from 'node:vm'
+import { readFileSync } from 'node:fs'
+import { createApp } from '../src/app.js'
+import { loadConfig } from '../src/config.js'
+import { quiet, listen, makeRegistry, PNG } from './helpers.mjs'
+
+let img, api, app, registry
+
+before(async () => {
+  img = await listen((req, res) => {
+    res.writeHead(200, { 'content-type': 'image/png', 'content-length': PNG.length })
+    res.end(PNG)
+  })
+  registry = makeRegistry(img.port)
+  app = createApp({ registry, config: loadConfig({ LOG_REQUESTS: 'false' }), logger: quiet })
+  api = await listen(app.handler)
+})
+after(() => {
+  api.server.close()
+  img.server.close()
+  app.close()
+})
+
+test('GET /playground: HTML, gzip, ETag/304, CSP', async () => {
+  const r = await fetch(`${api.url}/playground`)
+  assert.equal(r.status, 200)
+  assert.match(r.headers.get('content-type'), /text\/html/)
+  assert.equal(r.headers.get('content-encoding'), 'gzip')
+  assert.match(r.headers.get('content-security-policy'), /frame-ancestors 'none'/)
+  assert.match(await r.text(), /comic-api/)
+  const etag = r.headers.get('etag')
+  assert.equal((await fetch(`${api.url}/playground`, { headers: { 'if-none-match': etag } })).status, 304)
+})
+
+test('PLAYGROUND=false mematikan halaman', async () => {
+  const a = createApp({ registry, config: loadConfig({ PLAYGROUND: 'false', LOG_REQUESTS: 'false' }), logger: quiet })
+  const s = await listen(a.handler)
+  assert.equal((await fetch(`${s.url}/playground`)).status, 404)
+  s.server.close()
+  a.close()
+})
+
+test('playground: JS jalan end-to-end terhadap server (DOM di-stub)', async () => {
+  const html = readFileSync(new URL('../src/public/playground.html', import.meta.url), 'utf8')
+  const js = html.match(/<script>([\s\S]*)<\/script>/)[1]
+
+  const els = new Map()
+  const el = sel => {
+    if (!els.has(sel)) els.set(sel, { value: '', innerHTML: '', textContent: '', hidden: false, className: '', title: '', disabled: false, dataset: {}, classList: { toggle() {}, add() {} } })
+    return els.get(sel)
+  }
+  const mem = new Map()
+  const ctx = vm.createContext({
+    document: { querySelector: el, querySelectorAll: () => [] },
+    localStorage: { getItem: k => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, v) },
+    location: { origin: api.url },
+    IntersectionObserver: class { observe() {} unobserve() {} disconnect() {} },
+    fetch, URL, URLSearchParams, performance, setTimeout, clearTimeout, console, JSON, Promise, Object, String, Number, Math, Error, Array
+  })
+  vm.runInContext(js, ctx)
+
+  // init: health + daftar sumber
+  for (let i = 0; i < 40 && !el('#srcs').innerHTML.includes('mock'); i++) await new Promise(r => setTimeout(r, 25))
+  assert.match(el('#dot').className, /ok/)
+  assert.match(el('#srcs').innerHTML, /mock/)
+  assert.match(el('#form').innerHTML, /data-k="q"/)
+
+  // execute (search) → preview berisi item
+  await el('#run').onclick()
+  assert.match(el('#res').innerHTML, /Komik 0/)
+  assert.match(el('#res').innerHTML, /class="badge ok">200/)
+
+  // tes beruntun: search → ... → gambar via proxy, semua ✅
+  await el('#chain').onclick()
+  const out = el('#res').innerHTML
+  for (const step of ['search', 'latest', 'popular', 'browse', 'genres', 'detail', 'chapter', 'gambar (proxy)']) {
+    assert.ok(out.includes(`<td>${step}</td>`), `langkah ${step} tidak ada`)
+  }
+  assert.ok(!out.includes('❌'), 'ada langkah gagal:\n' + out.replace(/<[^>]+>/g, ' '))
+  assert.equal((out.match(/✅/g) || []).length, 8)
+})
+
+test('playground: API key salah → pesan jelas', async () => {
+  const a = createApp({ registry, config: loadConfig({ API_KEY: 'rahasia', LOG_REQUESTS: 'false' }), logger: quiet })
+  const s = await listen(a.handler)
+  const html = readFileSync(new URL('../src/public/playground.html', import.meta.url), 'utf8')
+  const els = new Map()
+  const el = sel => (els.has(sel) || els.set(sel, { value: '', innerHTML: '', textContent: '', hidden: false, className: '', dataset: {}, classList: { toggle() {} } }), els.get(sel))
+  const ctx = vm.createContext({
+    document: { querySelector: el, querySelectorAll: () => [] },
+    localStorage: { getItem: () => null, setItem() {} },
+    location: { origin: s.url },
+    IntersectionObserver: class { observe() {} unobserve() {} disconnect() {} },
+    fetch, URL, URLSearchParams, performance, setTimeout, clearTimeout, console, JSON, Promise, Object, String, Number, Math, Error, Array
+  })
+  vm.runInContext(html.match(/<script>([\s\S]*)<\/script>/)[1], ctx)
+  for (let i = 0; i < 40 && !el('#res').innerHTML; i++) await new Promise(r => setTimeout(r, 25))
+  assert.match(el('#res').innerHTML, /API key/)
+  s.server.close()
+  a.close()
+})
