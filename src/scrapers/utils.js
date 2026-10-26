@@ -71,5 +71,5 @@ export function createHttp({ base, referer = base + '/', headers = {}, timeout =
     return p
   }
 
-  return { get }
+  return { get, clear: () => cache.clear() }
 }

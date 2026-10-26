@@ -1,5 +1,5 @@
-import * as cheerio from 'cheerio'
 import { createHttp, UA } from './utils.js'
+import { decrypt, looksEncrypted } from './softkomik-crypto.js'
 
 const BASE = 'https://softkomik.co'
 const COVER_BASE = 'https://cover.softdevices.my.id/softkomik-cover'
@@ -44,12 +44,66 @@ function genresOf(i) {
   return typeof g === 'string' && g ? [g] : []
 }
 
-// halaman Next.js: semua data ada di <script id="__NEXT_DATA__">
+// halaman Next.js: data ada di <script id="__NEXT_DATA__">. Detail & chapter kini
+// dikirim terenkripsi di pageProps._stk → didekripsi lalu digabung ke pageProps.
+function revive(props = {}) {
+  let out = { ...props }
+  if (typeof out._stk === 'string') {
+    let plain
+    try {
+      plain = decrypt(out._stk)
+    } catch (e) {
+      const err = new Error(`Gagal mendekripsi data SoftKomik (kunci berubah? set env SOFTKOMIK_KEY): ${e.message}`)
+      err.status = 502
+      throw err
+    }
+    out = { ...out, ...plain }
+  }
+  delete out._stk
+  for (const k of ['data', 'initialData']) if (looksEncrypted(out[k])) out[k] = decrypt(out[k])
+  return out
+}
+
 async function nextData(path, ttl = MIN) {
   const html = await http.get(path, { ttl })
-  const raw = cheerio.load(html)('#__NEXT_DATA__').html()
+  const raw = String(html).match(/<script[^>]*id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i)?.[1]
   if (!raw) throw new Error(`SSR data tidak ditemukan: ${path}`)
-  return JSON.parse(raw).props?.pageProps ?? {}
+  return revive(JSON.parse(raw).props?.pageProps)
+}
+
+const isComicLike = x => x && typeof x === 'object' && (x.title_slug || (x.title && x.gambar))
+
+// cari array komik di mana pun posisinya (struktur halaman bisa berubah)
+function findItems(node, depth = 0) {
+  if (!node || typeof node !== 'object' || depth > 4) return null
+  if (Array.isArray(node)) {
+    if (node.length && node.some(isComicLike)) return node
+    for (const v of node) {
+      const r = findItems(v, depth + 1)
+      if (r) return r
+    }
+    return null
+  }
+  for (const v of Object.values(node)) {
+    const r = findItems(v, depth + 1)
+    if (r) return r
+  }
+  return null
+}
+
+function findKey(node, key, depth = 0) {
+  if (!node || typeof node !== 'object' || depth > 4) return undefined
+  if (key in node) return node[key]
+  for (const v of Object.values(node)) {
+    const r = findKey(v, key, depth + 1)
+    if (r !== undefined) return r
+  }
+  return undefined
+}
+
+const normNum = x => {
+  const s = String(x ?? '').trim()
+  return /^\d+(\.\d+)?$/.test(s) ? String(parseFloat(s)) : s
 }
 
 // bentuk item list yang sama dengan scraper lain
@@ -63,38 +117,64 @@ function toItem(i) {
     cover: cover(i.gambar),
     type: i.type || '',
     status: i.status || '',
-    rating: null,
+    rating: i.rating?.value ? Number(Number(i.rating.value).toFixed(2)) : null,
     chapterCount: null,
     genres: genresOf(i),
-    chapters: last ? [{ slug: last, number: last, isNew: false, timeAgo: '' }] : []
+    updatedAt: i.updated_at ?? null,
+    chapters: last ? [{ slug: last, number: normNum(last), isNew: false, timeAgo: '' }] : []
   }
 }
 
-const pageOf = (data, page) => {
-  const max = parseInt(data?.maxPage ?? 1, 10) || 1
-  const items = (data?.data ?? []).map(toItem).filter(x => x.slug)
+const pageOf = (root, page) => {
+  const list = Array.isArray(root?.data) ? root.data : findItems(root) || []
+  const max = parseInt(findKey(root, 'maxPage') ?? 1, 10) || 1
+  const items = list.map(toItem).filter(x => x.slug)
   return { items, page, pages: Math.max(max, page), total: items.length }
 }
+
+// halaman list: data ada di initialData (atau data) tergantung rute
+const listRoot = p => p.initialData ?? p.data ?? p
 
 const safePage = p => Math.max(1, parseInt(p, 10) || 1)
 
 /* ───────────── list endpoints ───────────── */
 
 export async function search(query, { limit = 10 } = {}) {
-  const p = await nextData(`/komik/list?name=${encodeURIComponent(query)}&page=1`)
-  return pageOf(p.initialData, 1).items.slice(0, limit)
+  let items = []
+  try {
+    const p = await nextData(`/komik/list?name=${encodeURIComponent(query)}&page=1`)
+    items = pageOf(listRoot(p), 1).items
+  } catch {}
+  if (!items.length) {
+    // cadangan: endpoint pencarian yang dipakai kotak search situs
+    try {
+      const j = await http.get(`/api/content/search?name=${encodeURIComponent(query)}`, { json: true, ttl: MIN })
+      items = (Array.isArray(j?.data) ? j.data : []).map(toItem).filter(x => x.slug)
+    } catch {}
+  }
+  return items.slice(0, limit)
 }
 
 export async function latest({ page = 1 } = {}) {
   page = safePage(page)
   const p = await nextData(`/komik/update?page=${page}`)
-  return pageOf(p.initialData, page).items
+  return pageOf(listRoot(p), page).items
 }
 
 export async function popular({ limit = 10 } = {}) {
-  const d = (await nextData('/', 5 * MIN)).data ?? {}
-  let list = d.updateProject ?? d.project ?? []
-  if (!list.length) list = d.updateNonProject ?? []
+  let list = []
+  try {
+    const home = await nextData('/', 5 * MIN)
+    const d = home.data ?? home
+    list = [d.updateProject, d.project, d.updateNonProject, d.popular, d.top].find(a => Array.isArray(a) && a.length) || findItems(home) || []
+  } catch {}
+  if (!list.length) {
+    // beranda kosong / berubah: jangan balikin kosong, pakai daftar update terbaru
+    try {
+      list = (await latest({ page: 1 })).map(x => ({ ...x, title_slug: x.slug }))
+      return list.slice(0, limit)
+    } catch {}
+  }
   return list.slice(0, limit).map(toItem).filter(x => x.slug)
 }
 
@@ -104,7 +184,7 @@ export async function browse({ q = '', genre = '', type = '', page = 1 } = {}) {
   const t = String(type || '').toLowerCase().trim()
   if (t) {
     const p = await nextData(`/komik/type/${encodeURIComponent(t)}?page=${page}`)
-    return pageOf(p.data, page)
+    return pageOf(p.data ?? listRoot(p), page)
   }
 
   const g = [].concat(genre).filter(Boolean)[0] || ''
@@ -116,11 +196,11 @@ export async function browse({ q = '', genre = '', type = '', page = 1 } = {}) {
     return `/komik/list?${qs}`
   }
 
-  let res = pageOf((await nextData(build(g))).initialData, page)
+  let res = pageOf(listRoot(await nextData(build(g))), page)
   if (g && !res.items.length) {
     // situsnya kadang case-sensitive: coba "Action" kalau "action" kosong
     const cap = g.charAt(0).toUpperCase() + g.slice(1)
-    if (cap !== g) res = pageOf((await nextData(build(cap))).initialData, page)
+    if (cap !== g) res = pageOf(listRoot(await nextData(build(cap))), page)
   }
   return res
 }
@@ -131,58 +211,87 @@ export async function genres() {
 
 /* ───────────── detail ───────────── */
 
-async function chapterList(slug, latestChapter = '') {
+const chapterEntry = (c, newest) => {
+  const raw = String(c.chapter ?? c)
+  const number = normNum(raw)
+  return {
+    slug: raw, // persis seperti di URL situs (mis. "005", "065.5")
+    number,
+    title: `Chapter ${number}`,
+    timeAgo: '',
+    date: c.updated_at ?? c.created_at ?? null,
+    isNew: raw === newest
+  }
+}
+
+const sortChapters = list => list.sort((a, b) => parseFloat(b.number) - parseFloat(a.number))
+
+async function chapterList(slug, chapterData, latestChapter = '') {
+  const newest = String(chapterData?.newChapter?.[0]?.chapter ?? latestChapter ?? '')
+
+  if (Array.isArray(chapterData?.chapter) && chapterData.chapter.length) {
+    return sortChapters(chapterData.chapter.map(c => chapterEntry(c, newest)))
+  }
+
   try {
     const json = await http.get(`/api/komik/${slug}/chapter?limit=1000`, { json: true, ttl: MIN })
     if (Array.isArray(json?.chapter) && json.chapter.length) {
-      return json.chapter
-        .map(c => ({
-          slug: String(c.chapter),
-          number: String(c.chapter),
-          title: `Chapter ${c.chapter}`,
-          timeAgo: '',
-          date: c.updated_at ?? c.created_at ?? null
-        }))
-        .sort((a, b) => parseFloat(b.number) - parseFloat(a.number))
+      return sortChapters(json.chapter.map(c => chapterEntry(c, newest)))
     }
   } catch {}
 
-  // fallback: bikin daftar 1..latest_chapter
+  // fallback terakhir: bikin daftar 1..latest_chapter
   const max = parseInt(String(latestChapter).match(/\d+/)?.[0] ?? 0, 10)
   const out = []
-  for (let i = max; i >= 1; i--) out.push({ slug: String(i), number: String(i), title: `Chapter ${i}`, timeAgo: '', date: null })
+  for (let i = max; i >= 1; i--) out.push(chapterEntry({ chapter: String(i) }, String(max)))
   return out
 }
+
+const splitAlt = s =>
+  String(s || '')
+    .split(/\s*,\s*/)
+    .map(x => x.trim())
+    .filter(Boolean)
 
 export async function detail(slugOrUrl) {
   const slug = toSlug(slugOrUrl)
   if (!slug) throw new Error('Slug wajib diisi')
 
-  const d = (await nextData(`/${slug}`)).data
-  if (!d) {
+  const props = await nextData(`/${slug}`)
+  const d = props.data
+  if (!d || typeof d !== 'object' || (!d.title && !d.title_slug)) {
     const err = new Error(`Komik "${slug}" tidak ditemukan`)
     err.status = 404
     throw err
   }
 
   const realSlug = d.title_slug || slug
-  const chapters = await chapterList(slug, d.latest_chapter)
+  const chapters = await chapterList(slug, props.chapterData, d.latest_chapter)
+  const rating = d.rating?.value ? d.rating : props.ratingData?.rating
+  const first = props.chapterData?.startChapter?.[0]?.chapter ?? chapters[chapters.length - 1]?.slug ?? null
+  const newest = props.chapterData?.newChapter?.[0]?.chapter ?? chapters[0]?.slug ?? null
+
   return {
     title: d.title || realSlug,
     slug: realSlug,
     url: `${BASE}/${realSlug}`,
     cover: cover(d.gambar),
-    alt: d.title_alt ? [d.title_alt] : [],
-    synopsis: d.sinopsis || '',
+    alt: splitAlt(d.title_alt),
+    synopsis: String(d.sinopsis || '').replace(/\r\n?/g, '\n').trim(),
     status: d.status || '',
     type: d.type || '',
     author: d.author || '',
     artist: d.artist || '',
-    year: '',
-    views: null,
-    rating: d.rating?.value ? Number(Number(d.rating.value).toFixed(2)) : null,
-    ratingCount: d.rating?.member ?? null,
+    year: d.tahun ? String(d.tahun) : '',
+    views: d.views ?? null,
+    rating: rating?.value ? Number(Number(rating.value).toFixed(2)) : null,
+    ratingCount: rating?.member ?? null,
     genres: genresOf(d),
+    adult: Boolean(d.GenrePeringatan) || d.contentRating === 'adult_plus',
+    contentRating: d.contentRating || '',
+    updatedAt: d.updated_at ?? null,
+    firstChapter: first != null ? String(first) : null,
+    latestChapter: newest != null ? String(newest) : null,
     totalChapters: chapters.length,
     chapters, // terbaru → terlama
     related: []
@@ -201,24 +310,41 @@ export async function chapter(slugOrUrl, chapterNum) {
   }
   if (!slug || !ch) throw new Error('Slug komik dan nomor chapter wajib diisi')
 
-  // beberapa chapter pakai nol di depan (5 → 05 / 005)
-  const candidates = [ch]
-  if (/^\d+$/.test(ch)) candidates.push(ch.padStart(3, '0'), ch.padStart(2, '0'))
+  // daftar chapter (dari halaman detail, ter-cache) → tahu format asli ("005" vs "5")
+  let list = []
+  try {
+    const dp = await nextData(`/${slug}`)
+    list = await chapterList(slug, dp.chapterData, dp.data?.latest_chapter)
+  } catch {}
+  const want = normNum(ch)
+  const known = list.find(c => c.slug === ch) || list.find(c => c.number === want)
+
+  const candidates = [...new Set([known?.slug, ch, ...(/^\d+$/.test(ch) ? [ch.padStart(3, '0'), ch.padStart(2, '0')] : [])].filter(Boolean))]
 
   let props = null
-  let resolved = ch
-  for (let i = 0; i < candidates.length; i++) {
+  let resolved = candidates[0]
+  let lastErr
+  for (const c of candidates) {
     try {
-      props = await nextData(`/${slug}/chapter/${candidates[i]}`, 5 * MIN)
-      resolved = candidates[i]
-      break
+      const p = await nextData(`/${slug}/chapter/${c}`, 5 * MIN)
+      if (p.data || p.imgList) {
+        props = p
+        resolved = c
+        break
+      }
     } catch (e) {
-      if (i === candidates.length - 1) throw e
+      lastErr = e
     }
   }
+  if (!props) {
+    if (lastErr) throw lastErr
+    const err = new Error(`Chapter "${ch}" tidak ditemukan`)
+    err.status = 404
+    throw err
+  }
 
-  let raw = Array.isArray(props?.imgList) ? props.imgList : []
-  const alt = Boolean(props?.data?.data?.storageInter2)
+  let raw = Array.isArray(props.imgList) ? props.imgList : []
+  const alt = Boolean(props.data?.data?.storageInter2)
 
   if (!raw.length) {
     try {
@@ -227,22 +353,33 @@ export async function chapter(slugOrUrl, chapterNum) {
     } catch {}
   }
 
-  // prev / next dari daftar chapter (sudah ke-cache kalau detail baru dibuka)
-  const list = await chapterList(slug).catch(() => [])
-  const idx = list.findIndex(c => c.number === ch || c.number === String(parseInt(ch, 10)))
-  const next = idx > 0 ? list[idx - 1].slug : null
-  const prev = idx !== -1 && idx < list.length - 1 ? list[idx + 1].slug : null
+  // prev / next: pakai data dari halaman chapter, cadangan dari daftar chapter
+  const idx = list.findIndex(c => c.slug === resolved)
+  const nb = props.data?.nextChapter?.[0]?.chapter
+  const pb = props.data?.prevChapter?.[0]?.chapter
+  const next = nb != null ? String(nb) : idx > 0 ? list[idx - 1].slug : null
+  const prev = pb != null ? String(pb) : idx !== -1 && idx < list.length - 1 ? list[idx + 1].slug : null
+
+  const komik = props.data?.komik ?? {}
+  const images = raw.map(src => imageUrl(src, alt)).filter(Boolean)
 
   return {
-    title: `Chapter ${ch}`,
+    title: `Chapter ${normNum(resolved)}`,
     comic: slug,
-    chapter: ch,
+    comicTitle: komik.title || '',
+    cover: cover(komik.gambar),
+    chapter: resolved,
+    number: normNum(resolved),
     url: `${BASE}/${slug}/chapter/${resolved}`,
-    images: raw.map(src => imageUrl(src, alt)).filter(Boolean),
+    totalImages: images.length,
+    images,
     prev,
     next
   }
 }
+
+/** Kosongkan cache HTTP (dipakai test). */
+export const resetCache = () => http.clear()
 
 /* ───────────── provider export ───────────── */
 

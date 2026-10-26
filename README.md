@@ -105,3 +105,11 @@ scripts/smoke-test.mjs   tes scraper ke situs asli
 2. Import dan tambahkan ke array `PROVIDERS` di `src/scrapers/index.js`.
 
 Route, cache, rate limit, pencarian gabungan, dan image proxy langsung ikut. Cek dengan `npm run smoke namabaru`.
+
+## Catatan SoftKomik
+
+Halaman detail & chapter SoftKomik mengirim datanya terenkripsi (`pageProps._stk`,
+AES CryptoJS format OpenSSL). Scraper otomatis mendekripsinya
+(`src/scrapers/softkomik-crypto.js`). Kalau suatu saat endpoint mendadak error
+"Gagal mendekripsi data SoftKomik", situs kemungkinan mengganti kuncinya — ambil
+nilai `NEXT_PUBLIC_ENCRYPTION_KEY` dari bundle JS situs dan set env `SOFTKOMIK_KEY`.
