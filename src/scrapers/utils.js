@@ -10,7 +10,6 @@ export const num = s => {
   return m ? parseFloat(m[0]) : null
 }
 
-/** Daftarkan host gambar dari respons sumber ke allowlist image proxy (https + domain, bukan IP). */
 export function trackHost(hosts, url) {
   try {
     const u = new URL(url)
@@ -20,10 +19,6 @@ export function trackHost(hosts, url) {
   return url
 }
 
-/**
- * HTTP client kecil: retry, cache (TTL), dan dedupe request yang sama.
- * Dipakai semua scraper biar konsisten & cepat.
- */
 export function createHttp({ base, referer = base + '/', headers = {}, timeout = 15000, retries = 2 } = {}) {
   const cache = new Map()
   const inflight = new Map()
@@ -53,14 +48,13 @@ export function createHttp({ base, referer = base + '/', headers = {}, timeout =
         return json ? await res.json() : await res.text()
       } catch (e) {
         lastError = e
-        if (e.status === 404) break // gak perlu retry
+        if (e.status === 404) break
         if (i < retries) await sleep(400 * (i + 1))
       }
     }
     throw lastError
   }
 
-  /** get(path, { json, ttl }) — ttl dalam ms, 0 = tanpa cache */
   function get(path, { json = false, ttl = 0 } = {}) {
     const url = path.startsWith('http') ? path : base + path
     const key = (json ? 'j:' : 't:') + url
@@ -84,4 +78,33 @@ export function createHttp({ base, referer = base + '/', headers = {}, timeout =
   }
 
   return { get, clear: () => cache.clear() }
+}
+
+export function createMirrorHttp({ bases, ...options }) {
+  const clients = bases.map(base => ({ base, http: createHttp({ ...options, base, referer: base + '/' }) }))
+  let active = 0
+
+  async function get(path, opts) {
+    let notFound = null
+    let lastError = null
+    for (let n = 0; n < clients.length; n++) {
+      const i = (active + n) % clients.length
+      try {
+        const out = await clients[i].http.get(path, opts)
+        active = i
+        return out
+      } catch (e) {
+        if (e.status === 404) notFound ??= e
+        else lastError = e
+      }
+    }
+    throw notFound || lastError
+  }
+
+  return {
+    get,
+    base: () => clients[active].base,
+    bases: () => clients.map(c => c.base),
+    clear: () => clients.forEach(c => c.http.clear())
+  }
 }

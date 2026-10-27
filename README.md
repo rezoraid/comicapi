@@ -95,7 +95,7 @@ src/
     index.js         registry — daftar sumber
     lumos.js         Lumos (03.lumosgg.com)
     manta.js         Manta Comics
-    komiku.js        Komiku (komiku.id)
+    komiku.js        Komiku (komiku.org, cadangan komiku.id)
     shinigami.js     Shinigami
     utils.js         HTTP client (retry, cache, dedupe) + trackHost
 test/                tes server
