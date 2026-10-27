@@ -1,5 +1,4 @@
 const ALLOWED = [
-  'komiku.asia',
   'lumosgg.com',
   'lumoskomik.com'
 ]

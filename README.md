@@ -1,6 +1,6 @@
 # comic-api
 
-Server scraper komik untuk aplikasi (APK). Sumber: **Lumos**, **Manta**, **Komiku**, **Shinigami**.
+Server scraper komik untuk aplikasi (APK). Sumber: **Lumos**, **Manta**, **Shinigami**.
 Satu pintu API, semua sumber punya bentuk data yang sama — cepat, ringan, cache agresif.
 
 ## Jalankan
@@ -95,7 +95,6 @@ src/
     index.js         registry — daftar sumber
     lumos.js         Lumos (03.lumosgg.com)
     manta.js         Manta Comics
-    komiku.js        Komiku (01.komiku.asia)
     shinigami.js     Shinigami
     utils.js         HTTP client (retry, cache, dedupe) + trackHost
 test/                tes server
@@ -114,7 +113,7 @@ Route, cache, rate limit, pencarian gabungan, dan image proxy langsung ikut. Cek
 
 ## Kalau muncul HTTP 403 (IP server diblokir)
 
-Komiku dan Lumos kadang menolak IP datacenter seperti Railway, dan yang diblokir bisa berganti tiap deploy.
+Lumos kadang menolak IP datacenter seperti Railway, dan yang diblokir bisa berganti tiap deploy.
 Alurnya: request langsung → kalau 403/429/503, diulang lewat relay.
 Relay yang berhasil diingat 10 menit, lalu dicoba langsung lagi.
 
