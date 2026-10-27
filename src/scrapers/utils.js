@@ -35,8 +35,8 @@ export function createHttp({ base, referer = base + '/', headers = {}, timeout =
       try {
         const res = await fetch(url, {
           headers: {
-            ...baseHeaders,
-            accept: json ? 'application/json, text/plain, */*' : 'text/html,application/xhtml+xml,*/*'
+            accept: json ? 'application/json, text/plain, */*' : 'text/html,application/xhtml+xml,*/*',
+            ...baseHeaders
           },
           signal: AbortSignal.timeout(timeout)
         })
@@ -85,6 +85,7 @@ export function createMirrorHttp({ bases, ...options }) {
   let active = 0
 
   async function get(path, opts) {
+    if (/^https?:\/\//i.test(path)) return clients[active].http.get(path, opts)
     let notFound = null
     let lastError = null
     for (let n = 0; n < clients.length; n++) {

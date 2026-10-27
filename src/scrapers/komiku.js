@@ -1,9 +1,11 @@
 import * as cheerio from 'cheerio'
 import { createMirrorHttp, clean, trackHost } from './utils.js'
 
-const BASES = ['https://komiku.org', 'https://komiku.id']
+const BASES = ['https://komiku.id', 'https://komiku.org']
 const API = 'https://api.komiku.org'
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+
+const ACCEPT = 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
 
 const MIN = 60 * 1000
 const TYPES = ['manga', 'manhwa', 'manhua']
@@ -17,7 +19,7 @@ const GENRES = [
   'Slice of Life', 'Sports', 'Supernatural', 'Tragedy'
 ]
 
-const http = createMirrorHttp({ bases: BASES, headers: { 'user-agent': UA } })
+const http = createMirrorHttp({ bases: BASES, headers: { 'user-agent': UA, accept: ACCEPT } })
 
 const site = () => http.base()
 const notFound = msg => Object.assign(new Error(msg), { status: 404 })
@@ -294,7 +296,7 @@ export async function detail(slug) {
 async function fetchChapter(slug, chapterSlug) {
   const n = String(chapterSlug).replace(/^chapter-/i, '')
   const isNum = /^\d+(?:[.-]\d+)?$/.test(n)
-  const candidates = [`${slug}-${chapterSlug}`, chapterSlug]
+  const candidates = [`${slug}-${chapterSlug}`, chapterSlug, `manga/${slug}/${chapterSlug}`]
   if (isNum) {
     const d = n.replace('.', '-')
     candidates.push(`${slug}-chapter-${d}`, `${slug}-chapter-${d.padStart(2, '0')}`, `${slug}-chapter-${d.padStart(3, '0')}`)
@@ -303,7 +305,7 @@ async function fetchChapter(slug, chapterSlug) {
   let lastErr = null
   for (const full of new Set(candidates)) {
     try {
-      const html = await http.get(`/${encodeURIComponent(full)}/`, { ttl: 5 * MIN })
+      const html = await http.get(`/${full.split('/').map(encodeURIComponent).join('/')}/`, { ttl: 5 * MIN })
       if (/Baca_Komik|chapter-body|article_content/.test(html)) return { full, html }
     } catch (e) {
       lastErr = e
