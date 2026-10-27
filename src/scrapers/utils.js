@@ -48,7 +48,7 @@ export function createHttp({ base, referer = base + '/', headers = {}, timeout =
         return json ? await res.json() : await res.text()
       } catch (e) {
         lastError = e
-        if (e.status === 404) break
+        if (e.status === 404 || e.status === 403) break
         if (i < retries) await sleep(400 * (i + 1))
       }
     }
