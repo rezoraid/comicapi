@@ -8,10 +8,12 @@
  *   2. import di bawah lalu masukkan ke array PROVIDERS. Selesai —
  *      route, cache, dan image proxy otomatis ikut.
  */
+import lumos from './lumos.js'
 import manta from './manta.js'
+import komiku from './komiku.js'
 import shinigami from './shinigami.js'
 
-const PROVIDERS = [manta, shinigami]
+const PROVIDERS = [lumos, manta, komiku, shinigami]
 const METHODS = ['search', 'latest', 'popular', 'browse', 'genres', 'detail', 'chapter']
 
 const providers = new Map()

@@ -1,6 +1,6 @@
 # comic-api
 
-Server scraper komik untuk aplikasi (APK). Sumber: **Manta**, **Shinigami**.
+Server scraper komik untuk aplikasi (APK). Sumber: **Lumos**, **Manta**, **Komiku**, **Shinigami**.
 Satu pintu API, semua sumber punya bentuk data yang sama — cepat, ringan, cache agresif.
 
 ## Jalankan
@@ -48,14 +48,14 @@ Kalau `API_KEY` diisi, kirim header `x-api-key`.
 | `GET /api/search?q=&limit=` | cari di **semua** sumber sekaligus (hasil `source` per item) |
 | `GET /api/:source/search?q=&limit=` | cari di satu sumber |
 | `GET /api/:source/latest?page=` | update terbaru |
-| `GET /api/:source/popular?period=&limit=` | populer (tidak semua sumber mendukung → `501`) |
+| `GET /api/:source/popular?period=&limit=` | populer (lumos: `weekly`/`monthly`/`alltime`) |
 | `GET /api/:source/browse?q=&genre=&type=&status=&sort=&min=&page=` | filter lengkap |
 | `GET /api/:source/genres` | daftar genre |
 | `GET /api/:source/comic/:slug` | detail + daftar chapter (terbaru → terlama) |
 | `GET /api/:source/chapter/:slug/:chapter` | gambar chapter + `prev`/`next` |
 | `GET /api/image?url=` | image proxy (lihat bawah) |
 
-Filter per sumber ada di `/api/sources` → `filters` (mis. manta: `types`).
+Filter per sumber ada di `/api/sources` → `filters` (mis. lumos: `types`, `statuses`, `sorts`).
 
 ### Menampilkan gambar di APK
 
@@ -93,7 +93,9 @@ src/
   lib/               cache TTL, errors, timeout
   scrapers/
     index.js         registry — daftar sumber
+    lumos.js         Lumos (03.lumosgg.com)
     manta.js         Manta Comics
+    komiku.js        Komiku (01.komiku.asia)
     shinigami.js     Shinigami
     utils.js         HTTP client (retry, cache, dedupe) + trackHost
 test/                tes server
@@ -104,7 +106,7 @@ scripts/smoke-test.mjs   tes scraper ke situs asli
 
 1. Buat `src/scrapers/namabaru.js`, export default:
    `{ id, name, base, imageHeaders, imageHosts, filters?, search, latest, popular, browse, genres, detail, chapter }`
-   (bentuk item/detail ikuti `manta.js`). Method yang tidak didukung boleh dihilangkan → endpoint jawab `501`.
+   (bentuk item/detail ikuti `lumos.js`). Method yang tidak didukung boleh dihilangkan → endpoint jawab `501`.
 2. Import dan tambahkan ke array `PROVIDERS` di `src/scrapers/index.js`.
 
 Route, cache, rate limit, pencarian gabungan, dan image proxy langsung ikut. Cek dengan `npm run smoke namabaru`.
@@ -112,8 +114,8 @@ Route, cache, rate limit, pencarian gabungan, dan image proxy langsung ikut. Cek
 
 ## Kalau muncul HTTP 403 (IP server diblokir)
 
-Sebagian situs sumber kadang menolak IP datacenter seperti Railway, dan yang diblokir bisa berganti tiap deploy.
-Scraper yang dipasang relay (`createHttp({ relay })` di `utils.js`) akan mengulang lewat relay kalau tetap 403/429/503.
+Komiku dan Lumos kadang menolak IP datacenter seperti Railway, dan yang diblokir bisa berganti tiap deploy.
+Alurnya: request langsung → kalau 403/429/503, diulang lewat relay.
 Relay yang berhasil diingat 10 menit, lalu dicoba langsung lagi.
 
 - **Bawaan**: dua relay publik (kurang stabil, bisa mati kapan saja). Matikan dengan `RELAY_PUBLIC=false`.

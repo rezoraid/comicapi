@@ -1,435 +1,253 @@
 import * as cheerio from 'cheerio'
-import { createMirrorHttp, relaysFromEnv, clean, trackHost } from './utils.js'
+import { createHttp, relaysFromEnv, clean, trackHost } from './utils.js'
 
-const BASES = ['https://komiku.id', 'https://komiku.org']
-const API = 'https://api.komiku.org'
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
-const MOBILE_UA = 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36'
-const RELAYS = relaysFromEnv('KOMIKU_RELAY', 'RELAY_URL')
-
-const ACCEPT = 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+const BASE = 'https://01.komiku.asia'
+const UA =
+  'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36'
 
 const MIN = 60 * 1000
-const TYPES = ['manga', 'manhwa', 'manhua']
-const SORTS = ['latest', 'popular']
-const imageHosts = ['komiku.org', 'komiku.id']
-const BAD_IMG = /lazy\.jpg|promosi|iklan|logo/i
+const imageHosts = [new URL(BASE).hostname]
 
-const GENRES = [
-  'Action', 'Adventure', 'Comedy', 'Drama', 'Ecchi', 'Fantasy', 'Gore', 'Harem', 'Historical', 'Horror', 'Isekai', 'Josei',
-  'Martial Arts', 'Mecha', 'Mystery', 'Psychological', 'Romance', 'School Life', 'Sci-Fi', 'Seinen', 'Shoujo', 'Shounen',
-  'Slice of Life', 'Sports', 'Supernatural', 'Tragedy'
-]
-
-const browserHeaders = (ua, mobile) => ({
-  'user-agent': ua,
-  accept: ACCEPT,
-  'sec-ch-ua': '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
-  'sec-ch-ua-mobile': mobile ? '?1' : '?0',
-  'sec-ch-ua-platform': mobile ? '"Android"' : '"Windows"',
-  'sec-fetch-dest': 'document',
-  'sec-fetch-mode': 'navigate',
-  'sec-fetch-site': 'same-origin',
-  'upgrade-insecure-requests': '1'
+const http = createHttp({
+  base: BASE,
+  referer: `${BASE}/`,
+  headers: { 'user-agent': UA },
+  timeout: 12000,
+  relay: relaysFromEnv('KOMIKU_RELAY', 'RELAY_URL')
 })
 
-const PROFILES = [{ 'user-agent': UA, accept: ACCEPT }, browserHeaders(UA, false), browserHeaders(MOBILE_UA, true)]
-const clients = PROFILES.map(headers => createMirrorHttp({ bases: BASES, headers, retries: 1, fatal: [404, 403] }))
-const relayed = createMirrorHttp({ bases: BASES, headers: PROFILES[0], retries: 1, fatal: [404, 403], relay: RELAYS })
-let profile = 0
-let relayUntil = 0
+/* ───────────── helpers ───────────── */
 
-async function direct(path, opts) {
-  let lastErr = null
-  for (let n = 0; n < clients.length; n++) {
-    const i = (profile + n) % clients.length
-    try {
-      const out = await clients[i].get(path, opts)
-      profile = i
-      return out
-    } catch (e) {
-      if (e.status !== 403) throw e
-      lastErr = e
-    }
-  }
-  throw lastErr
-}
-
-const http = {
-  async get(path, opts) {
-    if (Date.now() < relayUntil) {
-      try {
-        return await relayed.get(path, opts)
-      } catch (e) {
-        if (e.status === 404) throw e
-        relayUntil = 0
-      }
-    }
-    try {
-      return await direct(path, opts)
-    } catch (e) {
-      if (e.status !== 403 || !RELAYS.length) throw e
-      try {
-        const out = await relayed.get(path, opts)
-        relayUntil = Date.now() + 10 * 60 * 1000
-        return out
-      } catch (r) {
-        throw r.status === 404 ? r : e
-      }
-    }
-  },
-  base: () => clients[profile].base(),
-  clear: () => {
-    clients.forEach(c => c.clear())
-    relayed.clear()
+const absolute = value => {
+  if (!value) return ''
+  try {
+    return new URL(value, BASE).href
+  } catch {
+    return ''
   }
 }
 
-const site = () => http.base()
+const img = value => {
+  const url = absolute(value)
+  return url ? trackHost(imageHosts, url) : ''
+}
+
+const slugOf = value => {
+  try {
+    return new URL(value, BASE).pathname.match(/\/manga\/([^/]+)/)?.[1] || ''
+  } catch {
+    return ''
+  }
+}
+
 const notFound = msg => Object.assign(new Error(msg), { status: 404 })
-const genreSlug = g => String(g).trim().toLowerCase().replace(/\s+/g, '-')
-const pageSeg = page => (page > 1 ? `page/${page}/` : '')
 
-function absolute(src) {
-  const s = String(src || '').trim()
-  if (!s) return ''
-  if (s.startsWith('//')) return `https:${s}`
-  if (s.startsWith('/')) return site() + s
-  return s.replace(/^http:\/\//i, 'https://')
+async function fetchPage(path, ttl = 0) {
+  return cheerio.load(await http.get(path, { ttl }))
 }
 
-const img = src => (src ? trackHost(imageHosts, absolute(src)) : '')
-
-function pickImage($el) {
-  for (const name of ['data-src', 'data-lazy-src', 'data-original', 'src']) {
-    const v = ($el.attr(name) || '').trim()
-    if (v && !BAD_IMG.test(v) && !v.startsWith('data:')) return v
-  }
-  return ''
-}
-
-function pathOf(input) {
-  let s = String(input || '').trim()
-  if (/^https?:\/\//i.test(s)) {
+function jsonLd($) {
+  const results = []
+  $('script[type="application/ld+json"]').each((_, el) => {
     try {
-      s = new URL(s).pathname
+      const value = JSON.parse($(el).html() || '')
+      results.push(...(Array.isArray(value) ? value : [value]))
     } catch {}
-  }
-  return s.replace(/^\/+|\/+$/g, '')
-}
-
-const comicSlug = href => pathOf(href).replace(/^manga\//i, '').replace(/\/.*$/, '').replace(/-chapter-\d.*$/i, '')
-
-const shortChapter = (comic, full) => (full.startsWith(comic + '-') ? full.slice(comic.length + 1) : full)
-
-function chapterNum(text) {
-  const cleaned = String(text ?? '')
-    .replace(/Terbaru\s*:?/gi, '')
-    .replace(/Awal\s*:?/gi, '')
-    .replace(/Chapter\s*/gi, '')
-    .replace(/Ch\.?\s*/gi, '')
-  const m = cleaned.match(/(\d+(?:[.-]\d+)?)/)
-  return m ? m[1].replace('-', '.') : ''
-}
-
-function sortChapters(list) {
-  return list.sort((x, y) => {
-    const a = parseFloat(x.number)
-    const b = parseFloat(y.number)
-    if (Number.isNaN(a) && Number.isNaN(b)) return 0
-    if (Number.isNaN(a)) return 1
-    if (Number.isNaN(b)) return -1
-    return b - a
   })
-}
-
-function statusOf(raw) {
-  const s = clean(raw).toLowerCase()
-  if (/tamat|completed|selesai/.test(s)) return 'completed'
-  if (/berjalan|ongoing/.test(s)) return 'ongoing'
-  return s
+  return results
 }
 
 const item = (o = {}) => ({
   title: '',
   slug: '',
-  url: `${site()}/manga/${o.slug}/`,
+  url: `${BASE}/manga/${o.slug}`,
   cover: '',
   type: '',
   status: '',
   rating: null,
-  chapterCount: null,
-  chapters: [],
+  latestChapter: null,
   ...o
 })
 
-function parseCards($) {
-  const out = []
+function parseCards($, selector = 'article') {
+  const results = []
   const seen = new Set()
-  $('.bge, .manga-card').each((_, el) => {
-    const $el = $(el)
-    const a = $el.find('a[href*="/manga/"]').first().length ? $el.find('a[href*="/manga/"]').first() : $el.find('a').first()
-    const slug = comicSlug(a.attr('href'))
+
+  $(selector).each((_, el) => {
+    const card = $(el)
+    const link = card.find('a[href*="/manga/"]').first()
+    const slug = slugOf(link.attr('href'))
     if (!slug || seen.has(slug)) return
+
+    const title = clean(card.find('h2, h3, h4').first().text() || link.attr('title') || link.attr('aria-label'))
+    if (!title) return
     seen.add(slug)
 
-    const latestNum = chapterNum($el.find('.new1 a').last().text() || $el.find('.chapter').last().text())
-    const chapters = latestNum ? [{ slug: `chapter-${latestNum}`, number: latestNum, isNew: false, timeAgo: '' }] : []
+    const image = card.find('img').first()
+    const ratingText = [
+      card.attr('aria-label'),
+      card.find('[aria-label*="Rating"]').attr('aria-label'),
+      card.find('.hero-rating, .top-stars, .trend-chips').text()
+    ]
+      .filter(Boolean)
+      .join(' ')
 
-    out.push(
+    const ratingMatch = ratingText.match(/(?:Rating\s*)?(\d{1,2}(?:\.\d+)?)/i)
+    const chapterMatch = card.text().match(/Chapter\s*(\d+(?:\.\d+)?)/i)
+
+    results.push(
       item({
-        title: clean($el.find('h3, h4').first().text()) || clean(a.attr('title')) || slug,
+        title,
         slug,
-        cover: img(pickImage($el.find('img').first())),
-        type: clean($el.find('.tpe1_inf b').first().text()).toLowerCase(),
-        chapters
+        cover: img(image.attr('src') || image.attr('data-src')),
+        rating: ratingMatch ? Number(ratingMatch[1]) : null,
+        latestChapter: chapterMatch ? chapterMatch[1] : null
       })
     )
   })
-  return out
+
+  return results
 }
 
-const hasNext = (items, $) => items.length >= 10 || $('a.next, .pagination .next, .hpage .r').length > 0
-
-async function list(paths, page, ttl = MIN) {
-  let lastErr = null
-  let empty = null
-  for (const path of paths) {
-    try {
-      const $ = cheerio.load(await http.get(path, { ttl }))
-      const items = parseCards($)
-      const result = { items, page, pages: hasNext(items, $) ? page + 1 : page, total: items.length }
-      if (items.length) return result
-      empty = result
-    } catch (e) {
-      lastErr = e
-    }
-  }
-  if (empty) return empty
-  throw lastErr
-}
-
-function typeListPaths(type, page, sort) {
-  const order = sort === 'popular' ? 'meta_value_num' : 'modified'
-  const t = encodeURIComponent(type)
-  return [`${API}/manga/${pageSeg(page)}?tipe=${t}&orderby=${order}`, `/daftar-komik/${pageSeg(page)}?tipe=${t}`]
-}
+/* ───────────── list endpoints ───────────── */
 
 export async function search(query, { limit = 10 } = {}) {
-  const q = encodeURIComponent(query)
-  const { items } = await list([`${API}/?post_type=manga&s=${q}`, `/?post_type=manga&s=${q}`], 1)
-  return items.slice(0, limit)
+  if (!clean(query)) return []
+  const $ = await fetchPage(`/browse?q=${encodeURIComponent(query)}`, MIN)
+  return parseCards($).slice(0, limit)
 }
 
-export async function latest({ page = 1 } = {}) {
-  if (page > 1) return (await list(typeListPaths('manhwa', page, 'latest'), page)).items
-  const [manga, manhwa] = await Promise.allSettled([
-    list(typeListPaths('manga', 1, 'latest'), 1),
-    list(typeListPaths('manhwa', 1, 'latest'), 1)
-  ])
-  const a = manga.status === 'fulfilled' ? manga.value.items : []
-  const b = manhwa.status === 'fulfilled' ? manhwa.value.items : []
-  if (!a.length && !b.length) {
-    if (manga.status === 'rejected') throw manga.reason
-    if (manhwa.status === 'rejected') throw manhwa.reason
-  }
-  const out = []
-  for (let i = 0; i < Math.max(a.length, b.length); i++) {
-    if (a[i]) out.push(a[i])
-    if (b[i]) out.push(b[i])
-  }
-  return out
+export async function latest({ page = 1, limit = 30 } = {}) {
+  const $ = await fetchPage(page > 1 ? `/browse?page=${page}&sort=latest` : '/', MIN)
+  let items = parseCards($, 'article.update-row')
+  if (!items.length) items = parseCards($)
+  return items.slice(0, limit)
 }
 
 export async function popular({ limit = 10 } = {}) {
-  let items = []
-  try {
-    items = (await list(typeListPaths('manhwa', 1, 'popular'), 1, 5 * MIN)).items
-  } catch {}
-  if (!items.length) items = await latest({ page: 1 })
+  const $ = await fetchPage('/', 5 * MIN)
+  let items = parseCards($, 'article.trend-card')
+  if (!items.length) items = parseCards($)
   return items.slice(0, limit)
 }
 
-export async function browse({ q = '', type = '', sort = '', genre = [], page = 1 } = {}) {
-  const g = [].concat(genre).filter(Boolean)[0]
-  if (g) {
-    if (TYPES.includes(g)) return list(typeListPaths(g, page, sort), page)
-    const slug = encodeURIComponent(genreSlug(g))
-    return list([`${API}/genre/${slug}/${pageSeg(page)}`, `/genre/${slug}/${pageSeg(page)}`], page)
-  }
+export async function browse({ q = '', page = 1, limit = 30 } = {}) {
   if (q) {
-    const items = await search(q, { limit: 30 })
-    return { items, page, pages: 1, total: items.length }
+    const items = await search(q, { limit })
+    return { items, page, total: items.length }
   }
-  return list(typeListPaths(type || 'manhwa', page, sort), page)
+  const $ = await fetchPage(`/browse?page=${page}`, 2 * MIN)
+  const items = parseCards($).slice(0, limit)
+  return { items, page, total: items.length }
 }
 
-export async function genres() {
-  const names = new Map(GENRES.map(n => [genreSlug(n), n]))
-  try {
-    const $ = cheerio.load(await http.get('/daftar-komik/', { ttl: 60 * MIN }))
-    $("a[href*='/genre/']").each((_, el) => {
-      const name = clean($(el).text())
-      const slug = pathOf($(el).attr('href')).replace(/^genre\//, '')
-      if (name && slug && !slug.includes('/') && !names.has(slug)) names.set(slug, name)
-    })
-  } catch {}
-  return [...names.values()]
-}
+/* ───────────── detail ───────────── */
 
-function infoRow($, label) {
-  let out = ''
-  const wanted = label.toLowerCase()
-  $('.inftable tr').each((_, tr) => {
-    const cells = $(tr).find('td')
-    if (cells.length >= 2 && clean($(cells[0]).text()).toLowerCase().includes(wanted)) {
-      out = clean($(cells[cells.length - 1]).text())
-      return false
-    }
-  })
-  return out
-}
+export async function detail(slug) {
+  const $ = await fetchPage(`/manga/${encodeURIComponent(slug)}`, 5 * MIN)
+  const series = jsonLd($).find(x => x['@type'] === 'CreativeWorkSeries') || {}
 
-function readChapters($, slug) {
+  const title = clean(series.name || $('.detail h1').first().text() || $('h1').first().text())
+  if (!title) throw notFound('Komik tidak ditemukan')
+
+  const genres = Array.isArray(series.genre)
+    ? series.genre
+    : series.genre
+      ? [series.genre]
+      : $('.dgenres .dgenre-chip')
+          .map((_, el) => clean($(el).text()))
+          .get()
+
   const chapters = []
   const seen = new Set()
 
-  const push = (href, text, timeAgo, strict) => {
-    if (!href || !/chapter-/i.test(href)) return
-    const full = pathOf(href).replace(/^manga\//i, '')
-    if (seen.has(full) || (strict && !full.startsWith(slug + '-'))) return
-    const number = (href.match(/chapter-(\d+(?:[.-]\d+)?)/i) || [])[1]?.replace('-', '.') || chapterNum(text)
-    if (!number) return
-    seen.add(full)
-    chapters.push({ slug: shortChapter(slug, full), number, title: `Chapter ${number}`, timeAgo })
-  }
+  $('a[href*="/read/id/"]').each((_, el) => {
+    const a = $(el)
+    const url = absolute(a.attr('href'))
+    const match = url.match(/\/read\/id\/([^/]+)\/([^/?#]+)/)
+    if (!match || seen.has(url)) return
+    seen.add(url)
 
-  $('#Daftar_Chapter tr, .chapter tr, tbody tr').each((_, el) => {
-    const $el = $(el)
-    const a = $el.find('td.judulseries a, a').first()
-    push(a.attr('href'), a.text(), clean($el.find('.tanggalseries, .tgl, .date').first().text()), false)
+    const label = clean(a.text())
+    const number = (label.match(/Chapter\s*(\d+(?:\.\d+)?)/i) || [])[1] || (match[2].match(/^ch(\d+)/i) || [])[1] || ''
+
+    chapters.push({
+      slug: match[2],
+      number,
+      title: label || `Chapter ${number}`,
+      url,
+      timeAgo: clean(a.find('time').text())
+    })
   })
 
-  if (!chapters.length) {
-    $('a[href*="chapter-"]').each((_, el) => push($(el).attr('href'), $(el).text(), '', true))
-  }
-  return sortChapters(chapters)
-}
+  // terbaru → terlama (urutan standar API); kalau ada nomor yang kosong, pakai urutan situs
+  if (chapters.every(c => c.number !== '')) chapters.sort((a, b) => parseFloat(b.number) - parseFloat(a.number))
 
-export async function detail(slug) {
-  const html = await http.get(`/manga/${encodeURIComponent(slug)}/`, { ttl: MIN })
-  const $ = cheerio.load(html)
-
-  const title =
-    [$('#Judul h1').text(), $('h1').first().text(), $('meta[property="og:title"]').attr('content')]
-      .map(t => clean(String(t || '').replace(/^\s*Komik\s+/i, '')))
-      .find(Boolean) || ''
-  if (!title) throw notFound('Komik tidak ditemukan')
-
-  const genreList = []
-  $('.genre li, .genre a').each((_, el) => {
-    const g = clean($(el).text())
-    if (g && !genreList.includes(g)) genreList.push(g)
-  })
-
-  const chapters = readChapters($, slug)
-  const alt = infoRow($, 'Judul Indonesia')
+  const rating = Number(series.aggregateRating?.ratingValue)
 
   return {
     title,
     slug,
-    url: `${site()}/manga/${slug}/`,
-    cover: img(pickImage($('.ims img').first()) || $('meta[property="og:image"]').attr('content') || ''),
-    alt: alt && alt !== title ? [alt] : [],
-    synopsis: clean($('.desc, .sin, #Sinopsis').first().text()) || clean($('meta[name="description"]').attr('content')),
-    status: statusOf(infoRow($, 'Status')),
-    type: infoRow($, 'Jenis').toLowerCase().replace(/^komik\s*/, ''),
-    author: infoRow($, 'Pengarang'),
-    artist: '',
-    year: '',
-    views: null,
-    rating: null,
-    ratingCount: null,
-    genres: genreList,
-    totalChapters: chapters.length,
-    chapters,
-    related: []
+    url: `${BASE}/manga/${slug}`,
+    cover: img(series.image || $('.detail-side img').first().attr('src') || $('meta[property="og:image"]').attr('content')),
+    synopsis: clean(series.description || $('.synopsis-text').text()),
+    type: clean($('.detail-type').text()),
+    author: series.author?.name || '',
+    status: '',
+    rating: Number.isFinite(rating) && series.aggregateRating?.ratingValue != null ? rating : null,
+    genres,
+    totalChapters: Number(series.numberOfEpisodes) || chapters.length,
+    chapters
   }
 }
 
-async function fetchChapter(slug, chapterSlug) {
-  const n = String(chapterSlug).replace(/^chapter-/i, '')
-  const isNum = /^\d+(?:[.-]\d+)?$/.test(n)
-  const candidates = [`${slug}-${chapterSlug}`, chapterSlug, `manga/${slug}/${chapterSlug}`]
-  if (isNum) {
-    const d = n.replace('.', '-')
-    candidates.push(`${slug}-chapter-${d}`, `${slug}-chapter-${d.padStart(2, '0')}`, `${slug}-chapter-${d.padStart(3, '0')}`)
-  }
-
-  let lastErr = null
-  for (const full of new Set(candidates)) {
-    try {
-      const html = await http.get(`/${full.split('/').map(encodeURIComponent).join('/')}/`, { ttl: 5 * MIN })
-      if (/Baca_Komik|chapter-body|article_content/.test(html)) return { full, html }
-    } catch (e) {
-      lastErr = e
-      if (e.status !== 404) throw e
-    }
-  }
-
-  const info = await detail(slug).catch(() => null)
-  const target = info?.chapters.find(c => c.slug === chapterSlug || c.number === n || parseFloat(c.number) === parseFloat(n))
-  if (target) {
-    const full = `${slug}-${target.slug}`
-    return { full, html: await http.get(`/${encodeURIComponent(full)}/`, { ttl: 5 * MIN }) }
-  }
-  throw lastErr || notFound(`Chapter ${chapterSlug} tidak ditemukan`)
-}
+/* ───────────── chapter (gambar) ───────────── */
 
 export async function chapter(slug, chapterSlug) {
-  const { full, html } = await fetchChapter(slug, chapterSlug)
-  const $ = cheerio.load(html)
+  const [info, $] = await Promise.all([
+    detail(slug).catch(() => null),
+    fetchPage(`/read/id/${encodeURIComponent(slug)}/${encodeURIComponent(chapterSlug)}`, 5 * MIN)
+  ])
 
+  const meta = jsonLd($).find(x => x['@type'] === 'Chapter') || {}
   const images = []
-  $('#Baca_Komik img, .chapter-body img, #article_content img').each((_, el) => {
-    const src = pickImage($(el))
-    const url = src ? img(src) : ''
-    if (url && !images.includes(url)) images.push(url)
+
+  $('.rd-page-image, #kompaca-reader img').each((_, el) => {
+    const src = img($(el).attr('src') || $(el).attr('data-src'))
+    if (src && !/logo|loading\.gif|lazy\.jpg|promosi|iklan/i.test(src) && !images.includes(src)) images.push(src)
   })
 
-  const short = shortChapter(slug, full)
-  const info = await detail(slug).catch(() => null)
-  const chapters = info?.chapters ?? []
-  const idx = chapters.findIndex(c => c.slug === short)
-  const number = idx !== -1 ? chapters[idx].number : chapterNum(short)
+  if (!images.length) throw notFound('Gambar chapter tidak ditemukan')
+
+  const list = info?.chapters ?? []
+  const idx = list.findIndex(c => c.slug === chapterSlug)
 
   return {
-    title: clean($('h1').first().text()) || `Chapter ${number}`,
+    title: clean($('.rd-ch-title').text() || $('h1').first().text() || meta.name),
     comic: slug,
-    chapter: short,
-    number,
-    url: `${site()}/${full}/`,
+    chapter: chapterSlug,
+    number: idx !== -1 ? list[idx].number : (chapterSlug.match(/^ch(\d+)/i) || [])[1] || chapterSlug,
+    url: `${BASE}/read/id/${slug}/${chapterSlug}`,
     totalImages: images.length,
     images,
-    prev: idx !== -1 && idx < chapters.length - 1 ? chapters[idx + 1].slug : null,
-    next: idx > 0 ? chapters[idx - 1].slug : null
+    prev: idx !== -1 && idx < list.length - 1 ? list[idx + 1].slug : null,
+    next: idx > 0 ? list[idx - 1].slug : null
   }
 }
 
+/** Kosongkan cache HTTP (dipakai test). */
 export const resetCache = () => http.clear()
 
 export default {
   id: 'komiku',
   name: 'Komiku',
-  base: BASES[0],
-  imageHeaders: { 'user-agent': UA, referer: BASES[0] + '/' },
+  base: BASE,
+  imageHeaders: { 'user-agent': UA, referer: `${BASE}/` },
   imageHosts,
-  filters: { types: TYPES, sorts: SORTS },
   search,
   latest,
   popular,
   browse,
-  genres,
   detail,
   chapter
 }
