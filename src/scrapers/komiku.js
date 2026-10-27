@@ -34,7 +34,7 @@ const browserHeaders = (ua, mobile) => ({
 })
 
 const PROFILES = [{ 'user-agent': UA, accept: ACCEPT }, browserHeaders(UA, false), browserHeaders(MOBILE_UA, true)]
-const clients = PROFILES.map(headers => createMirrorHttp({ bases: BASES, headers, retries: 1 }))
+const clients = PROFILES.map(headers => createMirrorHttp({ bases: BASES, headers, retries: 1, fatal: [404, 403] }))
 const relay = RELAY ? createHttp({ base: RELAY, retries: 1 }) : null
 let profile = 0
 

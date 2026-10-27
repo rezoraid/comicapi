@@ -5,7 +5,7 @@ const BASES = ['https://03.lumosgg.com', 'https://02.lumosgg.com', 'https://lumo
 const IMG_DEFAULT = { proxyEnabled: false, base: 'https://lms.imgsvr.my.id/file' }
 
 const MIN = 60 * 1000
-const http = createMirrorHttp({ bases: BASES, timeout: 10000, retries: 1 })
+const http = createMirrorHttp({ bases: BASES, timeout: 10000, retries: 2 })
 const site = () => http.base()
 
 let imgCfg = null

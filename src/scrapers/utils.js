@@ -19,7 +19,7 @@ export function trackHost(hosts, url) {
   return url
 }
 
-export function createHttp({ base, referer = base + '/', headers = {}, timeout = 15000, retries = 2 } = {}) {
+export function createHttp({ base, referer = base + '/', headers = {}, timeout = 15000, retries = 2, fatal = [404] } = {}) {
   const cache = new Map()
   const inflight = new Map()
   const baseHeaders = {
@@ -48,7 +48,7 @@ export function createHttp({ base, referer = base + '/', headers = {}, timeout =
         return json ? await res.json() : await res.text()
       } catch (e) {
         lastError = e
-        if (e.status === 404 || e.status === 403) break
+        if (fatal.includes(e.status)) break
         if (i < retries) await sleep(400 * (i + 1))
       }
     }
