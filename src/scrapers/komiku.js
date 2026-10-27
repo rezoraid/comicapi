@@ -1,11 +1,11 @@
 import * as cheerio from 'cheerio'
-import { createMirrorHttp, clean, trackHost } from './utils.js'
+import { createMirrorHttp, relaysFromEnv, clean, trackHost } from './utils.js'
 
 const BASES = ['https://komiku.id', 'https://komiku.org']
 const API = 'https://api.komiku.org'
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
 const MOBILE_UA = 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36'
-const RELAY = process.env.KOMIKU_RELAY || process.env.RELAY_URL || ''
+const RELAYS = relaysFromEnv('KOMIKU_RELAY', 'RELAY_URL')
 
 const ACCEPT = 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
 
@@ -34,27 +34,55 @@ const browserHeaders = (ua, mobile) => ({
 })
 
 const PROFILES = [{ 'user-agent': UA, accept: ACCEPT }, browserHeaders(UA, false), browserHeaders(MOBILE_UA, true)]
-const clients = PROFILES.map(headers => createMirrorHttp({ bases: BASES, headers, retries: 1, fatal: [404, 403], relay: RELAY }))
+const clients = PROFILES.map(headers => createMirrorHttp({ bases: BASES, headers, retries: 1, fatal: [404, 403] }))
+const relayed = createMirrorHttp({ bases: BASES, headers: PROFILES[0], retries: 1, fatal: [404, 403], relay: RELAYS })
 let profile = 0
+let relayUntil = 0
+
+async function direct(path, opts) {
+  let lastErr = null
+  for (let n = 0; n < clients.length; n++) {
+    const i = (profile + n) % clients.length
+    try {
+      const out = await clients[i].get(path, opts)
+      profile = i
+      return out
+    } catch (e) {
+      if (e.status !== 403) throw e
+      lastErr = e
+    }
+  }
+  throw lastErr
+}
 
 const http = {
   async get(path, opts) {
-    let lastErr = null
-    for (let n = 0; n < clients.length; n++) {
-      const i = (profile + n) % clients.length
+    if (Date.now() < relayUntil) {
       try {
-        const out = await clients[i].get(path, opts)
-        profile = i
-        return out
+        return await relayed.get(path, opts)
       } catch (e) {
-        if (e.status !== 403) throw e
-        lastErr = e
+        if (e.status === 404) throw e
+        relayUntil = 0
       }
     }
-    throw lastErr
+    try {
+      return await direct(path, opts)
+    } catch (e) {
+      if (e.status !== 403 || !RELAYS.length) throw e
+      try {
+        const out = await relayed.get(path, opts)
+        relayUntil = Date.now() + 10 * 60 * 1000
+        return out
+      } catch (r) {
+        throw r.status === 404 ? r : e
+      }
+    }
   },
   base: () => clients[profile].base(),
-  clear: () => clients.forEach(c => c.clear())
+  clear: () => {
+    clients.forEach(c => c.clear())
+    relayed.clear()
+  }
 }
 
 const site = () => http.base()

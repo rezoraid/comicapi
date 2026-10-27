@@ -1,11 +1,11 @@
 import * as cheerio from 'cheerio'
-import { createMirrorHttp, clean, num, UA } from './utils.js'
+import { createMirrorHttp, relaysFromEnv, clean, num, UA } from './utils.js'
 
 const BASES = ['https://03.lumosgg.com', 'https://02.lumosgg.com', 'https://lumoskomik.com']
 const IMG_DEFAULT = { proxyEnabled: false, base: 'https://lms.imgsvr.my.id/file' }
 
 const MIN = 60 * 1000
-const http = createMirrorHttp({ bases: BASES, timeout: 10000, retries: 2, relay: process.env.LUMOS_RELAY || process.env.RELAY_URL || '' })
+const http = createMirrorHttp({ bases: BASES, timeout: 10000, retries: 2, relay: relaysFromEnv('LUMOS_RELAY', 'RELAY_URL') })
 const site = () => http.base()
 
 let imgCfg = null

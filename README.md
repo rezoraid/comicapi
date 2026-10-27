@@ -114,12 +114,13 @@ Route, cache, rate limit, pencarian gabungan, dan image proxy langsung ikut. Cek
 
 ## Kalau muncul HTTP 403 (IP server diblokir)
 
-Beberapa sumber (Komiku, Lumos) kadang menolak IP datacenter seperti Railway. Yang diblokir bisa berganti
-setiap kali server di-deploy ulang. Solusinya relay gratis lewat Cloudflare Worker:
+Komiku dan Lumos kadang menolak IP datacenter seperti Railway, dan yang diblokir bisa berganti tiap deploy.
+Alurnya: request langsung → (Komiku) coba beberapa set header → kalau tetap 403/429/503, diulang lewat relay.
+Relay yang berhasil diingat 10 menit, lalu dicoba langsung lagi.
 
-1. Cloudflare Dashboard → Workers & Pages → Create → Worker → Deploy, lalu Edit code dan tempel isi `relay/cloudflare-worker.js`.
-2. (Disarankan) Settings → Variables → tambah `KEY` dengan nilai rahasia agar relay tidak dipakai orang lain.
-3. Di Railway → Variables, isi `RELAY_URL=https://nama-worker.workers.dev/?key=RAHASIA&url={url}` (tanpa `key=` kalau tidak pakai KEY).
-
-Relay hanya dipakai setelah request langsung kena 403/429/503, lalu diingat 10 menit. Host yang boleh diakses relay
-dibatasi di daftar `ALLOWED` pada file worker.
+- **Bawaan**: dua relay publik (kurang stabil, bisa mati kapan saja). Matikan dengan `RELAY_PUBLIC=false`.
+- **Disarankan**: relay sendiri lewat Cloudflare Worker (gratis):
+  1. Cloudflare Dashboard → Workers & Pages → Create → Worker → Deploy, lalu Edit code dan tempel `relay/cloudflare-worker.js`.
+  2. Settings → Variables → tambah `KEY` berisi kata rahasia.
+  3. Railway → Variables: `RELAY_URL=https://nama-worker.workers.dev/?key=RAHASIA&url={url}`
+  Beberapa relay dipisah tanda `|`. Host yang boleh diakses worker dibatasi di daftar `ALLOWED`.

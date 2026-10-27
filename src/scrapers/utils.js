@@ -19,6 +19,17 @@ export function trackHost(hosts, url) {
   return url
 }
 
+export const PUBLIC_RELAYS = [
+  'https://api.allorigins.win/raw?url={url}',
+  'https://api.codetabs.com/v1/proxy/?quest={url}'
+]
+
+export function relaysFromEnv(...names) {
+  const raw = names.map(n => process.env[n]).find(Boolean)
+  if (raw) return raw.split('|').map(x => x.trim()).filter(Boolean)
+  return process.env.RELAY_PUBLIC === 'false' ? [] : PUBLIC_RELAYS
+}
+
 export function createHttp({
   base,
   referer = base + '/',
@@ -26,10 +37,12 @@ export function createHttp({
   timeout = 15000,
   retries = 2,
   fatal = [404],
-  relay = ''
+  relay = [],
+  relayTimeout = 8000
 } = {}) {
   const cache = new Map()
   const inflight = new Map()
+  const relays = [].concat(relay).filter(Boolean)
   const baseHeaders = {
     'user-agent': UA,
     'accept-language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
@@ -37,17 +50,18 @@ export function createHttp({
     ...headers
   }
   let relayUntil = 0
+  let relayIdx = 0
 
-  const relayUrl = url =>
-    relay.includes('{url}') ? relay.replace('{url}', encodeURIComponent(url)) : relay + encodeURIComponent(url)
+  const relayUrl = (template, url) =>
+    template.includes('{url}') ? template.replace('{url}', encodeURIComponent(url)) : template + encodeURIComponent(url)
 
-  async function request(url, json) {
+  async function request(url, json, ms = timeout) {
     const res = await fetch(url, {
       headers: {
         accept: json ? 'application/json, text/plain, */*' : 'text/html,application/xhtml+xml,*/*',
         ...baseHeaders
       },
-      signal: AbortSignal.timeout(timeout)
+      signal: AbortSignal.timeout(ms)
     })
     if (!res.ok) {
       const err = new Error(`HTTP ${res.status}`)
@@ -71,16 +85,42 @@ export function createHttp({
     throw lastError
   }
 
+  async function viaRelay(url, json) {
+    let lastError
+    for (let n = 0; n < relays.length; n++) {
+      const i = (relayIdx + n) % relays.length
+      try {
+        const out = await request(relayUrl(relays[i], url), json, relayTimeout)
+        relayIdx = i
+        relayUntil = Date.now() + 10 * 60 * 1000
+        return out
+      } catch (e) {
+        if (e.status === 404) throw e
+        lastError = e
+      }
+    }
+    throw lastError
+  }
+
   async function fetchRetry(url, json) {
-    if (!relay) return withRetry(url, json)
-    if (Date.now() < relayUntil) return withRetry(relayUrl(url), json)
+    if (!relays.length) return withRetry(url, json)
+    if (Date.now() < relayUntil) {
+      try {
+        return await viaRelay(url, json)
+      } catch (e) {
+        if (e.status === 404) throw e
+        relayUntil = 0
+      }
+    }
     try {
       return await withRetry(url, json)
     } catch (e) {
       if (![403, 429, 503].includes(e.status)) throw e
-      const out = await withRetry(relayUrl(url), json)
-      relayUntil = Date.now() + 10 * 60 * 1000
-      return out
+      try {
+        return await viaRelay(url, json)
+      } catch (r) {
+        throw r.status === 404 ? r : e
+      }
     }
   }
 
