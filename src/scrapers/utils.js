@@ -10,7 +10,6 @@ export const num = s => {
   return m ? parseFloat(m[0]) : null
 }
 
-/** Daftarkan host gambar dari respons sumber ke allowlist image proxy (https + domain, bukan IP). */
 export function trackHost(hosts, url) {
   try {
     const u = new URL(url)
@@ -20,47 +19,111 @@ export function trackHost(hosts, url) {
   return url
 }
 
-/**
- * HTTP client kecil: retry, cache (TTL), dan dedupe request yang sama.
- * Dipakai semua scraper biar konsisten & cepat.
- */
-export function createHttp({ base, referer = base + '/', headers = {}, timeout = 15000, retries = 2 } = {}) {
+export const PUBLIC_RELAYS = [
+  'https://api.allorigins.win/raw?url={url}',
+  'https://api.codetabs.com/v1/proxy/?quest={url}'
+]
+
+export function relaysFromEnv(...names) {
+  const raw = names.map(n => process.env[n]).find(Boolean)
+  if (raw) return raw.split('|').map(x => x.trim()).filter(Boolean)
+  return process.env.RELAY_PUBLIC === 'false' ? [] : PUBLIC_RELAYS
+}
+
+export function createHttp({
+  base,
+  referer = base + '/',
+  headers = {},
+  timeout = 15000,
+  retries = 2,
+  fatal = [404],
+  relay = [],
+  relayTimeout = 8000
+} = {}) {
   const cache = new Map()
   const inflight = new Map()
+  const relays = [].concat(relay).filter(Boolean)
   const baseHeaders = {
     'user-agent': UA,
     'accept-language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
     referer,
     ...headers
   }
+  let relayUntil = 0
+  let relayIdx = 0
 
-  async function fetchRetry(url, json) {
+  const relayUrl = (template, url) =>
+    template.includes('{url}') ? template.replace('{url}', encodeURIComponent(url)) : template + encodeURIComponent(url)
+
+  async function request(url, json, ms = timeout) {
+    const res = await fetch(url, {
+      headers: {
+        accept: json ? 'application/json, text/plain, */*' : 'text/html,application/xhtml+xml,*/*',
+        ...baseHeaders
+      },
+      signal: AbortSignal.timeout(ms)
+    })
+    if (!res.ok) {
+      const err = new Error(`HTTP ${res.status}`)
+      err.status = res.status
+      throw err
+    }
+    return json ? await res.json() : await res.text()
+  }
+
+  async function withRetry(url, json) {
     let lastError
     for (let i = 0; i <= retries; i++) {
       try {
-        const res = await fetch(url, {
-          headers: {
-            ...baseHeaders,
-            accept: json ? 'application/json, text/plain, */*' : 'text/html,application/xhtml+xml,*/*'
-          },
-          signal: AbortSignal.timeout(timeout)
-        })
-        if (!res.ok) {
-          const err = new Error(`HTTP ${res.status}`)
-          err.status = res.status
-          throw err
-        }
-        return json ? await res.json() : await res.text()
+        return await request(url, json)
       } catch (e) {
         lastError = e
-        if (e.status === 404) break // gak perlu retry
+        if (fatal.includes(e.status)) break
         if (i < retries) await sleep(400 * (i + 1))
       }
     }
     throw lastError
   }
 
-  /** get(path, { json, ttl }) — ttl dalam ms, 0 = tanpa cache */
+  async function viaRelay(url, json) {
+    let lastError
+    for (let n = 0; n < relays.length; n++) {
+      const i = (relayIdx + n) % relays.length
+      try {
+        const out = await request(relayUrl(relays[i], url), json, relayTimeout)
+        relayIdx = i
+        relayUntil = Date.now() + 10 * 60 * 1000
+        return out
+      } catch (e) {
+        if (e.status === 404) throw e
+        lastError = e
+      }
+    }
+    throw lastError
+  }
+
+  async function fetchRetry(url, json) {
+    if (!relays.length) return withRetry(url, json)
+    if (Date.now() < relayUntil) {
+      try {
+        return await viaRelay(url, json)
+      } catch (e) {
+        if (e.status === 404) throw e
+        relayUntil = 0
+      }
+    }
+    try {
+      return await withRetry(url, json)
+    } catch (e) {
+      if (![403, 429, 503].includes(e.status)) throw e
+      try {
+        return await viaRelay(url, json)
+      } catch (r) {
+        throw r.status === 404 ? r : e
+      }
+    }
+  }
+
   function get(path, { json = false, ttl = 0 } = {}) {
     const url = path.startsWith('http') ? path : base + path
     const key = (json ? 'j:' : 't:') + url
@@ -84,4 +147,34 @@ export function createHttp({ base, referer = base + '/', headers = {}, timeout =
   }
 
   return { get, clear: () => cache.clear() }
+}
+
+export function createMirrorHttp({ bases, ...options }) {
+  const clients = bases.map(base => ({ base, http: createHttp({ ...options, base, referer: base + '/' }) }))
+  let active = 0
+
+  async function get(path, opts) {
+    if (/^https?:\/\//i.test(path)) return clients[active].http.get(path, opts)
+    let notFound = null
+    let lastError = null
+    for (let n = 0; n < clients.length; n++) {
+      const i = (active + n) % clients.length
+      try {
+        const out = await clients[i].http.get(path, opts)
+        active = i
+        return out
+      } catch (e) {
+        if (e.status === 404) notFound ??= e
+        else lastError = e
+      }
+    }
+    throw notFound || lastError
+  }
+
+  return {
+    get,
+    base: () => clients[active].base,
+    bases: () => clients.map(c => c.base),
+    clear: () => clients.forEach(c => c.http.clear())
+  }
 }

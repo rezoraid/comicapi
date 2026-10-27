@@ -79,6 +79,9 @@ test('playground: JS jalan end-to-end terhadap server (DOM di-stub)', async () =
   assert.ok(!out.includes('SKIP</td>'), 'ada langkah dilewati')
   assert.equal((out.match(/PASS<\/td>/g) || []).length, steps.length)
   assert.match(out, /SEMUA LOLOS/)
+  await new Promise(r => setTimeout(r, 150))
+  assert.match(el('#loglist').innerHTML, /Belum ada error/)
+  assert.equal(el('#logbadge').textContent, 'log 0')
 })
 
 test('playground: tes otomatis menandai FAIL kalau endpoint rusak', async () => {
@@ -100,6 +103,11 @@ test('playground: tes otomatis menandai FAIL kalau endpoint rusak', async () => 
   const out = el('#tests').innerHTML
   assert.match(out, /ADA YANG GAGAL/)
   assert.equal((out.match(/FAIL<\/td>/g) || []).length, 1)
+  await new Promise(r => setTimeout(r, 150))
+  const log = el('#loglist').innerHTML
+  assert.match(log, /class="lk">TES</)
+  assert.match(log, /mock › genres/)
+  assert.equal(el('#logbadge').textContent, 'log 1')
   s.server.close()
   a.close()
 })
@@ -120,6 +128,28 @@ test('playground: API key salah → pesan jelas', async () => {
   vm.runInContext(html.match(/<script>([\s\S]*)<\/script>/)[1], ctx)
   for (let i = 0; i < 40 && !el('#res').innerHTML; i++) await new Promise(r => setTimeout(r, 25))
   assert.match(el('#res').innerHTML, /API key/)
+  await new Promise(r => setTimeout(r, 150))
+  assert.match(el('#loglist').innerHTML, /HTTP 401/)
+  assert.match(el('#loglist').innerHTML, /UNAUTHORIZED/)
+  assert.match(el('#loglist').innerHTML, /API key/)
   s.server.close()
   a.close()
+})
+
+test('playground: server tidak terjangkau → log JARINGAN + saran', async () => {
+  const html = readFileSync(new URL('../src/public/playground.html', import.meta.url), 'utf8')
+  const els = new Map()
+  const el = sel => (els.has(sel) || els.set(sel, { value: '', innerHTML: '', textContent: '', hidden: false, className: '', title: '', dataset: {}, classList: { toggle() {} } }), els.get(sel))
+  const ctx = vm.createContext({
+    document: { querySelector: el, querySelectorAll: () => [] },
+    localStorage: { getItem: () => null, setItem() {} },
+    location: { origin: 'http://127.0.0.1:1' },
+    fetch, URL, URLSearchParams, performance, setTimeout, clearTimeout, console, JSON, Promise, Object, String, Number, Math, Error, Array
+  })
+  vm.runInContext(html.match(/<script>([\s\S]*)<\/script>/)[1], ctx)
+  await new Promise(r => setTimeout(r, 400))
+  const log = el('#loglist').innerHTML
+  assert.match(log, /class="lk">JARINGAN</)
+  assert.match(log, /Server tidak terjangkau/)
+  assert.match(el('#logbar').innerHTML, /data-act="lclear"/)
 })
