@@ -1,11 +1,11 @@
 import * as cheerio from 'cheerio'
-import { createHttp, createMirrorHttp, clean, trackHost } from './utils.js'
+import { createMirrorHttp, clean, trackHost } from './utils.js'
 
 const BASES = ['https://komiku.id', 'https://komiku.org']
 const API = 'https://api.komiku.org'
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
 const MOBILE_UA = 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36'
-const RELAY = process.env.KOMIKU_RELAY || ''
+const RELAY = process.env.KOMIKU_RELAY || process.env.RELAY_URL || ''
 
 const ACCEPT = 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
 
@@ -34,18 +34,11 @@ const browserHeaders = (ua, mobile) => ({
 })
 
 const PROFILES = [{ 'user-agent': UA, accept: ACCEPT }, browserHeaders(UA, false), browserHeaders(MOBILE_UA, true)]
-const clients = PROFILES.map(headers => createMirrorHttp({ bases: BASES, headers, retries: 1, fatal: [404, 403] }))
-const relay = RELAY ? createHttp({ base: RELAY, retries: 1 }) : null
+const clients = PROFILES.map(headers => createMirrorHttp({ bases: BASES, headers, retries: 1, fatal: [404, 403], relay: RELAY }))
 let profile = 0
-
-function relayUrl(path) {
-  const target = /^https?:\/\//i.test(path) ? path : BASES[0] + path
-  return RELAY.includes('{url}') ? RELAY.replace('{url}', encodeURIComponent(target)) : RELAY + encodeURIComponent(target)
-}
 
 const http = {
   async get(path, opts) {
-    if (relay) return relay.get(relayUrl(path), opts)
     let lastErr = null
     for (let n = 0; n < clients.length; n++) {
       const i = (profile + n) % clients.length
@@ -60,11 +53,8 @@ const http = {
     }
     throw lastErr
   },
-  base: () => (relay ? BASES[0] : clients[profile].base()),
-  clear: () => {
-    clients.forEach(c => c.clear())
-    relay?.clear()
-  }
+  base: () => clients[profile].base(),
+  clear: () => clients.forEach(c => c.clear())
 }
 
 const site = () => http.base()

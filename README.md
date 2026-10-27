@@ -110,3 +110,16 @@ scripts/smoke-test.mjs   tes scraper ke situs asli
 2. Import dan tambahkan ke array `PROVIDERS` di `src/scrapers/index.js`.
 
 Route, cache, rate limit, pencarian gabungan, dan image proxy langsung ikut. Cek dengan `npm run smoke namabaru`.
+
+
+## Kalau muncul HTTP 403 (IP server diblokir)
+
+Beberapa sumber (Komiku, Lumos) kadang menolak IP datacenter seperti Railway. Yang diblokir bisa berganti
+setiap kali server di-deploy ulang. Solusinya relay gratis lewat Cloudflare Worker:
+
+1. Cloudflare Dashboard → Workers & Pages → Create → Worker → Deploy, lalu Edit code dan tempel isi `relay/cloudflare-worker.js`.
+2. (Disarankan) Settings → Variables → tambah `KEY` dengan nilai rahasia agar relay tidak dipakai orang lain.
+3. Di Railway → Variables, isi `RELAY_URL=https://nama-worker.workers.dev/?key=RAHASIA&url={url}` (tanpa `key=` kalau tidak pakai KEY).
+
+Relay hanya dipakai setelah request langsung kena 403/429/503, lalu diingat 10 menit. Host yang boleh diakses relay
+dibatasi di daftar `ALLOWED` pada file worker.

@@ -19,7 +19,15 @@ export function trackHost(hosts, url) {
   return url
 }
 
-export function createHttp({ base, referer = base + '/', headers = {}, timeout = 15000, retries = 2, fatal = [404] } = {}) {
+export function createHttp({
+  base,
+  referer = base + '/',
+  headers = {},
+  timeout = 15000,
+  retries = 2,
+  fatal = [404],
+  relay = ''
+} = {}) {
   const cache = new Map()
   const inflight = new Map()
   const baseHeaders = {
@@ -28,24 +36,32 @@ export function createHttp({ base, referer = base + '/', headers = {}, timeout =
     referer,
     ...headers
   }
+  let relayUntil = 0
 
-  async function fetchRetry(url, json) {
+  const relayUrl = url =>
+    relay.includes('{url}') ? relay.replace('{url}', encodeURIComponent(url)) : relay + encodeURIComponent(url)
+
+  async function request(url, json) {
+    const res = await fetch(url, {
+      headers: {
+        accept: json ? 'application/json, text/plain, */*' : 'text/html,application/xhtml+xml,*/*',
+        ...baseHeaders
+      },
+      signal: AbortSignal.timeout(timeout)
+    })
+    if (!res.ok) {
+      const err = new Error(`HTTP ${res.status}`)
+      err.status = res.status
+      throw err
+    }
+    return json ? await res.json() : await res.text()
+  }
+
+  async function withRetry(url, json) {
     let lastError
     for (let i = 0; i <= retries; i++) {
       try {
-        const res = await fetch(url, {
-          headers: {
-            accept: json ? 'application/json, text/plain, */*' : 'text/html,application/xhtml+xml,*/*',
-            ...baseHeaders
-          },
-          signal: AbortSignal.timeout(timeout)
-        })
-        if (!res.ok) {
-          const err = new Error(`HTTP ${res.status}`)
-          err.status = res.status
-          throw err
-        }
-        return json ? await res.json() : await res.text()
+        return await request(url, json)
       } catch (e) {
         lastError = e
         if (fatal.includes(e.status)) break
@@ -53,6 +69,19 @@ export function createHttp({ base, referer = base + '/', headers = {}, timeout =
       }
     }
     throw lastError
+  }
+
+  async function fetchRetry(url, json) {
+    if (!relay) return withRetry(url, json)
+    if (Date.now() < relayUntil) return withRetry(relayUrl(url), json)
+    try {
+      return await withRetry(url, json)
+    } catch (e) {
+      if (![403, 429, 503].includes(e.status)) throw e
+      const out = await withRetry(relayUrl(url), json)
+      relayUntil = Date.now() + 10 * 60 * 1000
+      return out
+    }
   }
 
   function get(path, { json = false, ttl = 0 } = {}) {
