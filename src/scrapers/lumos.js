@@ -1,12 +1,11 @@
 import * as cheerio from 'cheerio'
-import { createMirrorHttp, relaysFromEnv, clean, num, UA } from './utils.js'
+import { createHttp, clean, num, UA } from './utils.js'
 
-const BASES = ['https://03.lumosgg.com', 'https://02.lumosgg.com', 'https://lumoskomik.com']
+const BASE = 'https://03.lumosgg.com'
 const IMG_DEFAULT = { proxyEnabled: false, base: 'https://lms.imgsvr.my.id/file' }
 
 const MIN = 60 * 1000
-const http = createMirrorHttp({ bases: BASES, timeout: 10000, retries: 2, relay: relaysFromEnv('LUMOS_RELAY', 'RELAY_URL') })
-const site = () => http.base()
+const http = createHttp({ base: BASE })
 
 let imgCfg = null
 let genreCache = null
@@ -14,7 +13,10 @@ let genreCache = null
 const TYPES = ['manga', 'manhwa', 'manhua']
 const STATUSES = ['ongoing', 'completed', 'hiatus']
 const SORTS = ['latest', 'popular', 'rating', 'az']
-const imageHosts = [...BASES.map(b => new URL(b).hostname), 'lms.imgsvr.my.id']
+// host gambar yang boleh di-proxy (host dari konfigurasi situs ikut ditambahkan otomatis)
+const imageHosts = ['03.lumosgg.com', 'lms.imgsvr.my.id']
+
+/* ───────────── helpers ───────────── */
 
 const slugOf = href => (String(href || '').match(/\/comic\/([^/?#]+)/) || [])[1] || ''
 const slugNumber = slug => String(slug).replace(/^chapter-/i, '').replace(/-/g, '.')
@@ -43,7 +45,7 @@ function resolveImage(src) {
   if (!src) return ''
   src = String(src).trim()
   if (/^https?:\/\//.test(src)) return src
-  const abs = site() + (src.startsWith('/') ? src : '/' + src)
+  const abs = BASE + (src.startsWith('/') ? src : '/' + src)
   if (/^\/api\/image\/(thumbnail|p\/)/.test(src)) return abs
   const c = imgCfg || IMG_DEFAULT
   if (c.proxyEnabled === false && c.base && !src.includes('?stitch=')) {
@@ -82,10 +84,11 @@ function pickList(data) {
   return []
 }
 
+// bentuk item list yang seragam (search, popular, latest, browse)
 const item = (o = {}) => ({
   title: '',
   slug: '',
-  url: `${site()}/comic/${o.slug}`,
+  url: `${BASE}/comic/${o.slug}`,
   cover: '',
   type: '',
   status: '',
@@ -107,14 +110,13 @@ function fromApi(i) {
   })
 }
 
+/* ───────────── list endpoints ───────────── */
+
 export async function search(query, { limit = 10 } = {}) {
-  let items = []
-  try {
-    const data = await http.get(`/api/search?q=${encodeURIComponent(query)}&limit=${limit}`, { json: true, ttl: MIN })
-    items = pickList(data).map(fromApi).filter(x => x.slug)
-  } catch {}
+  const data = await http.get(`/api/search?q=${encodeURIComponent(query)}&limit=${limit}`, { json: true, ttl: MIN })
+  const items = pickList(data).map(fromApi).filter(x => x.slug)
   if (items.length) return items
-  return (await browse({ q: query })).items.slice(0, limit)
+  return (await browse({ q: query })).items // fallback
 }
 
 export async function latest({ page = 1 } = {}) {
@@ -123,9 +125,10 @@ export async function latest({ page = 1 } = {}) {
     data = await http.get(`/api/home-latest?page=${page}`, { json: true, ttl: MIN })
   } catch {}
   if (!(data?.data?.items || []).length) {
+    // API kosong → pakai halaman /all-series urut terbaru
     return (await allSeries({ sort: 'latest', page })).items
   }
-  return data.data.items.map(i =>
+  return (data.data.items || []).map(i =>
     item({
       title: i.title,
       slug: i.slug,
@@ -140,6 +143,11 @@ export async function latest({ page = 1 } = {}) {
   )
 }
 
+/**
+ * Halaman /all-series?sort=popular&page=N (urutan populer resmi situs).
+ * Parser dibuat toleran: kartu apa pun yang punya link /comic/<slug> dibaca,
+ * jadi tetap jalan walau nama class-nya berubah.
+ */
 export async function allSeries({ sort = 'popular', page = 1, type = '', status = '', genre = [] } = {}) {
   const qs = new URLSearchParams()
   if (sort) qs.set('sort', sort)
@@ -160,6 +168,7 @@ export async function allSeries({ sort = 'popular', page = 1, type = '', status 
     const $a = $(a)
     const slug = slugOf($a.attr('href'))
     if (!slug) return
+    // abaikan link di navbar/footer/sidebar populer
     if ($a.closest('header, nav, footer').length) return
     const $card = $a.closest(CARD).length ? $a.closest(CARD).first() : $a
     const cur = map.get(slug) || { slug, title: '', cover: '', rating: null, type: '', status: '', chapterCount: null }
@@ -189,6 +198,7 @@ export async function allSeries({ sort = 'popular', page = 1, type = '', status 
   return { items, page, pages: Math.max(pages, page), total: items.length }
 }
 
+/** period: 'weekly' | 'monthly' | 'alltime' (dari beranda) — selain itu pakai API trending */
 export async function popular({ period = '', limit = 10 } = {}) {
   if (['weekly', 'monthly', 'alltime'].includes(period)) {
     const html = await http.get('/', { ttl: 5 * MIN })
@@ -210,6 +220,7 @@ export async function popular({ period = '', limit = 10 } = {}) {
     })
     return out.slice(0, limit)
   }
+  // utama: halaman resmi /all-series?sort=popular ; cadangan: API trending
   try {
     const { items } = await allSeries({ sort: 'popular', page: 1 })
     if (items.length) return items.slice(0, limit)
@@ -270,6 +281,8 @@ export async function genres() {
   if (!genreCache) await browse({})
   return genreCache || []
 }
+
+/* ───────────── detail ───────────── */
 
 async function chapterListApi(slug) {
   const data = await http.get(`/api/chapters/list?comic=${encodeURIComponent(slug)}`, { json: true, ttl: MIN })
@@ -360,7 +373,7 @@ export async function detail(slug) {
   return {
     title: clean($('h1').first().text()) || clean(ld?.name) || slug,
     slug,
-    url: `${site()}/comic/${slug}`,
+    url: `${BASE}/comic/${slug}`,
     cover: resolveImage(ld?.image || $('meta[property="og:image"]').attr('content') || ''),
     alt: Array.isArray(ld?.alternateName) ? ld.alternateName : [],
     synopsis:
@@ -377,10 +390,12 @@ export async function detail(slug) {
     ratingCount: ld?.aggregateRating?.ratingCount ?? null,
     genres: genreList,
     totalChapters: chapters.length || ld?.numberOfEpisodes || 0,
-    chapters,
+    chapters, // terbaru → terlama
     related
   }
 }
+
+/* ───────────── chapter (gambar) ───────────── */
 
 export async function chapter(slug, chapterSlug) {
   const html = await http.get(`/read/${encodeURIComponent(slug)}/${encodeURIComponent(chapterSlug)}`, { ttl: 5 * MIN })
@@ -416,22 +431,24 @@ export async function chapter(slug, chapterSlug) {
     title: clean($('title').text().replace(/\s*[—|-]\s*LumosKomik\s*$/i, '')) || chapterSlug,
     comic: slug,
     chapter: chapterSlug,
-    url: `${site()}/read/${slug}/${chapterSlug}`,
+    url: `${BASE}/read/${slug}/${chapterSlug}`,
     images,
     prev,
     next
   }
 }
 
+/* ───────────── provider export ───────────── */
+
+/** Kosongkan cache HTTP (dipakai test). */
 export const resetCache = () => http.clear()
 
 export default {
   id: 'lumos',
   name: 'LumosKomik',
-  base: BASES[0],
-  get imageHeaders() {
-    return { 'user-agent': UA, referer: site() + '/' }
-  },
+  base: BASE,
+  // header yang dibutuhkan kalau server kamu mau proxy/download gambar
+  imageHeaders: { 'user-agent': UA, referer: BASE + '/' },
   imageHosts,
   filters: { types: TYPES, statuses: STATUSES, sorts: SORTS },
   search,

@@ -17,8 +17,5 @@ export function toHttpError(err) {
     return new HttpError(504, 'SOURCE_TIMEOUT', 'Sumber terlalu lama merespons')
   }
   if (err?.status === 404) return new HttpError(404, 'NOT_FOUND', 'Data tidak ditemukan di sumber')
-  const http = /^HTTP \d{3}$/.test(err?.message || '') ? err.message : ''
-  const net = /^[A-Z_]{3,30}$/.test(err?.cause?.code || '') ? err.cause.code : ''
-  const reason = [http, net].filter(Boolean).join(' ')
-  return new HttpError(502, 'SOURCE_ERROR', reason ? `Gagal mengambil data dari sumber (${reason})` : 'Gagal mengambil data dari sumber')
+  return new HttpError(502, 'SOURCE_ERROR', 'Gagal mengambil data dari sumber')
 }

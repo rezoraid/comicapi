@@ -95,7 +95,7 @@ src/
     index.js         registry — daftar sumber
     lumos.js         Lumos (03.lumosgg.com)
     manta.js         Manta Comics
-    komiku.js        Komiku (komiku.org, cadangan komiku.id)
+    komiku.js        Komiku (komiku.id)
     shinigami.js     Shinigami
     utils.js         HTTP client (retry, cache, dedupe) + trackHost
 test/                tes server
@@ -110,17 +110,3 @@ scripts/smoke-test.mjs   tes scraper ke situs asli
 2. Import dan tambahkan ke array `PROVIDERS` di `src/scrapers/index.js`.
 
 Route, cache, rate limit, pencarian gabungan, dan image proxy langsung ikut. Cek dengan `npm run smoke namabaru`.
-
-
-## Kalau muncul HTTP 403 (IP server diblokir)
-
-Komiku dan Lumos kadang menolak IP datacenter seperti Railway, dan yang diblokir bisa berganti tiap deploy.
-Alurnya: request langsung → (Komiku) coba beberapa set header → kalau tetap 403/429/503, diulang lewat relay.
-Relay yang berhasil diingat 10 menit, lalu dicoba langsung lagi.
-
-- **Bawaan**: dua relay publik (kurang stabil, bisa mati kapan saja). Matikan dengan `RELAY_PUBLIC=false`.
-- **Disarankan**: relay sendiri lewat Cloudflare Worker (gratis):
-  1. Cloudflare Dashboard → Workers & Pages → Create → Worker → Deploy, lalu Edit code dan tempel `relay/cloudflare-worker.js`.
-  2. Settings → Variables → tambah `KEY` berisi kata rahasia.
-  3. Railway → Variables: `RELAY_URL=https://nama-worker.workers.dev/?key=RAHASIA&url={url}`
-  Beberapa relay dipisah tanda `|`. Host yang boleh diakses worker dibatasi di daftar `ALLOWED`.
