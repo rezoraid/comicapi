@@ -1,2 +1,0 @@
-Lcom/komikta/**;
-HSPLcom/komikta/**->**(**)**
