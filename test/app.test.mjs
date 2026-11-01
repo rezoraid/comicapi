@@ -184,8 +184,8 @@ test('cache: stale-if-error saat sumber down', async () => {
   await assert.rejects(c.remember('lain', 1, async () => { throw new Error('down') }))
 })
 
-test('registry asli: lumos, manta, shinigami', async () => {
+test('registry asli: manta, shinigami', async () => {
   const { default: real } = await import('../src/scrapers/index.js')
-  assert.deepEqual(real.list().map(x => x.id), ['lumos', 'manta', 'shinigami'])
+  assert.deepEqual(real.list().map(x => x.id), ['manta', 'shinigami'])
   assert.equal(real.has('softkomik'), false)
 })

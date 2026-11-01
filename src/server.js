@@ -1,10 +1,22 @@
 import { createServer } from 'node:http'
+
+try {
+  process.loadEnvFile()
+} catch {}
+
 import { loadConfig } from './config.js'
 import { createApp } from './app.js'
 import registry from './scrapers/index.js'
+import { createCommunity } from './community/index.js'
 
 const config = loadConfig()
-const app = createApp({ registry, config })
+let community = null
+try {
+  community = await createCommunity(config.community)
+} catch (err) {
+  console.error('komunitas gagal start (MongoDB tidak terhubung?):', err?.message || err)
+}
+const app = createApp({ registry, config, community })
 
 const server = createServer(app.handler)
 // lebih panjang dari idle timeout load balancer (biasanya 60s) → hindari 502 acak
@@ -14,6 +26,7 @@ server.requestTimeout = 30_000
 
 server.listen(config.port, config.host, () => {
   console.log(`comic-api jalan di http://${config.host}:${config.port}  (sumber: ${registry.list().map(s => s.id).join(', ')})`)
+  console.log(community ? 'komunitas aktif (MongoDB terhubung)' : 'komunitas nonaktif')
   if (!config.apiKey) console.log('⚠️  API_KEY kosong — endpoint terbuka untuk umum')
 })
 
@@ -21,7 +34,7 @@ function shutdown(signal) {
   console.log(`${signal} diterima, mematikan server...`)
   server.close(() => {
     app.close()
-    process.exit(0)
+    Promise.resolve(community?.close()).finally(() => process.exit(0))
   })
   setTimeout(() => process.exit(1), 10_000).unref()
 }

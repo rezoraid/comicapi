@@ -22,3 +22,8 @@ export function toHttpError(err) {
   const reason = [http, net].filter(Boolean).join(' ')
   return new HttpError(502, 'SOURCE_ERROR', reason ? `Gagal mengambil data dari sumber (${reason})` : 'Gagal mengambil data dari sumber')
 }
+
+export const unauthorized = msg => new HttpError(401, 'UNAUTHORIZED', msg)
+export const forbidden = msg => new HttpError(403, 'FORBIDDEN', msg)
+export const conflict = (msg, code = 'CONFLICT') => new HttpError(409, code, msg)
+export const tooMany = (msg, retryAfter) => Object.assign(new HttpError(429, 'RATE_LIMITED', retryAfter ? `${msg} (coba lagi ${retryAfter} detik)` : msg), { retryAfter })

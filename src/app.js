@@ -1,10 +1,11 @@
 import { Router } from './http/router.js'
 import { encode, send, sendError } from './http/respond.js'
-import { applyCors, isAuthorized, clientIp, createRateLimiter } from './http/middleware.js'
+import { applyCors, isAuthorized, clientIp, createRateLimiter, readJson } from './http/middleware.js'
 import { HttpError, badRequest, notFound, toHttpError } from './lib/errors.js'
 import { withTimeout } from './lib/timeout.js'
 import { TtlCache } from './lib/cache.js'
 import { registerRoutes } from './routes.js'
+import { registerCommunityRoutes } from './community/routes.js'
 
 /** Key cache: path + query yang diurutkan (?a=1&b=2 sama dengan ?b=2&a=1). */
 function cacheKey(url) {
@@ -12,10 +13,11 @@ function cacheKey(url) {
   return `${url.pathname}?${qs.join('&')}`
 }
 
-export function createApp({ registry, config, logger = console }) {
+export function createApp({ registry, config, logger = console, community = null }) {
   const cache = new TtlCache({ max: config.cacheMax })
   const router = new Router()
-  registerRoutes(router, { registry, config })
+  registerCommunityRoutes(router, { registry, community })
+  registerRoutes(router, { registry, config, community })
 
   const limiters = {
     default: createRateLimiter(config.rateLimit),
@@ -31,20 +33,20 @@ export function createApp({ registry, config, logger = console }) {
 
     try {
       applyCors(res, req.headers.origin, config.corsOrigin)
+      res.setHeader('x-content-type-options', 'nosniff')
 
       if (req.method === 'OPTIONS') {
         res.writeHead(204, { 'access-control-max-age': '86400' })
         return res.end()
       }
-      if (req.method !== 'GET' && req.method !== 'HEAD') {
-        res.setHeader('allow', 'GET, HEAD, OPTIONS')
-        throw new HttpError(405, 'METHOD_NOT_ALLOWED', 'Method tidak didukung')
-      }
-
       const url = new URL(req.url, 'http://localhost')
-      const found = router.match(url.pathname)
+      const found = router.match(url.pathname, req.method)
       if (!found) throw notFound('Endpoint tidak ditemukan')
       if (found.bad) throw badRequest('Path tidak valid')
+      if (found.allowed) {
+        res.setHeader('allow', [...found.allowed, ...(found.allowed.includes('GET') ? ['HEAD'] : []), 'OPTIONS'].join(', '))
+        throw new HttpError(405, 'METHOD_NOT_ALLOWED', 'Method tidak didukung')
+      }
       const { route, params } = found
 
       if (!route.public) {
@@ -57,7 +59,8 @@ export function createApp({ registry, config, logger = console }) {
         }
       }
 
-      const ctx = { req, res, params, query: url.searchParams }
+      const ctx = { req, res, params, query: url.searchParams, ip: clientIp(req, config.trustProxy) }
+      if (route.body) ctx.body = await readJson(req)
       if (route.raw) return await route.handler(ctx)
 
       const run = async () =>

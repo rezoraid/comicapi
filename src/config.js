@@ -3,6 +3,8 @@ const int = (v, d) => {
   return Number.isFinite(n) ? n : d
 }
 
+const list = v => (v || '').split(',').map(s => s.trim()).filter(Boolean)
+
 export function loadConfig(env = process.env) {
   return {
     port: int(env.PORT, 3000),
@@ -19,6 +21,16 @@ export function loadConfig(env = process.env) {
     requestTimeoutMs: int(env.REQUEST_TIMEOUT_MS, 25_000),
     logRequests: env.LOG_REQUESTS !== 'false',
     // halaman tes di /playground — set PLAYGROUND=false untuk mematikan
-    playground: env.PLAYGROUND !== 'false'
+    playground: env.PLAYGROUND !== 'false',
+    contactEmail: env.CONTACT_EMAIL || '',
+    community: {
+      mongoUri: env.MONGODB_URI || '',
+      dbName: env.MONGODB_DB || 'komikta',
+      googleClientIds: list(env.GOOGLE_CLIENT_ID),
+      authSecret: env.AUTH_SECRET || '',
+      ownerEmails: list(env.OWNER_EMAILS).map(s => s.toLowerCase()),
+      moderatorEmails: list(env.MODERATOR_EMAILS).map(s => s.toLowerCase()),
+      tokenTtlDays: int(env.AUTH_TOKEN_TTL_DAYS, 30)
+    }
   }
 }

@@ -1,8 +1,9 @@
 import { timingSafeEqual } from 'node:crypto'
+import { HttpError, badRequest } from '../lib/errors.js'
 
 export function applyCors(res, requestOrigin, allowed) {
-  res.setHeader('access-control-allow-methods', 'GET, HEAD, OPTIONS')
-  res.setHeader('access-control-allow-headers', 'x-api-key, content-type, if-none-match')
+  res.setHeader('access-control-allow-methods', 'GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS')
+  res.setHeader('access-control-allow-headers', 'x-api-key, content-type, if-none-match, authorization')
   res.setHeader('access-control-expose-headers', 'x-cache, etag, x-ratelimit-remaining')
   if (allowed === '*') {
     res.setHeader('access-control-allow-origin', '*')
@@ -18,6 +19,25 @@ export function isAuthorized(req, apiKey) {
   const given = Buffer.from(String(req.headers['x-api-key'] || ''))
   const want = Buffer.from(apiKey)
   return given.length === want.length && timingSafeEqual(given, want)
+}
+
+export async function readJson(req, limit = 16_384) {
+  const chunks = []
+  let size = 0
+  for await (const c of req) {
+    size += c.length
+    if (size > limit) throw new HttpError(413, 'PAYLOAD_TOO_LARGE', 'Body terlalu besar')
+    chunks.push(c)
+  }
+  if (!size) return {}
+  let data
+  try {
+    data = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+  } catch {
+    throw badRequest('Body harus JSON valid')
+  }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) throw badRequest('Body harus berupa objek JSON')
+  return data
 }
 
 export function clientIp(req, trustProxy) {

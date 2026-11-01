@@ -1,6 +1,7 @@
 import { badRequest, notFound, HttpError } from './lib/errors.js'
 import { imageProxy } from './image-proxy.js'
 import { playground } from './playground.js'
+import { legalHandler, privacyPage, termsPage } from './legal.js'
 
 const SLUG = /^[\w.~%-]{1,200}$/
 const CHAPTER = /^[\w.~%-]{1,50}$/
@@ -27,7 +28,7 @@ const slugParam = (v, name, re = SLUG) => {
   return v
 }
 
-export function registerRoutes(router, { registry, config }) {
+export function registerRoutes(router, { registry, config, community = null }) {
   const source = params => {
     if (!registry.has(params.source)) throw notFound(`Sumber "${params.source}" tidak ada`)
     return registry.get(params.source)
@@ -44,7 +45,9 @@ export function registerRoutes(router, { registry, config }) {
     { public: true }
   )
   if (config.playground) router.get('/playground', playground(), { raw: true, public: true })
-  router.get('/health', () => ({ status: 'ok', uptime: Math.round(process.uptime()), sources: registry.list().length }), {
+  router.get('/privacy', legalHandler(privacyPage(config.contactEmail)), { raw: true, public: true })
+  router.get('/terms', legalHandler(termsPage(config.contactEmail)), { raw: true, public: true })
+  router.get('/health', () => ({ status: 'ok', uptime: Math.round(process.uptime()), sources: registry.list().length, community: !!community }), {
     public: true
   })
   router.get('/api/sources', () => ({ items: registry.list() }), { ttl: 3600 })
