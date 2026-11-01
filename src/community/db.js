@@ -23,6 +23,7 @@ export const ensureIndexes = async c => {
     c.comments.createIndex({ parentId: 1, deleted: 1, _id: 1 }),
     c.comments.createIndex({ targetKey: 1, deleted: 1 }),
     c.comments.createIndex({ userId: 1, bodyHash: 1, createdAt: -1 }),
+    c.comments.createIndex({ type: 1, source: 1, slug: 1, deleted: 1 }),
     c.commentLikes.createIndex({ commentId: 1, userId: 1 }, { unique: true }),
     c.commentLikes.createIndex({ userId: 1, commentId: 1 }),
     c.reports.createIndex({ commentId: 1, reporterId: 1 }, { unique: true }),

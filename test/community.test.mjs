@@ -466,6 +466,56 @@ test('XP like: batas pasangan per hari mencegah saling pompa antar akun', async 
   assert.equal((await me(author.token)).xp - base - postXp, 3 * 2)
 })
 
+test('XP: edit jadi spam membalikkan XP, edit jadi bagus tidak menambah XP', async () => {
+  const a = await login('g-xe', 'xe@example.com')
+  const p = (await post(a.token, { ...comic, slug: 'edit-xp', body: 'Komentar awal yang cukup bagus' })).data
+  assert.equal(p.xpGained, 5)
+  const base = (await me(a.token)).xp
+  const edit = body => call('PATCH', `/api/community/comments/${p.comment.id}`, { token: a.token, body: { body } })
+  assert.equal((await edit('Komentar awal yang diedit lagi ya')).status, 200)
+  assert.equal((await me(a.token)).xp, base)
+  assert.equal((await edit('wkwkwk')).status, 200)
+  assert.equal((await me(a.token)).xp, base - 5)
+  assert.equal((await edit('Sekarang sudah jadi kalimat panjang')).status, 200)
+  assert.equal((await me(a.token)).xp, base - 5)
+})
+
+test('XP: kirim paralel tidak bisa melewati batas harian', async () => {
+  const a = await login('g-xp', 'xpar@example.com')
+  const res = await Promise.all(Array.from({ length: 14 }, (_, i) => post(a.token, { ...comic, slug: 'par-test', body: `Komentar paralel nomor ${i} lumayan panjang` })))
+  const total = res.reduce((n, r) => n + (r.data?.xpGained || 0), 0)
+  assert.ok(total <= 50)
+  assert.equal((await me(a.token)).xp, total)
+})
+
+test('XP: alasan 0 XP dikirim ke klien dan saldo dipulihkan dari catatan XP', async () => {
+  const a = await login('g-xr', 'xr@example.com')
+  const low = await post(a.token, { ...comic, slug: 'reason-test', body: 'wkwkwk' })
+  assert.equal(low.data.xpGained, 0)
+  assert.equal(low.data.xpReason, 'LOW_QUALITY')
+  const ok = await post(a.token, { ...comic, slug: 'reason-test', body: 'Mantap sekali ceritanya' })
+  assert.equal(ok.data.xpGained, 5)
+  assert.equal(ok.data.xpReason, null)
+  await env.db.collection('users').updateOne({ _id: a.user.id }, { $set: { xp: 99999 } })
+  assert.equal((await me(a.token)).xp, 5)
+  assert.equal((await me(a.token)).level, 1)
+  assert.equal((await me(a.token)).commentCount, 2)
+  assert.ok((await me(a.token)).joinedAt > 0)
+})
+
+test('jumlah komentar per chapter untuk daftar chapter', async () => {
+  const a = await login('g-cc', 'cc@example.com')
+  const base = { type: 'chapter', source: 'mock', slug: 'count-test' }
+  await post(a.token, { ...base, chapter: '1', body: 'Chapter satu seru sekali' })
+  const c2 = (await post(a.token, { ...base, chapter: '2', body: 'Chapter dua juga mantap' })).data.comment
+  await post(a.token, { parentId: c2.id, body: 'Balasan untuk chapter dua' })
+  await post(a.token, { type: 'comic', source: 'mock', slug: 'count-test', body: 'Komentar untuk komiknya saja' })
+  const r = await call('GET', '/api/community/comments/counts?source=mock&slug=count-test')
+  assert.equal(r.status, 200)
+  assert.deepEqual(r.data.counts, { 1: 1, 2: 2 })
+  assert.equal((await call('GET', '/api/community/comments/counts?source=nope&slug=x')).status, 400)
+})
+
 test('rate limit komentar per pengguna → 429 dengan retry-after', async () => {
   const c2 = await createCommunity(cfg(), { db: env.db, fetchJwks, now, logger: quiet, limits: { commentBurst: { max: 2, windowMs: 60_000 }, login: { max: 10000 } } })
   const a2 = createApp({ registry: makeRegistry(0), config: loadConfig({ LOG_REQUESTS: 'false' }), logger: quiet, community: c2 })

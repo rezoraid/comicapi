@@ -1,7 +1,7 @@
 import { randomInt } from 'node:crypto'
 import { badRequest, conflict, forbidden, unauthorized, notFound } from '../lib/errors.js'
 import { newId, isDup, rank, DAY, idParam } from './util.js'
-import { progress } from './xp.js'
+import { progress, reconcileXp } from './xp.js'
 
 const USERNAME = /^[a-z][a-z0-9_]{2,19}$/
 const RESERVED = new Set(['admin', 'administrator', 'owner', 'dev', 'developer', 'komikta', 'system', 'moderator', 'mod', 'support', 'staff', 'root', 'null', 'undefined'])
@@ -24,7 +24,7 @@ export const publicUser = (u, self = false) => ({
   picture: u.picture,
   role: u.role,
   level: progress(u.xp || 0).level,
-  ...(self ? { email: u.email, ...progress(u.xp || 0), usernameChangeableAt: u.usernameChangedAt ? u.usernameChangedAt + USERNAME_COOLDOWN : 0 } : {})
+  ...(self ? { email: u.email, ...progress(u.xp || 0), usernameChangeableAt: u.usernameChangedAt ? u.usernameChangedAt + USERNAME_COOLDOWN : 0, joinedAt: u.createdAt || 0 } : {})
 })
 
 const baseUsername = (email, name) => {
@@ -106,9 +106,12 @@ export async function authenticate(ctx, req, { optional = false } = {}) {
   return user
 }
 
-export const me = (ctx, user) => {
+export const me = async (ctx, user) => {
+  const synced = await reconcileXp(ctx, user._id)
+  if (synced) user = { ...user, xp: synced.xp, level: synced.level }
   const left = user.tokenExp * 1000 - ctx.now()
-  return { user: publicUser(user, true), ...(left < ctx.tokens.ttlMs / 2 ? { token: ctx.tokens.sign(user._id) } : {}) }
+  const commentCount = await ctx.c.comments.countDocuments({ userId: user._id, deleted: false })
+  return { user: { ...publicUser(user, true), commentCount }, ...(left < ctx.tokens.ttlMs / 2 ? { token: ctx.tokens.sign(user._id) } : {}) }
 }
 
 export async function updateProfile(ctx, user, body) {

@@ -108,7 +108,9 @@ export async function createComment(ctx, user, input, hasSource) {
   await ctx.c.comments.insertOne(doc)
   if (root) await ctx.c.comments.updateOne({ _id: root._id }, { $inc: { replyCount: 1 }, $set: { listed: true } })
   let xpGained = 0
-  if (isQuality(body)) {
+  let xpReason = null
+  if (!isQuality(body)) xpReason = 'LOW_QUALITY'
+  else {
     xpGained = await awardXp(ctx, {
       userId: user._id,
       type: root ? 'reply' : 'comment',
@@ -117,10 +119,11 @@ export async function createComment(ctx, user, input, hasSource) {
       amount: root ? XP.reply : XP.comment,
       group: 'post'
     })
+    if (xpGained <= 0) xpReason = 'DAILY_CAP'
   }
   const fresh = await ctx.c.users.findOne({ _id: user._id })
   const [comment] = await hydrate(ctx, fresh, [doc])
-  return { comment, xpGained, user: publicUser(fresh, true) }
+  return { comment, xpGained, xpReason, user: publicUser(fresh, true) }
 }
 
 export async function editComment(ctx, user, id, input) {
@@ -134,6 +137,7 @@ export async function editComment(ctx, user, id, input) {
     const dup = await ctx.c.comments.findOne({ userId: user._id, bodyHash: hash, deleted: false, createdAt: { $gte: ctx.now() - DAY } })
     if (dup && dup._id !== c._id) throw conflict('Komentar yang sama sudah kamu kirim', 'DUPLICATE_COMMENT')
     await ctx.c.comments.updateOne({ _id: c._id }, { $set: { body, bodyHash: hash, edited: true, editedAt: ctx.now() } })
+    if (!isQuality(body)) await reverseXp(ctx, c._id, 'post')
   }
   const [comment] = await hydrate(ctx, user, [{ ...c, body, edited: body !== c.body ? true : c.edited }])
   return { comment }
@@ -209,4 +213,19 @@ export async function reportComment(ctx, user, id, input) {
   }
   await ctx.c.comments.updateOne({ _id: c._id }, { $inc: { reportCount: 1 } })
   return { ok: true }
+}
+
+export async function chapterCounts(ctx, source, slug) {
+  const cache = (ctx.countCache ||= new Map())
+  const key = `${source}:${slug}`
+  const now = ctx.now()
+  const hit = cache.get(key)
+  if (hit && now - hit.t < 15_000) return hit.v
+  const rows = await ctx.c.comments.find({ type: 'chapter', source, slug, deleted: false }, { projection: { chapter: 1 } }).toArray()
+  const counts = {}
+  for (const r of rows) counts[r.chapter] = (counts[r.chapter] || 0) + 1
+  const v = { counts }
+  cache.set(key, { t: now, v })
+  if (cache.size > 500) cache.delete(cache.keys().next().value)
+  return v
 }

@@ -1,7 +1,7 @@
 import { HttpError, badRequest } from '../lib/errors.js'
 import { qint, qstr, hit } from './util.js'
 import { loginWithGoogle, authenticate, me, updateProfile, getUser } from './users.js'
-import { resolveTarget, listComments, listReplies, createComment, editComment, removeComment, likeComment, reportComment } from './comments.js'
+import { resolveTarget, listComments, listReplies, createComment, chapterCounts, editComment, removeComment, likeComment, reportComment } from './comments.js'
 import { deleteAccount } from './account.js'
 import { listReports, resolveReport, findUser, setRole, setBan } from './admin.js'
 
@@ -34,6 +34,10 @@ export function registerCommunityRoutes(router, { registry, community }) {
     const sort = qstr(query, 'sort', 10) || 'newest'
     if (sort !== 'newest' && sort !== 'top') throw badRequest('"sort" harus newest atau top')
     return listComments(cm, viewer, target, { sort, ...pageOf(query) })
+  }))
+  router.get(`${P}/comments/counts`, guard((cm, { query }) => {
+    const t = resolveTarget({ type: 'comic', source: qstr(query, 'source', 40), slug: qstr(query, 'slug', 200) }, hasSource)
+    return chapterCounts(cm, t.source, t.slug)
   }))
   router.get(`${P}/comments/:id/replies`, maybe((cm, { params, query }, viewer) => listReplies(cm, viewer, params.id, pageOf(query))))
   router.post(`${P}/comments`, authed((cm, { body }, user) => createComment(cm, user, body, hasSource)))
