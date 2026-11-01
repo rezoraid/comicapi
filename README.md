@@ -1,158 +1,22 @@
-# comic-api
+# Komikta Android
 
-Server scraper komik untuk aplikasi (APK). Sumber scraper aktif: **Lumos**, **Manta**, **Shinigami**.
-Satu pintu API, semua sumber punya bentuk data yang sama — cepat, ringan, cache agresif.
+## UI dan performa
+- Tema gelap dengan aksen violet (`Ui.Accent`) dan font Poppins, tanpa glassmorphism dan tanpa navigasi mengambang.
+- Transisi navigasi berupa fade singkat; loading memakai skeleton shimmer.
+- Explore memuat satu halaman awal; halaman berikutnya dimuat saat mendekati akhir daftar.
+- Daftar Compose memakai stable keys dan contentType.
+- Cache memori repository: daftar 60 detik, detail 5 menit, chapter 10 menit.
+- Coil memakai memory cache dan disk cache.
 
-## Jalankan
+## Build
+Buka folder ini melalui Android Studio dan jalankan Gradle Sync, lalu Build APK. Arsip ini tidak menyertakan `gradle-wrapper.jar`; jika Android Studio tidak dapat menjalankan wrapper, gunakan Gradle wrapper yang dibuat Android Studio atau tambahkan file wrapper resmi yang sesuai dengan Gradle 8.9.
 
-```bash
-npm install
-cp .env.example .env     # isi API_KEY
-npm start                # http://localhost:3000
-npm test                 # tes server + playground (offline, pakai mock)
-npm run smoke            # tes scraper ke situs asli (butuh internet)
-```
+## Komunitas (login Google, komentar)
+1. Di Google Cloud Console buat OAuth client **Web** (dipakai juga di server sebagai `GOOGLE_CLIENT_ID`) dan OAuth client **Android** untuk package `com.komikta` dan `com.komikta.debug` dengan SHA-1 keystore yang dipakai (keystore `app/komikta-debug.jks`: `19:4D:B1:1D:47:89:70:75:C3:F8:52:E3:F9:5A:64:00:05:27:C1:8B`).
+2. Isi `GOOGLE_WEB_CLIENT_ID=<web client id>` di `gradle.properties` (atau `-PGOOGLE_WEB_CLIENT_ID=...`). Kosong = tombol login menampilkan pesan belum dikonfigurasi.
+3. Server harus punya `MONGODB_URI`, `GOOGLE_CLIENT_ID`, `AUTH_SECRET` (lihat README comic-api).
+Komentar ada di Detail (baris "Komentar") dan di akhir tiap chapter di Reader. Token sesi disimpan di SharedPreferences yang dikecualikan dari backup.
 
-Butuh Node 20+. Dependensi cuma `cheerio`.
-
-## Playground (halaman tes)
-
-Buka `http://localhost:3000/playground` (atau `https://server-kamu.com/playground`).
-Satu file HTML tanpa library, tampilan kotak polos, jalan di HP maupun desktop.
-
-1. **Tes otomatis**: klik **Tes semua endpoint**. Yang dites:
-   - Server: `/health`, `/api/sources`, `/api/search` (semua sumber), validasi `400` (tanpa `q`) dan `404` (sumber tidak ada).
-   - Tiap sumber: search → latest → popular → browse → genres → detail → chapter → gambar (proxy).
-   - Hasil per langkah `PASS` / `FAIL` / `SKIP` + waktu (ms) + keterangan, ringkasan di atas.
-2. **Coba manual**: pilih sumber + endpoint, isi parameter, **Execute** (atau Ctrl+Enter). Terlihat status, waktu, ukuran, `x-cache`. Preview (daftar, detail, thumbnail chapter) atau JSON mentah; klik item/chapter untuk lanjut.
-
-Server URL & API key disimpan di browser (localStorage), tidak dikirim ke mana pun selain server kamu.
-Matikan di production dengan env `PLAYGROUND=false`.
-
-## Hosting
-
-- **Railway / Heroku / Render**: push repo, `Procfile` sudah ada. Set env `API_KEY`.
-- **Docker / VPS**: `docker build -t comic-api . && docker run -p 3000:3000 -e API_KEY=rahasia comic-api`
-- Health check: `GET /health`
-
-## Endpoint
-
-Semua response JSON: `{ "ok": true, "data": ... }` atau `{ "ok": false, "error": { "code", "message" } }`.
-Kalau `API_KEY` diisi, kirim header `x-api-key`.
-
-| Endpoint | Keterangan |
-|---|---|
-| `GET /health` | status server (tanpa auth) |
-| `GET /playground` | halaman tes (tanpa auth, lihat bawah) |
-| `GET /api/sources` | daftar sumber + filter yang didukung |
-| `GET /api/search?q=&limit=` | cari di **semua** sumber sekaligus (hasil `source` per item) |
-| `GET /api/:source/search?q=&limit=` | cari di satu sumber |
-| `GET /api/:source/latest?page=` | update terbaru |
-| `GET /api/:source/popular?period=&limit=` | populer (tidak semua sumber mendukung → `501`) |
-| `GET /api/:source/browse?q=&genre=&type=&status=&sort=&min=&page=` | filter lengkap |
-| `GET /api/:source/genres` | daftar genre |
-| `GET /api/:source/comic/:slug` | detail + daftar chapter (terbaru → terlama) |
-| `GET /api/:source/chapter/:slug/:chapter` | gambar chapter + `prev`/`next` |
-| `GET /api/image?url=` | image proxy (lihat bawah) |
-
-Filter per sumber ada di `/api/sources` → `filters` (mis. manta: `types`).
-
-### Menampilkan gambar di APK
-
-Banyak situs memblokir gambar tanpa header referer. Response `chapter` berisi `images`
-(URL asli) dan `proxy` (path relatif lewat server ini). Pakai `proxy`:
-
-```
-https://server-kamu.com + data.proxy[0]   →  gambar langsung bisa dimuat
-```
-
-Kalau `API_KEY` aktif, kirim juga `x-api-key` di request gambar (atau pasang di interceptor
-Glide/Coil/OkHttp). Hanya host gambar milik scraper yang boleh di-proxy.
-
-## Kenapa cepat
-
-- Cache respons di memori (TTL per endpoint: search 1 mnt, detail 5 mnt, genre 1 jam, dst.), sudah
-  dalam bentuk JSON + gzip + ETag → request berikutnya hampir tanpa kerja. Header `x-cache: HIT|MISS|STALE`.
-- Request identik yang datang barengan hanya memicu **1** scrape.
-- Kalau situs sumber down, data lama tetap disajikan (maks 6 jam, `x-cache: STALE`).
-- Klien bisa kirim `If-None-Match` → `304` tanpa body.
-- Cache tambahan di level scraper (HTML/API sumber), retry otomatis, timeout per request.
-
-## Struktur
-
-```
-src/
-  server.js          entry: listen, graceful shutdown
-  app.js             pipeline request: CORS → auth → rate limit → cache → handler
-  routes.js          semua endpoint + validasi
-  image-proxy.js     streaming gambar (anti-SSRF)
-  playground.js      sajikan public/playground.html (gzip di-cache)
-  public/playground.html   halaman tes API
-  config.js          baca env
-  http/              router, respond (JSON+gzip+ETag), middleware
-  lib/               cache TTL, errors, timeout
-  scrapers/
-    index.js         registry — daftar sumber
-    manta.js         Manta Comics
-    shinigami.js     Shinigami
-    utils.js         HTTP client (retry, cache, dedupe) + trackHost
-test/                tes server
-scripts/smoke-test.mjs   tes scraper ke situs asli
-```
-
-## Nambah scraper baru
-
-1. Buat `src/scrapers/namabaru.js`, export default:
-   `{ id, name, base, imageHeaders, imageHosts, filters?, search, latest, popular, browse, genres, detail, chapter }`
-   (bentuk item/detail ikuti `manta.js`). Method yang tidak didukung boleh dihilangkan → endpoint jawab `501`.
-2. Import dan tambahkan ke array `PROVIDERS` di `src/scrapers/index.js`.
-
-Route, cache, rate limit, pencarian gabungan, dan image proxy langsung ikut. Cek dengan `npm run smoke namabaru`.
-
-
-## Kalau muncul HTTP 403 (IP server diblokir)
-
-Sebagian situs sumber kadang menolak IP datacenter seperti Railway, dan yang diblokir bisa berganti tiap deploy.
-Scraper yang dipasang relay (`createHttp({ relay })` di `utils.js`) akan mengulang lewat relay kalau tetap 403/429/503.
-Relay yang berhasil diingat 10 menit, lalu dicoba langsung lagi.
-
-- **Bawaan**: dua relay publik (kurang stabil, bisa mati kapan saja). Matikan dengan `RELAY_PUBLIC=false`.
-- **Disarankan**: relay sendiri lewat Cloudflare Worker (gratis):
-  1. Cloudflare Dashboard → Workers & Pages → Create → Worker → Deploy, lalu Edit code dan tempel `relay/cloudflare-worker.js`.
-  2. Settings → Variables → tambah `KEY` berisi kata rahasia.
-  3. Railway → Variables: `RELAY_URL=https://nama-worker.workers.dev/?key=RAHASIA&url={url}`
-  Beberapa relay dipisah tanda `|`. Host yang boleh diakses worker dibatasi di daftar `ALLOWED`.
-
-## Komunitas (login Google, komentar, XP)
-
-Aktif otomatis kalau `MONGODB_URI`, `GOOGLE_CLIENT_ID`, dan `AUTH_SECRET` (min. 32 karakter) terisi. Kalau salah satu kosong, fitur komunitas mati (endpoint `/api/community/*` balas `503`) dan endpoint lama tetap jalan.
-
-| Env | Keterangan |
-|---|---|
-| `MONGODB_URI`, `MONGODB_DB` | koneksi MongoDB (default db `komikta`); index dibuat otomatis saat start |
-| `GOOGLE_CLIENT_ID` | Web client ID Google (boleh beberapa, pisah koma); dipakai memeriksa `aud` ID token |
-| `AUTH_SECRET` | kunci penanda token sesi |
-| `OWNER_EMAILS` | email yang otomatis jadi OWNER saat login (dicabut dari env → turun jadi USER) |
-| `MODERATOR_EMAILS` | email yang otomatis jadi MODERATOR saat login (selama role belum diatur manual oleh OWNER) |
-
-Koleksi: `users`, `comments` (komentar + balasan, soft delete), `comment_likes`, `reports`, `xp_events`.
-
-Endpoint (header `Authorization: Bearer <token>`):
-
-| Endpoint | Keterangan |
-|---|---|
-| `POST /api/community/auth/google` `{idToken}` | tukar ID token Google dengan token sesi |
-| `GET/PATCH/DELETE /api/community/me` | profil sendiri / ganti username (1x per 7 hari) / hapus akun (komentar ikut dihapus, XP dibalik) |
-| `GET /api/community/comments?type=comic\|chapter&source=&slug=&chapter=&sort=newest\|top&page=` | daftar komentar (auth opsional) |
-| `GET /api/community/comments/:id/replies?page=` | balasan |
-| `POST /api/community/comments` | `{type,source,slug,chapter?,body}` atau `{parentId,body}` |
-| `PATCH/DELETE /api/community/comments/:id` | edit (hanya pemilik) / hapus (pemilik atau moderator) |
-| `PUT/DELETE /api/community/comments/:id/like` | like / unlike |
-| `POST /api/community/comments/:id/report` | `{reason: spam\|abuse\|hate\|spoiler\|other, note?}` |
-| `GET /api/community/admin/reports`, `POST .../admin/reports/:id/resolve {action: delete\|dismiss}` | MODERATOR/OWNER |
-| `GET /api/community/admin/users?username=`, `PUT .../admin/users/:id/ban {banned}` | MODERATOR/OWNER (MODERATOR hanya bisa ke USER dan PREMIUM) |
-| `PUT /api/community/admin/users/:id/role {role: MODERATOR\|PREMIUM\|USER}` | hanya OWNER, tidak bisa ke diri sendiri, OWNER tidak bisa diberikan lewat API |
-
-XP: komentar +5, balasan +3, like diterima +2. Hanya komentar bermutu (min. 8 karakter, 2 kata, bukan huruf berulang), batas 50 XP/hari dari posting dan 20 XP/hari dari like, like hanya dihitung dari akun berumur > 1 jam dan maks 3 per pasangan akun per hari, komentar identik 24 jam ditolak, menghapus komentar membalikkan XP-nya. Level = `floor((1+sqrt(1+4*xp/25))/2)`, maks 100. Rate limit per pengguna ada di memori proses (cukup untuk 1 instance).
-
-Halaman publik `/privacy` (Kebijakan Privasi) dan `/terms` (Ketentuan) tersedia untuk diisi di Google OAuth consent screen dan Play Console. Isi `CONTACT_EMAIL` supaya email kontak tampil. `/health` menampilkan `community: true|false`.
+## Rilis
+- Versi 1.1.0 (versionCode 2). Signing rilis dibaca dari env/properti `KOMIKTA_STORE_FILE`, `KOMIKTA_STORE_PASSWORD`, `KOMIKTA_KEY_ALIAS`, `KOMIKTA_KEY_PASSWORD`. Kalau kosong, build rilis masih memakai keystore debug (tidak bisa diunggah ke Play Store, buat keystore sendiri dan simpan di luar repo).
+- Profile: Hapus akun (wajib Play Store), tautan Ketentuan dan Kebijakan Privasi (halaman `/terms` dan `/privacy` dari server), dan layar Moderasi untuk MODERATOR/OWNER (hapus komentar atau abaikan laporan).
