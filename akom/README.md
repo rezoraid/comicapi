@@ -1,6 +1,6 @@
 # comic-api
 
-Server scraper komik untuk aplikasi (APK). Sumber: **Manta**, **Shinigami**.
+Server scraper komik untuk aplikasi (APK). Sumber scraper aktif: **Lumos**, **Manta**, **Shinigami**.
 Satu pintu API, semua sumber punya bentuk data yang sama — cepat, ringan, cache agresif.
 
 ## Jalankan
