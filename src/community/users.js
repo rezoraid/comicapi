@@ -21,7 +21,7 @@ export const publicUser = (u, self = false) => ({
   id: u._id,
   username: u.username,
   name: u.name,
-  picture: u.picture,
+  picture: u.customPicture ? `/api/community/users/${u._id}/avatar` : u.picture,
   role: u.role,
   publicHistory: u.publicHistory === true,
   level: progress(u.xp || 0).level,
@@ -133,6 +133,23 @@ export async function updateProfile(ctx, user, body) {
     throw e
   }
   return { user: publicUser({ ...user, username, usernameChangedAt: changedAt }, true) }
+}
+
+export async function updateAvatar(ctx, user, body) {
+  const data = body?.image
+  if (typeof data !== 'string' || data.length > 400_000 || !/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+=*$/.test(data)) {
+    throw badRequest('Foto harus berupa JPG, PNG, atau WebP dan berukuran kecil (maksimal sekitar 280 KB)')
+  }
+  const mime = data.slice(5, data.indexOf(';'))
+  const raw = Buffer.from(data.slice(data.indexOf(',') + 1), 'base64')
+  if (!raw.length || raw.length > 280_000) throw badRequest('Ukuran foto terlalu besar')
+  // Verify the declared format against basic file signatures to reject arbitrary payloads.
+  const valid = mime === 'image/jpeg' ? raw[0] === 0xff && raw[1] === 0xd8
+    : mime === 'image/png' ? raw.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))
+    : raw.subarray(0, 4).toString('ascii') === 'RIFF' && raw.subarray(8, 12).toString('ascii') === 'WEBP'
+  if (!valid) throw badRequest('Format file foto tidak valid')
+  await ctx.c.users.updateOne({ _id: user._id }, { $set: { customPicture: data } })
+  return { user: publicUser({ ...user, customPicture: data }, true) }
 }
 
 export async function getUser(ctx, id) {

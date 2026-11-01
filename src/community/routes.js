@@ -1,6 +1,6 @@
 import { HttpError, badRequest } from '../lib/errors.js'
 import { qint, qstr, hit } from './util.js'
-import { loginWithGoogle, authenticate, me, updateProfile, getUser } from './users.js'
+import { loginWithGoogle, authenticate, me, updateProfile, updateAvatar, getUser } from './users.js'
 import { resolveTarget, listComments, listReplies, createComment, chapterCounts, editComment, removeComment, likeComment, reportComment } from './comments.js'
 import { deleteAccount } from './account.js'
 import { saveProgress, setHistoryVisibility, getPublicHistory } from './reading.js'
@@ -24,7 +24,18 @@ export function registerCommunityRoutes(router, { registry, community }) {
   }))
   router.get(`${P}/me`, authed((cm, ctx, user) => me(cm, user)))
   router.patch(`${P}/me`, authed((cm, { body }, user) => updateProfile(cm, user, body)))
+  router.put(`${P}/me/avatar`, authed((cm, { body }, user) => updateAvatar(cm, user, body)))
   router.delete(`${P}/me`, authed((cm, ctx, user) => deleteAccount(cm, user)))
+  router.get(`${P}/users/:id/avatar`, async ({ params, res }) => {
+    if (!community) throw new HttpError(503, 'COMMUNITY_DISABLED', 'Fitur komunitas belum diaktifkan di server')
+    const user = await community.c.users.findOne({ _id: params.id })
+    if (!user?.customPicture) throw new HttpError(404, 'AVATAR_NOT_FOUND', 'Foto profil tidak ditemukan')
+    const match = /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/]+=*)$/.exec(user.customPicture)
+    if (!match) throw new HttpError(404, 'AVATAR_NOT_FOUND', 'Foto profil tidak valid')
+    const bytes = Buffer.from(match[2], 'base64')
+    res.writeHead(200, { 'content-type': `image/${match[1]}`, 'content-length': bytes.length, 'cache-control': 'public, max-age=3600', 'x-content-type-options': 'nosniff' })
+    res.end(bytes)
+  }, { public: true, raw: true })
   router.get(`${P}/users/:id`, guard((cm, { params }) => getUser(cm, params.id)))
   router.get(`${P}/users/:id/history`, guard((cm, { params }) => getPublicHistory(cm, params.id)))
   router.put(`${P}/me/history-visibility`, authed((cm, { body }, user) => setHistoryVisibility(cm, user, body)))
