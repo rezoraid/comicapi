@@ -3,6 +3,7 @@ import { qint, qstr, hit } from './util.js'
 import { loginWithGoogle, authenticate, me, updateProfile, getUser } from './users.js'
 import { resolveTarget, listComments, listReplies, createComment, chapterCounts, editComment, removeComment, likeComment, reportComment } from './comments.js'
 import { deleteAccount } from './account.js'
+import { saveProgress, setHistoryVisibility, getPublicHistory } from './reading.js'
 import { listReports, resolveReport, findUser, setRole, setBan } from './admin.js'
 
 const P = '/api/community'
@@ -25,6 +26,9 @@ export function registerCommunityRoutes(router, { registry, community }) {
   router.patch(`${P}/me`, authed((cm, { body }, user) => updateProfile(cm, user, body)))
   router.delete(`${P}/me`, authed((cm, ctx, user) => deleteAccount(cm, user)))
   router.get(`${P}/users/:id`, guard((cm, { params }) => getUser(cm, params.id)))
+  router.get(`${P}/users/:id/history`, guard((cm, { params }) => getPublicHistory(cm, params.id)))
+  router.put(`${P}/me/history-visibility`, authed((cm, { body }, user) => setHistoryVisibility(cm, user, body)))
+  router.put(`${P}/me/reading-progress`, authed((cm, { body }, user) => saveProgress(cm, user, body, hasSource)))
 
   router.get(`${P}/comments`, maybe((cm, { query }, viewer) => {
     const target = resolveTarget(

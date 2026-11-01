@@ -10,7 +10,8 @@ export const collections = db => ({
   comments: db.collection('comments'),
   commentLikes: db.collection('comment_likes'),
   reports: db.collection('reports'),
-  xpEvents: db.collection('xp_events')
+  xpEvents: db.collection('xp_events'),
+  readingProgress: db.collection('reading_progress')
 })
 
 export const ensureIndexes = async c => {
@@ -18,6 +19,8 @@ export const ensureIndexes = async c => {
     c.users.createIndex({ googleSub: 1 }, { unique: true }),
     c.users.createIndex({ username: 1 }, { unique: true }),
     c.users.createIndex({ role: 1 }),
+    c.readingProgress.createIndex({ userId: 1, updatedAt: -1 }),
+    c.readingProgress.createIndex({ userId: 1, source: 1, slug: 1 }, { unique: true }),
     c.comments.createIndex({ targetKey: 1, parentId: 1, listed: 1, _id: -1 }),
     c.comments.createIndex({ targetKey: 1, parentId: 1, listed: 1, likeCount: -1, _id: -1 }),
     c.comments.createIndex({ parentId: 1, deleted: 1, _id: 1 }),

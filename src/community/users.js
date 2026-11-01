@@ -23,6 +23,7 @@ export const publicUser = (u, self = false) => ({
   name: u.name,
   picture: u.picture,
   role: u.role,
+  publicHistory: u.publicHistory === true,
   level: progress(u.xp || 0).level,
   ...(self ? { email: u.email, ...progress(u.xp || 0), usernameChangeableAt: u.usernameChangedAt ? u.usernameChangedAt + USERNAME_COOLDOWN : 0, joinedAt: u.createdAt || 0 } : {})
 })
@@ -61,6 +62,7 @@ export async function loginWithGoogle(ctx, idToken) {
         xp: 0,
         level: 1,
         banned: false,
+        publicHistory: false,
         usernameChangedAt: 0,
         createdAt: now,
         lastLoginAt: now
