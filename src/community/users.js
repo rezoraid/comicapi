@@ -24,6 +24,7 @@ export const publicUser = (u, self = false) => ({
   picture: u.customPicture ? `/api/community/users/${u._id}/avatar` : u.picture,
   role: u.role,
   publicHistory: u.publicHistory === true,
+  publicNo: u.publicNo || 0,
   level: progress(u.xp || 0).level,
   ...(self ? { email: u.email, ...progress(u.xp || 0), usernameChangeableAt: u.usernameChangedAt ? u.usernameChangedAt + USERNAME_COOLDOWN : 0, joinedAt: u.createdAt || 0 } : {})
 })
@@ -108,12 +109,22 @@ export async function authenticate(ctx, req, { optional = false } = {}) {
   return user
 }
 
+export async function ensurePublicNo(ctx, u) {
+  if (u.publicNo) return u
+  const row = await ctx.c.counters.findOneAndUpdate({ _id: 'publicNo' }, { $inc: { seq: 1 } }, { upsert: true, returnDocument: 'after' })
+  await ctx.c.users.updateOne({ _id: u._id, publicNo: { $exists: false } }, { $set: { publicNo: row.seq } })
+  return (await ctx.c.users.findOne({ _id: u._id })) || u
+}
+
+export const monthsSince = (ctx, ts) => (ts > 0 ? Math.max(0, Math.floor((ctx.now() - ts) / (30.4375 * DAY))) : 0)
+
 export const me = async (ctx, user) => {
+  user = { ...(await ensurePublicNo(ctx, user)), tokenExp: user.tokenExp }
   const synced = await reconcileXp(ctx, user._id)
   if (synced) user = { ...user, xp: synced.xp, level: synced.level }
   const left = user.tokenExp * 1000 - ctx.now()
   const commentCount = await ctx.c.comments.countDocuments({ userId: user._id, deleted: false })
-  return { user: { ...publicUser(user, true), commentCount }, ...(left < ctx.tokens.ttlMs / 2 ? { token: ctx.tokens.sign(user._id) } : {}) }
+  return { user: { ...publicUser(user, true), commentCount, readMinutes: Math.floor((user.readSeconds || 0) / 60), monthsJoined: monthsSince(ctx, user.createdAt) }, ...(left < ctx.tokens.ttlMs / 2 ? { token: ctx.tokens.sign(user._id) } : {}) }
 }
 
 export async function updateProfile(ctx, user, body) {

@@ -12,6 +12,8 @@ export async function deleteAccount(ctx, user) {
     const r = await ctx.c.commentLikes.deleteOne({ _id: l._id })
     if (r.deletedCount === 1) await ctx.c.comments.updateOne({ _id: l.commentId }, { $inc: { likeCount: -1 } })
   }
+  await ctx.c.likes.deleteMany({ userId: user._id })
+  await ctx.c.readingProgress.deleteMany({ userId: user._id })
   await ctx.c.users.deleteOne({ _id: user._id })
   return { ok: true }
 }

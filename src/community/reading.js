@@ -1,5 +1,5 @@
 import { badRequest, forbidden, notFound } from '../lib/errors.js'
-import { SLUG, CHAPTER, idParam } from './util.js'
+import { SLUG, CHAPTER, idParam, hit } from './util.js'
 import { publicUser } from './users.js'
 
 const text = (v, name, max) => {
@@ -40,4 +40,24 @@ export async function getPublicHistory(ctx, id) {
     user: publicUser(user),
     items: rows.map(({ source, slug, chapter, comicTitle, chapterTitle, coverUrl, updatedAt }) => ({ source, slug, chapter, comicTitle, chapterTitle, coverUrl, updatedAt }))
   }
+}
+
+const MAX_PING_SECONDS = 300
+
+// Mencatat durasi membaca aktif. Kredit dibatasi oleh waktu nyata sejak ping terakhir,
+// jadi klien tidak bisa mengirim angka besar sekaligus untuk menggelembungkan menit.
+export async function trackReadingTime(ctx, user, input, hasSource) {
+  hit(ctx.limits.readTime, user._id, 'Terlalu banyak permintaan')
+  const source = text(input.source, 'source', 40)
+  const slug = text(input.slug, 'slug', 200)
+  const chapter = text(input.chapter, 'chapter', 50)
+  if (!hasSource(source) || !SLUG.test(slug) || !CHAPTER.test(chapter)) throw badRequest('Data chapter tidak valid')
+  const seconds = input.seconds
+  if (!Number.isInteger(seconds) || seconds < 1 || seconds > MAX_PING_SECONDS) throw badRequest(`"seconds" harus bilangan bulat 1-${MAX_PING_SECONDS}`)
+  const now = ctx.now()
+  const gap = user.readTimeAt && now - user.readTimeAt < 600_000 ? Math.ceil((now - user.readTimeAt) / 1000) + 5 : 60
+  const credit = Math.min(seconds, gap)
+  await ctx.c.users.updateOne({ _id: user._id }, { $inc: { readSeconds: credit }, $set: { readTimeAt: now } })
+  await ctx.c.readingProgress.updateOne({ _id: `${user._id}:${source}:${slug}` }, { $inc: { readSeconds: credit } })
+  return { ok: true, credited: credit }
 }

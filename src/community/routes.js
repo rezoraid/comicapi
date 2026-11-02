@@ -1,9 +1,11 @@
 import { HttpError, badRequest } from '../lib/errors.js'
 import { qint, qstr, hit } from './util.js'
 import { loginWithGoogle, authenticate, me, updateProfile, updateAvatar, getUser } from './users.js'
+import { setLike, likeStatus } from './likes.js'
+import { getProfile, listActivity } from './profile.js'
 import { resolveTarget, listComments, listReplies, createComment, chapterCounts, editComment, removeComment, likeComment, reportComment } from './comments.js'
 import { deleteAccount } from './account.js'
-import { saveProgress, setHistoryVisibility, getPublicHistory } from './reading.js'
+import { saveProgress, setHistoryVisibility, getPublicHistory, trackReadingTime } from './reading.js'
 import { listReports, resolveReport, findUser, setRole, setBan } from './admin.js'
 
 const P = '/api/community'
@@ -36,9 +38,18 @@ export function registerCommunityRoutes(router, { registry, community }) {
     res.writeHead(200, { 'content-type': `image/${match[1]}`, 'content-length': bytes.length, 'cache-control': 'public, max-age=3600', 'x-content-type-options': 'nosniff' })
     res.end(bytes)
   }, { public: true, raw: true })
+  router.get(`${P}/users/:id/profile`, maybe((cm, { params }, viewer) => getProfile(cm, viewer, params.id)))
+  router.get(`${P}/users/:id/activity`, maybe((cm, { params, query }, viewer) =>
+    listActivity(cm, viewer, params.id, { tab: qstr(query, 'tab', 10) || 'all', page: qint(query, 'page', 1, 1, 200), limit: qint(query, 'limit', 20, 1, 30) })
+  ))
   router.get(`${P}/users/:id`, guard((cm, { params }) => getUser(cm, params.id)))
   router.get(`${P}/users/:id/history`, guard((cm, { params }) => getPublicHistory(cm, params.id)))
   router.put(`${P}/me/history-visibility`, authed((cm, { body }, user) => setHistoryVisibility(cm, user, body)))
+  router.put(`${P}/me/reading-time`, authed((cm, { body }, user) => trackReadingTime(cm, user, body, hasSource)))
+  const likeTarget = q => ({ type: qstr(q, 'type', 10), source: qstr(q, 'source', 40), slug: qstr(q, 'slug', 200), chapter: qstr(q, 'chapter', 50) })
+  router.get(`${P}/likes/status`, maybe((cm, { query }, viewer) => likeStatus(cm, viewer, likeTarget(query), hasSource)))
+  router.put(`${P}/likes`, authed((cm, { body }, user) => setLike(cm, user, body, hasSource, true)))
+  router.delete(`${P}/likes`, authed((cm, { query }, user) => setLike(cm, user, likeTarget(query), hasSource, false)))
   router.put(`${P}/me/reading-progress`, authed((cm, { body }, user) => saveProgress(cm, user, body, hasSource)))
 
   router.get(`${P}/comments`, maybe((cm, { query }, viewer) => {

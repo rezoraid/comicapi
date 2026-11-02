@@ -55,6 +55,19 @@ Kalau `API_KEY` diisi, kirim header `x-api-key`.
 | `GET /api/:source/chapter/:slug/:chapter` | gambar chapter + `prev`/`next` |
 | `GET /api/image?url=` | image proxy (lihat bawah) |
 
+### Profil, waktu baca, dan Likes (komunitas)
+
+| Endpoint | Fungsi |
+|---|---|
+| `GET /api/community/users/:id/profile` | statistik profil: `readMinutes`, `commentCount`, `monthsJoined`, `level`, `publicNo` (ID publik), `activityVisible` |
+| `GET /api/community/users/:id/activity?tab=all\|comments\|likes&page=&limit=` | daftar aktivitas berpaginasi. `all` dan `likes` hanya untuk pemilik atau jika riwayat dipublikkan (`403` jika privat); `comments` selalu publik |
+| `PUT /api/community/me/reading-time` | `{source, slug, chapter, seconds}` waktu baca aktif. Kredit dibatasi waktu nyata sejak ping terakhir (ping pertama maks 60 dtk, per ping maks 300 dtk) |
+| `PUT /api/community/likes` | like komik/chapter: `{type, source, slug, chapter?, comicTitle?, chapterTitle?, coverUrl?}` (idempotent) |
+| `DELETE /api/community/likes?type=&source=&slug=&chapter=` | hapus like |
+| `GET /api/community/likes/status?type=&source=&slug=&chapter=` | `{liked, count}` |
+
+Koleksi baru: `likes`, `counters` (ID publik berurutan, diberikan sekali per pengguna saat pertama dibutuhkan). Menit membaca = akumulasi `users.readSeconds`; per komik tersimpan di `reading_progress.readSeconds`. Pengguna lama mulai dari 0 menit karena durasi sebelumnya memang tidak pernah dicatat.
+
 Filter per sumber ada di `/api/sources` → `filters` (mis. manta: `types`).
 
 ### Menampilkan gambar di APK

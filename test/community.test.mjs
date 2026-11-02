@@ -603,3 +603,95 @@ test('halaman /privacy, /terms, header keamanan, health', async () => {
   assert.equal(h.headers.get('x-content-type-options'), 'nosniff')
   assert.equal((await h.json()).data.community, true)
 })
+
+// ---- profil: statistik, waktu baca, likes, aktivitas ----
+const put = (path, token, body) => call('PUT', `/api/community${path}`, { token, body })
+const getp = (path, token) => call('GET', `/api/community${path}`, { token })
+
+test('waktu baca: kredit dibatasi waktu nyata, validasi input, akumulasi ke profil', async () => {
+  const a = await login('rt-a', 'rta@example.com')
+  const ch = { source: 'mock', slug: 'solo-leveling', chapter: '1', comicTitle: 'Solo Leveling', chapterTitle: 'Chapter 1', coverUrl: 'https://img.example/c.jpg' }
+  await put('/me/reading-progress', a.token, ch)
+  assert.equal((await put('/me/reading-time', a.token, { ...ch, seconds: 0 })).status, 400)
+  assert.equal((await put('/me/reading-time', a.token, { ...ch, seconds: 99999 })).status, 400)
+  assert.equal((await put('/me/reading-time', a.token, { ...ch, source: 'tidak-ada', seconds: 10 })).status, 400)
+  // ping pertama dibatasi 60 dtk walau klaim 300
+  const first = await put('/me/reading-time', a.token, { ...ch, seconds: 300 })
+  assert.equal(first.data.credited, 60)
+  // ping langsung berikutnya hanya dapat kredit sesuai waktu nyata (+5 dtk toleransi)
+  const burst = await put('/me/reading-time', a.token, { ...ch, seconds: 300 })
+  assert.ok(burst.data.credited <= 6, `burst kredit ${burst.data.credited}`)
+  clock.t += 120_000
+  const ok = await put('/me/reading-time', a.token, { ...ch, seconds: 120 })
+  assert.equal(ok.data.credited, 120)
+  const prof = await getp(`/users/${a.user.id}/profile`, a.token)
+  assert.equal(prof.data.user.readMinutes, Math.floor((60 + burst.data.credited + 120) / 60))
+  assert.equal(prof.data.self, true)
+  const act = await getp(`/users/${a.user.id}/activity?tab=all`, a.token)
+  assert.equal(act.data.items[0].comicTitle, 'Solo Leveling')
+  assert.ok(act.data.items[0].readMinutes >= 3)
+})
+
+test('profil: ID publik berurutan dan stabil, bulan bergabung dari data nyata', async () => {
+  const a = await login('id-a', 'ida@example.com')
+  const b = await login('id-b', 'idb@example.com')
+  const ma = await me(a.token)
+  const mb = await me(b.token)
+  assert.ok(ma.publicNo > 0 && mb.publicNo > ma.publicNo)
+  assert.equal((await me(a.token)).publicNo, ma.publicNo)
+  const old = clock.t
+  clock.t += 70 * 86_400_000
+  const p = await getp(`/users/${a.user.id}/profile`)
+  assert.equal(p.data.user.monthsJoined >= 2, true)
+  assert.equal(p.data.user.publicNo, ma.publicNo)
+  clock.t = old
+  assert.equal((await getp('/users/000000000000000000000000/profile')).status, 404)
+})
+
+test('likes: komik & chapter, idempotent, hitungan dan daftar di profil', async () => {
+  const a = await login('lk-a', 'lka@example.com')
+  const b = await login('lk-b', 'lkb@example.com')
+  const meta = { comicTitle: 'Tower of God', coverUrl: 'https://img.example/t.jpg' }
+  assert.equal((await call('PUT', '/api/community/likes', { body: { type: 'comic', source: 'mock', slug: 'tog' } })).status, 401)
+  assert.equal((await put('/likes', a.token, { type: 'comic', source: 'mock', slug: 'tog', ...meta })).data.count, 1)
+  assert.equal((await put('/likes', a.token, { type: 'comic', source: 'mock', slug: 'tog', ...meta })).data.count, 1)
+  assert.equal((await put('/likes', b.token, { type: 'comic', source: 'mock', slug: 'tog', ...meta })).data.count, 2)
+  clock.t += 1000
+  await put('/likes', a.token, { type: 'chapter', source: 'mock', slug: 'tog', chapter: '5', chapterTitle: 'Chapter 5', ...meta })
+  assert.equal((await put('/likes', a.token, { type: 'chapter', source: 'mock', slug: 'tog' })).status, 400)
+  const st = await getp('/likes/status?type=comic&source=mock&slug=tog', a.token)
+  assert.deepEqual([st.data.liked, st.data.count], [true, 2])
+  assert.equal((await getp('/likes/status?type=comic&source=mock&slug=tog')).data.liked, false)
+  const mine = await getp(`/users/${a.user.id}/activity?tab=likes`, a.token)
+  assert.deepEqual(mine.data.items.map(i => [i.type, i.comicTitle]), [['chapter', 'Tower of God'], ['comic', 'Tower of God']])
+  const del = await call('DELETE', '/api/community/likes?type=comic&source=mock&slug=tog', { token: a.token })
+  assert.equal(del.data.count, 1)
+  assert.equal((await getp(`/users/${a.user.id}/activity?tab=likes`, a.token)).data.items.length, 1)
+})
+
+test('aktivitas: komentar publik, riwayat & likes privat untuk orang lain, terbuka bila publik', async () => {
+  const a = await login('ac-a', 'aca@example.com')
+  const b = await login('ac-b', 'acb@example.com')
+  await put('/me/reading-progress', a.token, { source: 'mock', slug: 'one-piece', chapter: '1', comicTitle: 'One Piece', chapterTitle: 'Chapter 1', coverUrl: '' })
+  await put('/likes', a.token, { type: 'comic', source: 'mock', slug: 'one-piece', comicTitle: 'One Piece' })
+  const c = await post(a.token, { type: 'chapter', source: 'mock', slug: 'one-piece', chapter: '1', body: 'Ceritanya seru sekali ya' })
+  assert.equal(c.status, 200)
+  const cm = await getp(`/users/${a.user.id}/activity?tab=comments`, b.token)
+  assert.equal(cm.data.items[0].comicTitle, 'One Piece')
+  assert.equal(cm.data.items[0].chapter, '1')
+  assert.equal(cm.data.items[0].body, 'Ceritanya seru sekali ya')
+  assert.equal((await getp(`/users/${a.user.id}/activity?tab=all`, b.token)).status, 403)
+  assert.equal((await getp(`/users/${a.user.id}/activity?tab=likes`)).status, 403)
+  assert.equal((await getp(`/users/${a.user.id}/profile`, b.token)).data.activityVisible, false)
+  await put('/me/history-visibility', a.token, { publicHistory: true })
+  assert.equal((await getp(`/users/${a.user.id}/activity?tab=all`, b.token)).data.items.length, 1)
+  assert.equal((await getp(`/users/${a.user.id}/activity?tab=likes`, b.token)).data.items.length, 1)
+  assert.equal((await getp(`/users/${a.user.id}/activity?tab=zzz`, b.token)).status, 400)
+})
+
+test('hapus akun ikut menghapus likes dan riwayat', async () => {
+  const a = await login('del-a', 'dela@example.com')
+  await put('/likes', a.token, { type: 'comic', source: 'mock', slug: 'del-me', comicTitle: 'X' })
+  assert.equal((await call('DELETE', '/api/community/me', { token: a.token })).status, 200)
+  assert.equal((await getp('/likes/status?type=comic&source=mock&slug=del-me')).data.count, 0)
+})

@@ -1,0 +1,80 @@
+import { forbidden, notFound, badRequest } from '../lib/errors.js'
+import { idParam } from './util.js'
+import { publicUser, ensurePublicNo, monthsSince } from './users.js'
+
+const TABS = ['all', 'comments', 'likes']
+const minutes = s => (s > 0 ? Math.max(1, Math.round(s / 60)) : 0)
+
+const loadUser = async (ctx, id) => {
+  const u = await ctx.c.users.findOne({ _id: idParam(id) })
+  if (!u) throw notFound('Pengguna tidak ditemukan')
+  return ensurePublicNo(ctx, u)
+}
+
+// Statistik profil: semua angka dihitung dari data tersimpan, tidak ada nilai statis.
+export async function getProfile(ctx, viewer, id) {
+  const u = await loadUser(ctx, id)
+  const self = viewer?._id === u._id
+  const commentCount = await ctx.c.comments.countDocuments({ userId: u._id, deleted: false })
+  return {
+    user: {
+      ...publicUser(u, false),
+      commentCount,
+      readMinutes: Math.floor((u.readSeconds || 0) / 60),
+      monthsJoined: monthsSince(ctx, u.createdAt),
+      joinedAt: u.createdAt || 0
+    },
+    self,
+    activityVisible: self || u.publicHistory === true
+  }
+}
+
+// Judul komik untuk komentar lama yang tidak menyimpan judul: ambil dari riwayat/like siapa pun.
+const titleLookup = async (ctx, rows) => {
+  const keys = [...new Map(rows.map(r => [`${r.source}:${r.slug}`, { source: r.source, slug: r.slug }])).values()]
+  const out = new Map()
+  if (!keys.length) return out
+  const or = keys.map(k => ({ source: k.source, slug: k.slug }))
+  const [a, b] = await Promise.all([
+    ctx.c.readingProgress.find({ $or: or, comicTitle: { $ne: '' } }, { limit: 100 }).toArray(),
+    ctx.c.likes.find({ $or: or, comicTitle: { $ne: '' } }, { limit: 100 }).toArray()
+  ])
+  for (const r of [...a, ...b]) {
+    const k = `${r.source}:${r.slug}`
+    const cur = out.get(k) || {}
+    out.set(k, { comicTitle: cur.comicTitle || r.comicTitle, coverUrl: cur.coverUrl || r.coverUrl || '' })
+  }
+  return out
+}
+
+const pretty = slug => slug.replace(/[-_]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+
+export async function listActivity(ctx, viewer, id, { tab, page, limit }) {
+  if (!TABS.includes(tab)) throw badRequest('"tab" harus all, comments, atau likes')
+  const u = await loadUser(ctx, id)
+  const self = viewer?._id === u._id
+  if (tab !== 'comments' && !self && u.publicHistory !== true) throw forbidden('Aktivitas pengguna ini bersifat privat')
+  const skip = (page - 1) * limit
+  let rows
+  if (tab === 'all') rows = await ctx.c.readingProgress.find({ userId: u._id }, { sort: { updatedAt: -1 }, skip, limit: limit + 1 }).toArray()
+  else if (tab === 'likes') rows = await ctx.c.likes.find({ userId: u._id }, { sort: { createdAt: -1 }, skip, limit: limit + 1 }).toArray()
+  else rows = await ctx.c.comments.find({ userId: u._id, deleted: false }, { sort: { _id: -1 }, skip, limit: limit + 1 }).toArray()
+  const hasMore = rows.length > limit
+  rows = rows.slice(0, limit)
+  const titles = tab === 'comments' || rows.some(r => !r.comicTitle) ? await titleLookup(ctx, rows) : new Map()
+  const items = rows.map(r => {
+    const t = titles.get(`${r.source}:${r.slug}`) || {}
+    const base = {
+      source: r.source,
+      slug: r.slug,
+      chapter: r.chapter || null,
+      comicTitle: r.comicTitle || t.comicTitle || pretty(r.slug),
+      chapterTitle: r.chapterTitle || '',
+      coverUrl: r.coverUrl || t.coverUrl || ''
+    }
+    if (tab === 'all') return { kind: 'history', ...base, at: r.updatedAt, readMinutes: minutes(r.readSeconds || 0) }
+    if (tab === 'likes') return { kind: 'like', ...base, type: r.type, at: r.createdAt }
+    return { kind: 'comment', ...base, type: r.type, id: r._id, body: r.body, isReply: !!r.parentId, likeCount: r.likeCount || 0, replyCount: r.replyCount || 0, at: r.createdAt }
+  })
+  return { items, hasMore, page }
+}
