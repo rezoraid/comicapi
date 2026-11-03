@@ -60,7 +60,7 @@ Kalau `API_KEY` diisi, kirim header `x-api-key`.
 | Endpoint | Fungsi |
 |---|---|
 | `GET /api/community/users/:id/profile` | statistik profil: `readMinutes`, `commentCount`, `monthsJoined`, `level`, `publicNo` (ID publik), `activityVisible` |
-| `GET /api/community/users/:id/activity?tab=all\|comments\|likes&page=&limit=` | daftar aktivitas berpaginasi. `all` dan `likes` hanya untuk pemilik atau jika riwayat dipublikkan (`403` jika privat); `comments` selalu publik |
+| `GET /api/community/users/:id/activity?tab=all\|comments\|likes&page=&limit=` | daftar aktivitas berpaginasi. semua tab (`all`, `comments`, `likes`) selalu publik; tidak ada lagi pengaturan privasi aktivitas |
 | `PUT /api/community/me/reading-time` | `{source, slug, chapter, seconds}` waktu baca aktif. Kredit dibatasi waktu nyata sejak ping terakhir (ping pertama maks 60 dtk, per ping maks 300 dtk) |
 | `PUT /api/community/likes` | like komik/chapter: `{type, source, slug, chapter?, comicTitle?, chapterTitle?, coverUrl?}` (idempotent) |
 | `DELETE /api/community/likes?type=&source=&slug=&chapter=` | hapus like |
@@ -170,10 +170,10 @@ XP: komentar +5, balasan +3, like diterima +2. Hanya komentar bermutu (min. 8 ka
 
 Halaman publik `/privacy` (Kebijakan Privasi) dan `/terms` (Ketentuan) tersedia untuk diisi di Google OAuth consent screen dan Play Console. Isi `CONTACT_EMAIL` supaya email kontak tampil. `/health` menampilkan `community: true|false`.
 
-## Profil: chapter dibaca, level, banner, alat OWNER
+## Profil: chapter dibaca, level, alat OWNER
 
 - **Chapter dibaca** dihitung server, bukan klien. `PUT /me/reading-time` hanya mengkredit detik sebesar waktu nyata sejak ping terakhir (diklaim atomik). Sebuah chapter terhitung setelah ≥ 60 dtk aktif terkumpul di chapter itu, maksimal 120 chapter / 24 jam, dan tiap chapter hanya dihitung sekali. Chapter yang terhitung memberi +8 XP (batas 80 XP/hari, grup `read`).
 - **OWNER** selalu tampil `#1` dengan level `99999` (nomor lama pemegang #1 ditukar otomatis). Level pengguna lain tetap murni dari XP.
-- **Banner profil**: `PUT /me/banner` (`{ image: "data:image/jpeg;base64,…" }`, ≤ ~450 KB), `DELETE /me/banner`, `GET /users/:id/banner`. Alamat banner ada di field `banner` pada objek user.
-- **Khusus OWNER**: `GET /admin/users/:id` (detail akun), `POST /admin/users/:id/xp` (`{ amount }`, ±50.000, dicatat sebagai event `admin`), `POST /admin/users/:id/reset-media` (`{ banner, avatar }`, juga boleh MODERATOR untuk akun di bawahnya).
+- **Banner profil sudah dihapus total**: tidak ada endpoint maupun field `banner`. Data `customBanner` lama di database tidak dipakai lagi (boleh dibersihkan manual).
+- **Khusus OWNER**: `GET /admin/users/:id` (detail akun), `POST /admin/users/:id/xp` (`{ amount }`, ±50.000, dicatat sebagai event `admin`), `POST /admin/users/:id/reset-media` (`{ avatar }`, juga boleh MODERATOR untuk akun di bawahnya).
 - Pengguna lama mulai dari 0 chapter dibaca (riwayat lama tidak punya bukti waktu baca per chapter).

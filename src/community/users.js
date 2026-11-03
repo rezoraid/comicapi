@@ -29,9 +29,7 @@ export const publicUser = (u, self = false) => {
     username: u.username,
     name: u.name,
     picture: u.customPicture ? `/api/community/users/${u._id}/avatar` : u.picture,
-    banner: u.customBanner ? `/api/community/users/${u._id}/banner?v=${u.bannerAt || 0}` : '',
     role: u.role,
-    publicHistory: u.publicHistory === true,
     publicNo: owner ? 1 : u.publicNo || 0,
     level: owner ? OWNER_LEVEL : p.level,
     ...(self ? { email: u.email, ...p, ...(owner ? { level: OWNER_LEVEL, xpCurrentLevel: p.xp, xpNextLevel: p.xp } : {}), usernameChangeableAt: u.usernameChangedAt ? u.usernameChangedAt + USERNAME_COOLDOWN : 0, joinedAt: u.createdAt || 0 } : {})
@@ -72,7 +70,6 @@ export async function loginWithGoogle(ctx, idToken) {
         xp: 0,
         level: 1,
         banned: false,
-        publicHistory: false,
         usernameChangedAt: 0,
         createdAt: now,
         lastLoginAt: now
@@ -190,20 +187,6 @@ export async function updateAvatar(ctx, user, body) {
   const data = parseImage(body?.image, { maxData: 400_000, maxRaw: 280_000, tooBig: 'Foto harus berupa JPG, PNG, atau WebP dan berukuran kecil (maksimal sekitar 280 KB)' })
   await ctx.c.users.updateOne({ _id: user._id }, { $set: { customPicture: data } })
   return { user: publicUser({ ...user, customPicture: data }, true) }
-}
-
-export async function updateBanner(ctx, user, body) {
-  hit(ctx.limits.write, user._id, 'Terlalu banyak permintaan')
-  const data = parseImage(body?.image, { maxData: 640_000, maxRaw: 470_000, tooBig: 'Banner harus berupa JPG, PNG, atau WebP dan berukuran maksimal sekitar 450 KB' })
-  const bannerAt = ctx.now()
-  await ctx.c.users.updateOne({ _id: user._id }, { $set: { customBanner: data, bannerAt } })
-  return { user: publicUser({ ...user, customBanner: data, bannerAt }, true) }
-}
-
-export async function removeBanner(ctx, user) {
-  hit(ctx.limits.write, user._id, 'Terlalu banyak permintaan')
-  await ctx.c.users.updateOne({ _id: user._id }, { $set: { customBanner: '', bannerAt: ctx.now() } })
-  return { user: publicUser({ ...user, customBanner: '' }, true) }
 }
 
 export async function getUser(ctx, id) {

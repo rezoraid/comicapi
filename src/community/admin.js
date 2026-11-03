@@ -108,7 +108,6 @@ export async function userDetail(ctx, actor, id) {
       commentCount,
       chaptersRead: await chaptersRead(ctx, u._id),
       lastLoginAt: u.lastLoginAt || 0,
-      hasBanner: !!u.customBanner,
       hasAvatar: !!u.customPicture
     }
   }
@@ -128,7 +127,7 @@ export async function grantXp(ctx, actor, id, amount) {
   return { user: publicUser({ ...target, xp: synced.xp, level: synced.level }, true) }
 }
 
-// Hapus foto/banner kustom yang melanggar aturan. MODERATOR boleh untuk akun di bawahnya, OWNER untuk semua.
+// Hapus foto profil kustom yang melanggar aturan. MODERATOR boleh untuk akun di bawahnya, OWNER untuk semua.
 export async function resetMedia(ctx, actor, id, input) {
   needMod(actor)
   const uid = idParam(id)
@@ -136,9 +135,8 @@ export async function resetMedia(ctx, actor, id, input) {
   if (!target) throw notFound('Pengguna tidak ditemukan')
   if (uid !== actor._id && rank(actor) < 3 && rank(target) >= rank(actor)) throw forbidden('Kamu tidak boleh mengubah akun dengan role ini')
   const set = {}
-  if (input?.banner === true) Object.assign(set, { customBanner: '', bannerAt: ctx.now() })
   if (input?.avatar === true) set.customPicture = ''
-  if (!Object.keys(set).length) throw badRequest('Pilih "banner" dan/atau "avatar"')
+  if (!Object.keys(set).length) throw badRequest('Pilih "avatar"')
   await ctx.c.users.updateOne({ _id: uid }, { $set: set })
   return { ok: true }
 }

@@ -1,4 +1,4 @@
-import { forbidden, notFound, badRequest } from '../lib/errors.js'
+import { notFound, badRequest } from '../lib/errors.js'
 import { idParam } from './util.js'
 import { publicUser, ensurePublicNo, monthsSince } from './users.js'
 import { chaptersRead, chaptersReadByComic } from './stats.js'
@@ -24,8 +24,7 @@ export async function getProfile(ctx, viewer, id) {
       monthsJoined: monthsSince(ctx, u.createdAt),
       joinedAt: u.createdAt || 0
     },
-    self,
-    activityVisible: self || u.publicHistory === true
+    self
   }
 }
 
@@ -52,8 +51,6 @@ const pretty = slug => slug.replace(/[-_]+/g, ' ').replace(/\b\w/g, c => c.toUpp
 export async function listActivity(ctx, viewer, id, { tab, page, limit }) {
   if (!TABS.includes(tab)) throw badRequest('"tab" harus all, comments, atau likes')
   const u = await loadUser(ctx, id)
-  const self = viewer?._id === u._id
-  if (tab !== 'comments' && !self && u.publicHistory !== true) throw forbidden('Aktivitas pengguna ini bersifat privat')
   const skip = (page - 1) * limit
   let rows
   if (tab === 'all') rows = await ctx.c.readingProgress.find({ userId: u._id }, { sort: { updatedAt: -1 }, skip, limit: limit + 1 }).toArray()

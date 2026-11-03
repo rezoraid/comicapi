@@ -685,33 +685,22 @@ test('OWNER: #1, level 99999; pengguna lain tidak bisa mengaku #1', async () => 
 
 const png = 'data:image/png;base64,' + Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), Buffer.alloc(200, 1)]).toString('base64')
 
-test('banner profil: unggah, tampil di profil, hapus, validasi', async () => {
+test('banner profil sudah dihapus: endpoint hilang dan tidak ada field banner', async () => {
   const a = await login('bn-a', 'bna@example.com')
-  assert.equal((await put('/me/banner', a.token, { image: 'data:image/png;base64,AAAA' })).status, 400)
-  assert.equal((await put('/me/banner', a.token, { image: 'bukan gambar' })).status, 400)
-  assert.equal((await put('/me/banner', a.token, { image: 'data:image/png;base64,' + Buffer.alloc(480_000, 1).toString('base64') })).status, 400)
+  assert.equal((await put('/me/banner', a.token, { image: png })).status, 404)
   assert.equal((await getp(`/users/${a.user.id}/banner`)).status, 404)
-  const ok = await put('/me/banner', a.token, { image: png })
-  assert.equal(ok.status, 200)
-  assert.match(ok.data.user.banner, new RegExp(`/users/${a.user.id}/banner\\?v=\\d+`))
-  const res = await fetch(`${srv.url}/api/community/users/${a.user.id}/banner`)
-  assert.equal(res.status, 200)
-  assert.equal(res.headers.get('content-type'), 'image/png')
   const prof = await getp(`/users/${a.user.id}/profile`)
-  assert.ok(prof.data.user.banner.includes('/banner'))
-  const del = await call('DELETE', '/api/community/me/banner', { token: a.token })
-  assert.equal(del.data.user.banner, '')
-  assert.equal((await getp(`/users/${a.user.id}/banner`)).status, 404)
+  assert.equal('banner' in prof.data.user, false)
 })
 
-test('panel OWNER: detail akun, atur XP, reset banner; non-owner ditolak', async () => {
+test('panel OWNER: detail akun, atur XP, reset foto; non-owner ditolak', async () => {
   const o = await login('pn-o', 'owner@example.com')
   const u = await login('pn-u', 'pnu@example.com')
-  await put('/me/banner', u.token, { image: png })
+  await put('/me/avatar', u.token, { image: png })
   assert.equal((await getp(`/admin/users/${u.user.id}`, u.token)).status, 403)
   const d = await getp(`/admin/users/${u.user.id}`, o.token)
   assert.equal(d.data.user.email, 'pnu@example.com')
-  assert.equal(d.data.user.hasBanner, true)
+  assert.equal(d.data.user.hasAvatar, true)
   const post = (path, token, body) => call('POST', `/api/community${path}`, { token, body })
   assert.equal((await post(`/admin/users/${u.user.id}/xp`, u.token, { amount: 100 })).status, 403)
   assert.equal((await post(`/admin/users/${u.user.id}/xp`, o.token, { amount: 0 })).status, 400)
@@ -722,8 +711,8 @@ test('panel OWNER: detail akun, atur XP, reset banner; non-owner ditolak', async
   assert.equal((await me(u.token)).xp, 150)
   const neg = await post(`/admin/users/${u.user.id}/xp`, o.token, { amount: -150 })
   assert.equal(neg.data.user.level, 1)
-  assert.equal((await post(`/admin/users/${u.user.id}/reset-media`, o.token, { banner: true })).status, 200)
-  assert.equal((await getp(`/admin/users/${u.user.id}`, o.token)).data.user.hasBanner, false)
+  assert.equal((await post(`/admin/users/${u.user.id}/reset-media`, o.token, { avatar: true })).status, 200)
+  assert.equal((await getp(`/admin/users/${u.user.id}`, o.token)).data.user.hasAvatar, false)
   assert.equal((await post(`/admin/users/${u.user.id}/reset-media`, o.token, {})).status, 400)
 })
 
@@ -764,7 +753,7 @@ test('likes: komik & chapter, idempotent, hitungan dan daftar di profil', async 
   assert.equal((await getp(`/users/${a.user.id}/activity?tab=likes`, a.token)).data.items.length, 1)
 })
 
-test('aktivitas: komentar publik, riwayat & likes privat untuk orang lain, terbuka bila publik', async () => {
+test('aktivitas: komentar, riwayat, dan likes selalu publik', async () => {
   const a = await login('ac-a', 'aca@example.com')
   const b = await login('ac-b', 'acb@example.com')
   await put('/me/reading-progress', a.token, { source: 'mock', slug: 'one-piece', chapter: '1', comicTitle: 'One Piece', chapterTitle: 'Chapter 1', coverUrl: '' })
@@ -775,10 +764,7 @@ test('aktivitas: komentar publik, riwayat & likes privat untuk orang lain, terbu
   assert.equal(cm.data.items[0].comicTitle, 'One Piece')
   assert.equal(cm.data.items[0].chapter, '1')
   assert.equal(cm.data.items[0].body, 'Ceritanya seru sekali ya')
-  assert.equal((await getp(`/users/${a.user.id}/activity?tab=all`, b.token)).status, 403)
-  assert.equal((await getp(`/users/${a.user.id}/activity?tab=likes`)).status, 403)
-  assert.equal((await getp(`/users/${a.user.id}/profile`, b.token)).data.activityVisible, false)
-  await put('/me/history-visibility', a.token, { publicHistory: true })
+  assert.equal('activityVisible' in (await getp(`/users/${a.user.id}/profile`, b.token)).data, false)
   assert.equal((await getp(`/users/${a.user.id}/activity?tab=all`, b.token)).data.items.length, 1)
   assert.equal((await getp(`/users/${a.user.id}/activity?tab=likes`, b.token)).data.items.length, 1)
   assert.equal((await getp(`/users/${a.user.id}/activity?tab=zzz`, b.token)).status, 400)

@@ -1,6 +1,5 @@
-import { badRequest, forbidden, notFound } from '../lib/errors.js'
-import { SLUG, CHAPTER, DAY, idParam, hit } from './util.js'
-import { publicUser } from './users.js'
+import { badRequest } from '../lib/errors.js'
+import { SLUG, CHAPTER, DAY, hit } from './util.js'
 import { awardXp, XP } from './xp.js'
 import { chaptersRead } from './stats.js'
 
@@ -25,23 +24,6 @@ export async function saveProgress(ctx, user, input, hasSource) {
   }
   await ctx.c.readingProgress.updateOne({ _id: doc._id }, { $set: doc, $setOnInsert: { createdAt: now } }, { upsert: true })
   return { ok: true, updatedAt: now }
-}
-
-export async function setHistoryVisibility(ctx, user, input) {
-  if (typeof input.publicHistory !== 'boolean') throw badRequest('"publicHistory" harus berupa boolean')
-  await ctx.c.users.updateOne({ _id: user._id }, { $set: { publicHistory: input.publicHistory } })
-  return { ok: true, publicHistory: input.publicHistory }
-}
-
-export async function getPublicHistory(ctx, id) {
-  const user = await ctx.c.users.findOne({ _id: idParam(id, 'id') })
-  if (!user) throw notFound('Pengguna tidak ditemukan')
-  if (!user.publicHistory) throw forbidden('Riwayat membaca pengguna ini bersifat privat')
-  const rows = await ctx.c.readingProgress.find({ userId: user._id }).sort({ updatedAt: -1 }).limit(50).toArray()
-  return {
-    user: publicUser(user),
-    items: rows.map(({ source, slug, chapter, comicTitle, chapterTitle, coverUrl, updatedAt }) => ({ source, slug, chapter, comicTitle, chapterTitle, coverUrl, updatedAt }))
-  }
 }
 
 const MAX_PING_SECONDS = 300

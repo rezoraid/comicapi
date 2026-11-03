@@ -1,11 +1,11 @@
 import { HttpError, badRequest } from '../lib/errors.js'
 import { qint, qstr, hit } from './util.js'
-import { loginWithGoogle, authenticate, me, updateProfile, updateAvatar, updateBanner, removeBanner, getUser } from './users.js'
+import { loginWithGoogle, authenticate, me, updateProfile, updateAvatar, getUser } from './users.js'
 import { setLike, likeStatus } from './likes.js'
 import { getProfile, listActivity } from './profile.js'
 import { resolveTarget, listComments, listReplies, createComment, chapterCounts, editComment, removeComment, likeComment, reportComment } from './comments.js'
 import { deleteAccount } from './account.js'
-import { saveProgress, setHistoryVisibility, getPublicHistory, trackReadingTime } from './reading.js'
+import { saveProgress, trackReadingTime } from './reading.js'
 import { listReports, resolveReport, findUser, userDetail, grantXp, resetMedia, setRole, setBan } from './admin.js'
 
 const P = '/api/community'
@@ -27,18 +27,7 @@ export function registerCommunityRoutes(router, { registry, community }) {
   router.get(`${P}/me`, authed((cm, ctx, user) => me(cm, user)))
   router.patch(`${P}/me`, authed((cm, { body }, user) => updateProfile(cm, user, body)))
   router.put(`${P}/me/avatar`, authed((cm, { body }, user) => updateAvatar(cm, user, body)))
-  router.put(`${P}/me/banner`, authed((cm, { body }, user) => updateBanner(cm, user, body)))
-  router.delete(`${P}/me/banner`, authed((cm, ctx, user) => removeBanner(cm, user)))
   router.delete(`${P}/me`, authed((cm, ctx, user) => deleteAccount(cm, user)))
-  router.get(`${P}/users/:id/banner`, async ({ params, res }) => {
-    if (!community) throw new HttpError(503, 'COMMUNITY_DISABLED', 'Fitur komunitas belum diaktifkan di server')
-    const user = await community.c.users.findOne({ _id: params.id })
-    const match = user?.customBanner ? /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/]+=*)$/.exec(user.customBanner) : null
-    if (!match) throw new HttpError(404, 'BANNER_NOT_FOUND', 'Banner tidak ditemukan')
-    const bytes = Buffer.from(match[2], 'base64')
-    res.writeHead(200, { 'content-type': `image/${match[1]}`, 'content-length': bytes.length, 'cache-control': 'public, max-age=86400', 'x-content-type-options': 'nosniff' })
-    res.end(bytes)
-  }, { public: true, raw: true })
   router.get(`${P}/users/:id/avatar`, async ({ params, res }) => {
     if (!community) throw new HttpError(503, 'COMMUNITY_DISABLED', 'Fitur komunitas belum diaktifkan di server')
     const user = await community.c.users.findOne({ _id: params.id })
@@ -54,8 +43,6 @@ export function registerCommunityRoutes(router, { registry, community }) {
     listActivity(cm, viewer, params.id, { tab: qstr(query, 'tab', 10) || 'all', page: qint(query, 'page', 1, 1, 200), limit: qint(query, 'limit', 20, 1, 30) })
   ))
   router.get(`${P}/users/:id`, guard((cm, { params }) => getUser(cm, params.id)))
-  router.get(`${P}/users/:id/history`, guard((cm, { params }) => getPublicHistory(cm, params.id)))
-  router.put(`${P}/me/history-visibility`, authed((cm, { body }, user) => setHistoryVisibility(cm, user, body)))
   router.put(`${P}/me/reading-time`, authed((cm, { body }, user) => trackReadingTime(cm, user, body, hasSource)))
   const likeTarget = q => ({ type: qstr(q, 'type', 10), source: qstr(q, 'source', 40), slug: qstr(q, 'slug', 200), chapter: qstr(q, 'chapter', 50) })
   router.get(`${P}/likes/status`, maybe((cm, { query }, viewer) => likeStatus(cm, viewer, likeTarget(query), hasSource)))

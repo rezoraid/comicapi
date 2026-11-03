@@ -60,7 +60,7 @@ export function createApp({ registry, config, logger = console, community = null
       }
 
       const ctx = { req, res, params, query: url.searchParams, ip: clientIp(req, config.trustProxy) }
-      if (route.body) ctx.body = await readJson(req, url.pathname.endsWith('/me/avatar') ? 512 * 1024 : url.pathname.endsWith('/me/banner') ? 900 * 1024 : 16_384)
+      if (route.body) ctx.body = await readJson(req, url.pathname.endsWith('/me/avatar') ? 512 * 1024 : 16_384)
       if (route.raw) return await route.handler(ctx)
 
       const run = async () =>
