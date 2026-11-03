@@ -14,6 +14,7 @@ export async function deleteAccount(ctx, user) {
   }
   await ctx.c.likes.deleteMany({ userId: user._id })
   await ctx.c.readingProgress.deleteMany({ userId: user._id })
+  await ctx.c.chapterReads.deleteMany({ userId: user._id })
   await ctx.c.users.deleteOne({ _id: user._id })
   return { ok: true }
 }

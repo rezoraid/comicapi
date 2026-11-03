@@ -1,7 +1,9 @@
 import { badRequest, forbidden, notFound } from '../lib/errors.js'
-import { rank, idParam, qstr } from './util.js'
+import { rank, idParam, qstr, newId } from './util.js'
 import { publicUser } from './users.js'
 import { deleteDoc } from './comments.js'
+import { reconcileXp } from './xp.js'
+import { chaptersRead } from './stats.js'
 
 const needMod = u => {
   if (rank(u) < 2) throw forbidden('Hanya MODERATOR atau OWNER yang boleh melakukan ini')
@@ -86,4 +88,57 @@ export async function setBan(ctx, actor, id, banned) {
   if (rank(target) >= rank(actor)) throw forbidden('Kamu tidak boleh memblokir pengguna dengan role ini')
   await ctx.c.users.updateOne({ _id: uid }, { $set: { banned } })
   return { ok: true, banned }
+}
+
+const needOwner = u => {
+  if (rank(u) < 3) throw forbidden('Fitur ini khusus OWNER')
+}
+
+// Ringkasan akun untuk panel OWNER. Semua angka dihitung dari data server.
+export async function userDetail(ctx, actor, id) {
+  needOwner(actor)
+  const u = await ctx.c.users.findOne({ _id: idParam(id) })
+  if (!u) throw notFound('Pengguna tidak ditemukan')
+  const commentCount = await ctx.c.comments.countDocuments({ userId: u._id, deleted: false })
+  return {
+    user: {
+      ...publicUser(u, true),
+      banned: !!u.banned,
+      xp: u.xp || 0,
+      commentCount,
+      chaptersRead: await chaptersRead(ctx, u._id),
+      lastLoginAt: u.lastLoginAt || 0,
+      hasBanner: !!u.customBanner,
+      hasAvatar: !!u.customPicture
+    }
+  }
+}
+
+const MAX_GRANT = 50_000
+
+// Tambah/kurangi XP akun. Dicatat sebagai event 'admin' supaya level tetap konsisten dengan rekonsiliasi XP.
+export async function grantXp(ctx, actor, id, amount) {
+  needOwner(actor)
+  if (!Number.isInteger(amount) || amount === 0 || Math.abs(amount) > MAX_GRANT) throw badRequest(`"amount" harus bilangan bulat bukan nol, maksimal ±${MAX_GRANT}`)
+  const uid = idParam(id)
+  const target = await ctx.c.users.findOne({ _id: uid })
+  if (!target) throw notFound('Pengguna tidak ditemukan')
+  await ctx.c.xpEvents.insertOne({ _id: newId(), userId: uid, type: 'admin', refId: newId(), group: 'admin', fromUserId: actor._id, xp: amount, reversed: false, createdAt: ctx.now() })
+  const synced = await reconcileXp(ctx, uid)
+  return { user: publicUser({ ...target, xp: synced.xp, level: synced.level }, true) }
+}
+
+// Hapus foto/banner kustom yang melanggar aturan. MODERATOR boleh untuk akun di bawahnya, OWNER untuk semua.
+export async function resetMedia(ctx, actor, id, input) {
+  needMod(actor)
+  const uid = idParam(id)
+  const target = await ctx.c.users.findOne({ _id: uid })
+  if (!target) throw notFound('Pengguna tidak ditemukan')
+  if (uid !== actor._id && rank(actor) < 3 && rank(target) >= rank(actor)) throw forbidden('Kamu tidak boleh mengubah akun dengan role ini')
+  const set = {}
+  if (input?.banner === true) Object.assign(set, { customBanner: '', bannerAt: ctx.now() })
+  if (input?.avatar === true) set.customPicture = ''
+  if (!Object.keys(set).length) throw badRequest('Pilih "banner" dan/atau "avatar"')
+  await ctx.c.users.updateOne({ _id: uid }, { $set: set })
+  return { ok: true }
 }

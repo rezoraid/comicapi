@@ -1,7 +1,8 @@
 import { randomInt } from 'node:crypto'
 import { badRequest, conflict, forbidden, unauthorized, notFound } from '../lib/errors.js'
-import { newId, isDup, rank, DAY, idParam } from './util.js'
+import { newId, isDup, rank, DAY, idParam, hit } from './util.js'
 import { progress, reconcileXp } from './xp.js'
+import { chaptersRead } from './stats.js'
 
 const USERNAME = /^[a-z][a-z0-9_]{2,19}$/
 const RESERVED = new Set(['admin', 'administrator', 'owner', 'dev', 'developer', 'komikta', 'system', 'moderator', 'mod', 'support', 'staff', 'root', 'null', 'undefined'])
@@ -17,17 +18,25 @@ const cleanPicture = p => {
   }
 }
 
-export const publicUser = (u, self = false) => ({
-  id: u._id,
-  username: u.username,
-  name: u.name,
-  picture: u.customPicture ? `/api/community/users/${u._id}/avatar` : u.picture,
-  role: u.role,
-  publicHistory: u.publicHistory === true,
-  publicNo: u.publicNo || 0,
-  level: progress(u.xp || 0).level,
-  ...(self ? { email: u.email, ...progress(u.xp || 0), usernameChangeableAt: u.usernameChangedAt ? u.usernameChangedAt + USERNAME_COOLDOWN : 0, joinedAt: u.createdAt || 0 } : {})
-})
+export const OWNER_LEVEL = 99999
+
+// OWNER selalu tampil sebagai #1 dengan level tetap; level pengguna lain murni dari XP di server.
+export const publicUser = (u, self = false) => {
+  const owner = u.role === 'OWNER'
+  const p = progress(u.xp || 0)
+  return {
+    id: u._id,
+    username: u.username,
+    name: u.name,
+    picture: u.customPicture ? `/api/community/users/${u._id}/avatar` : u.picture,
+    banner: u.customBanner ? `/api/community/users/${u._id}/banner?v=${u.bannerAt || 0}` : '',
+    role: u.role,
+    publicHistory: u.publicHistory === true,
+    publicNo: owner ? 1 : u.publicNo || 0,
+    level: owner ? OWNER_LEVEL : p.level,
+    ...(self ? { email: u.email, ...p, ...(owner ? { level: OWNER_LEVEL, xpCurrentLevel: p.xp, xpNextLevel: p.xp } : {}), usernameChangeableAt: u.usernameChangedAt ? u.usernameChangedAt + USERNAME_COOLDOWN : 0, joinedAt: u.createdAt || 0 } : {})
+  }
+}
 
 const baseUsername = (email, name) => {
   let b = (email.split('@')[0] || name || 'user').toLowerCase().replace(/[^a-z0-9_]/g, '')
@@ -109,10 +118,27 @@ export async function authenticate(ctx, req, { optional = false } = {}) {
   return user
 }
 
+const nextNo = async ctx => {
+  let row = await ctx.c.counters.findOneAndUpdate({ _id: 'publicNo' }, { $inc: { seq: 1 } }, { upsert: true, returnDocument: 'after' })
+  // Nomor 1 dicadangkan untuk OWNER.
+  if (row.seq === 1) row = await ctx.c.counters.findOneAndUpdate({ _id: 'publicNo' }, { $inc: { seq: 1 } }, { upsert: true, returnDocument: 'after' })
+  return row.seq
+}
+
+async function claimOwnerNo(ctx, u) {
+  if (u.publicNo === 1) return u
+  const holder = await ctx.c.users.findOne({ publicNo: 1, _id: { $ne: u._id } })
+  // Pemegang lama nomor 1 (bukan owner) menerima nomor owner sebelumnya supaya tidak ada dua #1.
+  if (holder && holder.role !== 'OWNER') await ctx.c.users.updateOne({ _id: holder._id }, { $set: { publicNo: u.publicNo > 1 ? u.publicNo : await nextNo(ctx) } })
+  await ctx.c.users.updateOne({ _id: u._id }, { $set: { publicNo: 1 } })
+  return { ...u, publicNo: 1 }
+}
+
 export async function ensurePublicNo(ctx, u) {
+  if (u.role === 'OWNER') return claimOwnerNo(ctx, u)
   if (u.publicNo) return u
-  const row = await ctx.c.counters.findOneAndUpdate({ _id: 'publicNo' }, { $inc: { seq: 1 } }, { upsert: true, returnDocument: 'after' })
-  await ctx.c.users.updateOne({ _id: u._id, publicNo: { $exists: false } }, { $set: { publicNo: row.seq } })
+  const seq = await nextNo(ctx)
+  await ctx.c.users.updateOne({ _id: u._id, publicNo: { $exists: false } }, { $set: { publicNo: seq } })
   return (await ctx.c.users.findOne({ _id: u._id })) || u
 }
 
@@ -124,7 +150,7 @@ export const me = async (ctx, user) => {
   if (synced) user = { ...user, xp: synced.xp, level: synced.level }
   const left = user.tokenExp * 1000 - ctx.now()
   const commentCount = await ctx.c.comments.countDocuments({ userId: user._id, deleted: false })
-  return { user: { ...publicUser(user, true), commentCount, readMinutes: Math.floor((user.readSeconds || 0) / 60), monthsJoined: monthsSince(ctx, user.createdAt) }, ...(left < ctx.tokens.ttlMs / 2 ? { token: ctx.tokens.sign(user._id) } : {}) }
+  return { user: { ...publicUser(user, true), commentCount, chaptersRead: await chaptersRead(ctx, user._id), monthsJoined: monthsSince(ctx, user.createdAt) }, ...(left < ctx.tokens.ttlMs / 2 ? { token: ctx.tokens.sign(user._id) } : {}) }
 }
 
 export async function updateProfile(ctx, user, body) {
@@ -146,21 +172,38 @@ export async function updateProfile(ctx, user, body) {
   return { user: publicUser({ ...user, username, usernameChangedAt: changedAt }, true) }
 }
 
-export async function updateAvatar(ctx, user, body) {
-  const data = body?.image
-  if (typeof data !== 'string' || data.length > 400_000 || !/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+=*$/.test(data)) {
-    throw badRequest('Foto harus berupa JPG, PNG, atau WebP dan berukuran kecil (maksimal sekitar 280 KB)')
-  }
+// Memeriksa data URI gambar (JPEG/PNG/WebP): tipe, ukuran, dan tanda tangan file asli.
+function parseImage(data, { maxData, maxRaw, tooBig }) {
+  if (typeof data !== 'string' || data.length > maxData || !/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+=*$/.test(data)) throw badRequest(tooBig)
   const mime = data.slice(5, data.indexOf(';'))
   const raw = Buffer.from(data.slice(data.indexOf(',') + 1), 'base64')
-  if (!raw.length || raw.length > 280_000) throw badRequest('Ukuran foto terlalu besar')
-  // Verify the declared format against basic file signatures to reject arbitrary payloads.
+  if (!raw.length || raw.length > maxRaw) throw badRequest('Ukuran gambar terlalu besar')
+  // Cocokkan format yang diklaim dengan signature file agar payload sembarang ditolak.
   const valid = mime === 'image/jpeg' ? raw[0] === 0xff && raw[1] === 0xd8
     : mime === 'image/png' ? raw.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))
     : raw.subarray(0, 4).toString('ascii') === 'RIFF' && raw.subarray(8, 12).toString('ascii') === 'WEBP'
-  if (!valid) throw badRequest('Format file foto tidak valid')
+  if (!valid) throw badRequest('Format file gambar tidak valid')
+  return data
+}
+
+export async function updateAvatar(ctx, user, body) {
+  const data = parseImage(body?.image, { maxData: 400_000, maxRaw: 280_000, tooBig: 'Foto harus berupa JPG, PNG, atau WebP dan berukuran kecil (maksimal sekitar 280 KB)' })
   await ctx.c.users.updateOne({ _id: user._id }, { $set: { customPicture: data } })
   return { user: publicUser({ ...user, customPicture: data }, true) }
+}
+
+export async function updateBanner(ctx, user, body) {
+  hit(ctx.limits.write, user._id, 'Terlalu banyak permintaan')
+  const data = parseImage(body?.image, { maxData: 640_000, maxRaw: 470_000, tooBig: 'Banner harus berupa JPG, PNG, atau WebP dan berukuran maksimal sekitar 450 KB' })
+  const bannerAt = ctx.now()
+  await ctx.c.users.updateOne({ _id: user._id }, { $set: { customBanner: data, bannerAt } })
+  return { user: publicUser({ ...user, customBanner: data, bannerAt }, true) }
+}
+
+export async function removeBanner(ctx, user) {
+  hit(ctx.limits.write, user._id, 'Terlalu banyak permintaan')
+  await ctx.c.users.updateOne({ _id: user._id }, { $set: { customBanner: '', bannerAt: ctx.now() } })
+  return { user: publicUser({ ...user, customBanner: '' }, true) }
 }
 
 export async function getUser(ctx, id) {

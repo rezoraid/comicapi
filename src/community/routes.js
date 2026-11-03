@@ -1,12 +1,12 @@
 import { HttpError, badRequest } from '../lib/errors.js'
 import { qint, qstr, hit } from './util.js'
-import { loginWithGoogle, authenticate, me, updateProfile, updateAvatar, getUser } from './users.js'
+import { loginWithGoogle, authenticate, me, updateProfile, updateAvatar, updateBanner, removeBanner, getUser } from './users.js'
 import { setLike, likeStatus } from './likes.js'
 import { getProfile, listActivity } from './profile.js'
 import { resolveTarget, listComments, listReplies, createComment, chapterCounts, editComment, removeComment, likeComment, reportComment } from './comments.js'
 import { deleteAccount } from './account.js'
 import { saveProgress, setHistoryVisibility, getPublicHistory, trackReadingTime } from './reading.js'
-import { listReports, resolveReport, findUser, setRole, setBan } from './admin.js'
+import { listReports, resolveReport, findUser, userDetail, grantXp, resetMedia, setRole, setBan } from './admin.js'
 
 const P = '/api/community'
 
@@ -27,7 +27,18 @@ export function registerCommunityRoutes(router, { registry, community }) {
   router.get(`${P}/me`, authed((cm, ctx, user) => me(cm, user)))
   router.patch(`${P}/me`, authed((cm, { body }, user) => updateProfile(cm, user, body)))
   router.put(`${P}/me/avatar`, authed((cm, { body }, user) => updateAvatar(cm, user, body)))
+  router.put(`${P}/me/banner`, authed((cm, { body }, user) => updateBanner(cm, user, body)))
+  router.delete(`${P}/me/banner`, authed((cm, ctx, user) => removeBanner(cm, user)))
   router.delete(`${P}/me`, authed((cm, ctx, user) => deleteAccount(cm, user)))
+  router.get(`${P}/users/:id/banner`, async ({ params, res }) => {
+    if (!community) throw new HttpError(503, 'COMMUNITY_DISABLED', 'Fitur komunitas belum diaktifkan di server')
+    const user = await community.c.users.findOne({ _id: params.id })
+    const match = user?.customBanner ? /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/]+=*)$/.exec(user.customBanner) : null
+    if (!match) throw new HttpError(404, 'BANNER_NOT_FOUND', 'Banner tidak ditemukan')
+    const bytes = Buffer.from(match[2], 'base64')
+    res.writeHead(200, { 'content-type': `image/${match[1]}`, 'content-length': bytes.length, 'cache-control': 'public, max-age=86400', 'x-content-type-options': 'nosniff' })
+    res.end(bytes)
+  }, { public: true, raw: true })
   router.get(`${P}/users/:id/avatar`, async ({ params, res }) => {
     if (!community) throw new HttpError(503, 'COMMUNITY_DISABLED', 'Fitur komunitas belum diaktifkan di server')
     const user = await community.c.users.findOne({ _id: params.id })
@@ -76,6 +87,9 @@ export function registerCommunityRoutes(router, { registry, community }) {
   router.get(`${P}/admin/reports`, authed((cm, { query }, user) => listReports(cm, user, { status: qstr(query, 'status', 10) || 'open', page: qint(query, 'page', 1, 1, 200), limit: 20 })))
   router.post(`${P}/admin/reports/:id/resolve`, authed((cm, { params, body }, user) => resolveReport(cm, user, params.id, body.action)))
   router.get(`${P}/admin/users`, authed((cm, { query }, user) => findUser(cm, user, query)))
+  router.get(`${P}/admin/users/:id`, authed((cm, { params }, user) => userDetail(cm, user, params.id)))
+  router.post(`${P}/admin/users/:id/xp`, authed((cm, { params, body }, user) => grantXp(cm, user, params.id, body.amount)))
+  router.post(`${P}/admin/users/:id/reset-media`, authed((cm, { params, body }, user) => resetMedia(cm, user, params.id, body)))
   router.put(`${P}/admin/users/:id/role`, authed((cm, { params, body }, user) => setRole(cm, user, params.id, body.role)))
   router.put(`${P}/admin/users/:id/ban`, authed((cm, { params, body }, user) => setBan(cm, user, params.id, body.banned)))
 }

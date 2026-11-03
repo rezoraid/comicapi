@@ -1,9 +1,9 @@
 import { forbidden, notFound, badRequest } from '../lib/errors.js'
 import { idParam } from './util.js'
 import { publicUser, ensurePublicNo, monthsSince } from './users.js'
+import { chaptersRead, chaptersReadByComic } from './stats.js'
 
 const TABS = ['all', 'comments', 'likes']
-const minutes = s => (s > 0 ? Math.max(1, Math.round(s / 60)) : 0)
 
 const loadUser = async (ctx, id) => {
   const u = await ctx.c.users.findOne({ _id: idParam(id) })
@@ -20,7 +20,7 @@ export async function getProfile(ctx, viewer, id) {
     user: {
       ...publicUser(u, false),
       commentCount,
-      readMinutes: Math.floor((u.readSeconds || 0) / 60),
+      chaptersRead: await chaptersRead(ctx, u._id),
       monthsJoined: monthsSince(ctx, u.createdAt),
       joinedAt: u.createdAt || 0
     },
@@ -62,6 +62,7 @@ export async function listActivity(ctx, viewer, id, { tab, page, limit }) {
   const hasMore = rows.length > limit
   rows = rows.slice(0, limit)
   const titles = tab === 'comments' || rows.some(r => !r.comicTitle) ? await titleLookup(ctx, rows) : new Map()
+  const reads = tab === 'all' ? new Map(await Promise.all(rows.map(async r => [`${r.source}:${r.slug}`, await chaptersReadByComic(ctx, u._id, r.source, r.slug)]))) : new Map()
   const items = rows.map(r => {
     const t = titles.get(`${r.source}:${r.slug}`) || {}
     const base = {
@@ -72,7 +73,7 @@ export async function listActivity(ctx, viewer, id, { tab, page, limit }) {
       chapterTitle: r.chapterTitle || '',
       coverUrl: r.coverUrl || t.coverUrl || ''
     }
-    if (tab === 'all') return { kind: 'history', ...base, at: r.updatedAt, readMinutes: minutes(r.readSeconds || 0) }
+    if (tab === 'all') return { kind: 'history', ...base, at: r.updatedAt, chaptersRead: reads.get(`${r.source}:${r.slug}`) || 0 }
     if (tab === 'likes') return { kind: 'like', ...base, type: r.type, at: r.createdAt }
     return { kind: 'comment', ...base, type: r.type, id: r._id, body: r.body, isReply: !!r.parentId, likeCount: r.likeCount || 0, replyCount: r.replyCount || 0, at: r.createdAt }
   })

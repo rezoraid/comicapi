@@ -13,6 +13,7 @@ export const collections = db => ({
   xpEvents: db.collection('xp_events'),
   readingProgress: db.collection('reading_progress'),
   likes: db.collection('likes'),
+  chapterReads: db.collection('chapter_reads'),
   counters: db.collection('counters')
 })
 
@@ -24,6 +25,8 @@ export const ensureIndexes = async c => {
     c.readingProgress.createIndex({ userId: 1, updatedAt: -1 }),
     c.readingProgress.createIndex({ userId: 1, source: 1, slug: 1 }, { unique: true }),
     c.readingProgress.createIndex({ source: 1, slug: 1 }),
+    c.chapterReads.createIndex({ userId: 1, counted: 1, countedAt: -1 }),
+    c.chapterReads.createIndex({ userId: 1, source: 1, slug: 1 }),
     c.likes.createIndex({ userId: 1, createdAt: -1 }),
     c.likes.createIndex({ targetKey: 1 }),
     c.comments.createIndex({ userId: 1, deleted: 1, _id: -1 }),

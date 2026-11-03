@@ -169,3 +169,11 @@ Endpoint (header `Authorization: Bearer <token>`):
 XP: komentar +5, balasan +3, like diterima +2. Hanya komentar bermutu (min. 8 karakter, 2 kata, bukan huruf berulang), batas 50 XP/hari dari posting dan 20 XP/hari dari like, like hanya dihitung dari akun berumur > 1 jam dan maks 3 per pasangan akun per hari, komentar identik 24 jam ditolak, menghapus komentar membalikkan XP-nya. Level = `floor((1+sqrt(1+4*xp/25))/2)`, maks 100. Rate limit per pengguna ada di memori proses (cukup untuk 1 instance).
 
 Halaman publik `/privacy` (Kebijakan Privasi) dan `/terms` (Ketentuan) tersedia untuk diisi di Google OAuth consent screen dan Play Console. Isi `CONTACT_EMAIL` supaya email kontak tampil. `/health` menampilkan `community: true|false`.
+
+## Profil: chapter dibaca, level, banner, alat OWNER
+
+- **Chapter dibaca** dihitung server, bukan klien. `PUT /me/reading-time` hanya mengkredit detik sebesar waktu nyata sejak ping terakhir (diklaim atomik). Sebuah chapter terhitung setelah ≥ 60 dtk aktif terkumpul di chapter itu, maksimal 120 chapter / 24 jam, dan tiap chapter hanya dihitung sekali. Chapter yang terhitung memberi +8 XP (batas 80 XP/hari, grup `read`).
+- **OWNER** selalu tampil `#1` dengan level `99999` (nomor lama pemegang #1 ditukar otomatis). Level pengguna lain tetap murni dari XP.
+- **Banner profil**: `PUT /me/banner` (`{ image: "data:image/jpeg;base64,…" }`, ≤ ~450 KB), `DELETE /me/banner`, `GET /users/:id/banner`. Alamat banner ada di field `banner` pada objek user.
+- **Khusus OWNER**: `GET /admin/users/:id` (detail akun), `POST /admin/users/:id/xp` (`{ amount }`, ±50.000, dicatat sebagai event `admin`), `POST /admin/users/:id/reset-media` (`{ banner, avatar }`, juga boleh MODERATOR untuk akun di bawahnya).
+- Pengguna lama mulai dari 0 chapter dibaca (riwayat lama tidak punya bukti waktu baca per chapter).

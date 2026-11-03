@@ -1,7 +1,7 @@
 import { newId, isDup, sum, DAY } from './util.js'
 
-export const XP = { comment: 5, reply: 3, likeReceived: 2 }
-export const DAILY_CAP = { post: 50, like: 20 }
+export const XP = { comment: 5, reply: 3, likeReceived: 2, chapterRead: 8 }
+export const DAILY_CAP = { post: 50, like: 20, read: 80 }
 export const MAX_LEVEL = 100
 export const LIKE_PAIR_DAILY = 3
 export const LIKER_MIN_AGE_MS = 3_600_000

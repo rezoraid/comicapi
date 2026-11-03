@@ -59,7 +59,7 @@ const me = token => call('GET', '/api/community/me', { token }).then(r => r.data
 
 before(async () => {
   env = { db: fakeDb() }
-  community = await createCommunity(cfg(), { db: env.db, fetchJwks, now, logger: quiet, limits: { commentBurst: { max: 1000 }, commentHour: { max: 1000 }, write: { max: 1000 }, like: { max: 1000 }, report: { max: 1000 }, login: { max: 10000 } } })
+  community = await createCommunity(cfg(), { db: env.db, fetchJwks, now, logger: quiet, limits: { commentBurst: { max: 1000 }, commentHour: { max: 1000 }, write: { max: 1000 }, like: { max: 1000 }, report: { max: 1000 }, login: { max: 10000 }, readTime: { max: 100000 } } })
   app = createApp({ registry: makeRegistry(0), config: loadConfig({ LOG_REQUESTS: 'false', RATE_LIMIT_MAX: '100000' }), logger: quiet, community })
   srv = await listen(app.handler)
 })
@@ -348,7 +348,7 @@ test('role: tidak bisa ubah sendiri, hanya OWNER yang bisa, OWNER tidak bisa dib
 })
 
 test('OWNER dari env tidak bisa dipegang akun lain; dicabut dari env → turun jadi USER', async () => {
-  const c2 = await createCommunity({ ...cfg(), ownerEmails: ['lain@example.com'] }, { db: env.db, fetchJwks, now, logger: quiet, limits: { login: { max: 10000 } } })
+  const c2 = await createCommunity({ ...cfg(), ownerEmails: ['lain@example.com'] }, { db: env.db, fetchJwks, now, logger: quiet, limits: { login: { max: 10000 }, readTime: { max: 100000 } } })
   const a2 = createApp({ registry: makeRegistry(0), config: loadConfig({ LOG_REQUESTS: 'false' }), logger: quiet, community: c2 })
   const s2 = await listen(a2.handler)
   const r = await fetch(`${s2.url}/api/community/auth/google`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ idToken: mint('g-owner', 'owner@example.com') }) })
@@ -517,7 +517,7 @@ test('jumlah komentar per chapter untuk daftar chapter', async () => {
 })
 
 test('rate limit komentar per pengguna → 429 dengan retry-after', async () => {
-  const c2 = await createCommunity(cfg(), { db: env.db, fetchJwks, now, logger: quiet, limits: { commentBurst: { max: 2, windowMs: 60_000 }, login: { max: 10000 } } })
+  const c2 = await createCommunity(cfg(), { db: env.db, fetchJwks, now, logger: quiet, limits: { commentBurst: { max: 2, windowMs: 60_000 }, login: { max: 10000 }, readTime: { max: 100000 } } })
   const a2 = createApp({ registry: makeRegistry(0), config: loadConfig({ LOG_REQUESTS: 'false' }), logger: quiet, community: c2 })
   const s2 = await listen(a2.handler)
   const tok = (await (await fetch(`${s2.url}/api/community/auth/google`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ idToken: mint('g-rl', 'rl@example.com') }) })).json()).data.token
@@ -625,11 +625,106 @@ test('waktu baca: kredit dibatasi waktu nyata, validasi input, akumulasi ke prof
   const ok = await put('/me/reading-time', a.token, { ...ch, seconds: 120 })
   assert.equal(ok.data.credited, 120)
   const prof = await getp(`/users/${a.user.id}/profile`, a.token)
-  assert.equal(prof.data.user.readMinutes, Math.floor((60 + burst.data.credited + 120) / 60))
+  // 60 + ≤6 + 120 detik terkumpul di chapter yang sama: lolos ambang 60 dtk, dihitung 1 chapter
+  assert.equal(prof.data.user.chaptersRead, 1)
   assert.equal(prof.data.self, true)
   const act = await getp(`/users/${a.user.id}/activity?tab=all`, a.token)
   assert.equal(act.data.items[0].comicTitle, 'Solo Leveling')
-  assert.ok(act.data.items[0].readMinutes >= 3)
+  assert.equal(act.data.items[0].chaptersRead, 1)
+})
+
+test('chapter dibaca: butuh waktu nyata, tidak dihitung dobel, XP dibatasi, tidak bisa dipalsukan klien', async () => {
+  const a = await login('cr-a', 'cra@example.com')
+  const ch = n => ({ source: 'mock', slug: 'solo-leveling', chapter: String(n) })
+  const chaptersOf = async () => (await getp(`/users/${a.user.id}/profile`, a.token)).data.user.chaptersRead
+  assert.equal(await chaptersOf(), 0)
+  // satu ping 30 dtk belum cukup
+  let r = await put('/me/reading-time', a.token, { ...ch(1), seconds: 30 })
+  assert.equal(r.data.xpGained, 0)
+  assert.equal(await chaptersOf(), 0)
+  // klien mengirim "jutaan chapter" lewat banyak ping instan: kredit ikut dibatasi waktu nyata
+  for (let n = 2; n < 40; n++) await put('/me/reading-time', a.token, { ...ch(n), seconds: 300 })
+  assert.equal(await chaptersOf(), 0)
+  // detik berikutnya berjalan nyata → chapter 1 genap 60 dtk → terhitung + XP
+  clock.t += 40_000
+  r = await put('/me/reading-time', a.token, { ...ch(1), seconds: 40 })
+  assert.equal(r.data.xpGained, 8)
+  assert.equal(await chaptersOf(), 1)
+  assert.equal((await me(a.token)).chaptersRead, 1)
+  // chapter yang sama tidak dihitung dua kali
+  clock.t += 60_000
+  r = await put('/me/reading-time', a.token, { ...ch(1), seconds: 60 })
+  assert.equal(r.data.xpGained, 0)
+  assert.equal(await chaptersOf(), 1)
+  // chapter lain berikutnya dihitung dan XP harian dibatasi 80
+  let total = 8
+  for (let n = 100; n < 125; n++) {
+    clock.t += 61_000
+    const x = await put('/me/reading-time', a.token, { ...ch(n), seconds: 61 })
+    total += x.data.xpGained
+  }
+  assert.equal(total, 80)
+  assert.ok(await chaptersOf() > 10)
+  assert.equal((await me(a.token)).xp, 80)
+})
+
+test('OWNER: #1, level 99999; pengguna lain tidak bisa mengaku #1', async () => {
+  const u = await login('own-u', 'ownu@example.com')
+  const o = await login('own-o', 'owner@example.com')
+  const mo = await me(o.token)
+  assert.equal(mo.role, 'OWNER')
+  assert.equal(mo.level, 99999)
+  assert.equal(mo.publicNo, 1)
+  const mu = await me(u.token)
+  assert.ok(mu.publicNo > 1)
+  assert.ok(mu.level < 100)
+  const pub = await getp(`/users/${o.user.id}/profile`, u.token)
+  assert.equal(pub.data.user.publicNo, 1)
+  assert.equal(pub.data.user.level, 99999)
+})
+
+const png = 'data:image/png;base64,' + Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), Buffer.alloc(200, 1)]).toString('base64')
+
+test('banner profil: unggah, tampil di profil, hapus, validasi', async () => {
+  const a = await login('bn-a', 'bna@example.com')
+  assert.equal((await put('/me/banner', a.token, { image: 'data:image/png;base64,AAAA' })).status, 400)
+  assert.equal((await put('/me/banner', a.token, { image: 'bukan gambar' })).status, 400)
+  assert.equal((await put('/me/banner', a.token, { image: 'data:image/png;base64,' + Buffer.alloc(480_000, 1).toString('base64') })).status, 400)
+  assert.equal((await getp(`/users/${a.user.id}/banner`)).status, 404)
+  const ok = await put('/me/banner', a.token, { image: png })
+  assert.equal(ok.status, 200)
+  assert.match(ok.data.user.banner, new RegExp(`/users/${a.user.id}/banner\\?v=\\d+`))
+  const res = await fetch(`${srv.url}/api/community/users/${a.user.id}/banner`)
+  assert.equal(res.status, 200)
+  assert.equal(res.headers.get('content-type'), 'image/png')
+  const prof = await getp(`/users/${a.user.id}/profile`)
+  assert.ok(prof.data.user.banner.includes('/banner'))
+  const del = await call('DELETE', '/api/community/me/banner', { token: a.token })
+  assert.equal(del.data.user.banner, '')
+  assert.equal((await getp(`/users/${a.user.id}/banner`)).status, 404)
+})
+
+test('panel OWNER: detail akun, atur XP, reset banner; non-owner ditolak', async () => {
+  const o = await login('pn-o', 'owner@example.com')
+  const u = await login('pn-u', 'pnu@example.com')
+  await put('/me/banner', u.token, { image: png })
+  assert.equal((await getp(`/admin/users/${u.user.id}`, u.token)).status, 403)
+  const d = await getp(`/admin/users/${u.user.id}`, o.token)
+  assert.equal(d.data.user.email, 'pnu@example.com')
+  assert.equal(d.data.user.hasBanner, true)
+  const post = (path, token, body) => call('POST', `/api/community${path}`, { token, body })
+  assert.equal((await post(`/admin/users/${u.user.id}/xp`, u.token, { amount: 100 })).status, 403)
+  assert.equal((await post(`/admin/users/${u.user.id}/xp`, o.token, { amount: 0 })).status, 400)
+  assert.equal((await post(`/admin/users/${u.user.id}/xp`, o.token, { amount: 1.5 })).status, 400)
+  const g = await post(`/admin/users/${u.user.id}/xp`, o.token, { amount: 150 })
+  assert.equal(g.status, 200)
+  assert.equal(g.data.user.level, 3)
+  assert.equal((await me(u.token)).xp, 150)
+  const neg = await post(`/admin/users/${u.user.id}/xp`, o.token, { amount: -150 })
+  assert.equal(neg.data.user.level, 1)
+  assert.equal((await post(`/admin/users/${u.user.id}/reset-media`, o.token, { banner: true })).status, 200)
+  assert.equal((await getp(`/admin/users/${u.user.id}`, o.token)).data.user.hasBanner, false)
+  assert.equal((await post(`/admin/users/${u.user.id}/reset-media`, o.token, {})).status, 400)
 })
 
 test('profil: ID publik berurutan dan stabil, bulan bergabung dari data nyata', async () => {
