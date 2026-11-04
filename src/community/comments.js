@@ -46,7 +46,7 @@ const hydrate = async (ctx, viewer, docs) => {
       liked: liked.has(d._id),
       canEdit: !!viewer && !d.deleted && viewer._id === d.userId,
       canDelete: author ? canDeleteComment(viewer, d, author) : false,
-      user: author ? publicUser(author) : { id: d.userId, username: 'terhapus', name: 'Pengguna', picture: '', role: 'USER', level: 1 }
+      user: author ? publicUser(author) : { id: d.userId, username: 'terhapus', name: 'Pengguna', picture: '', role: 'USER', verified: false, level: 1 }
     }
   })
 }

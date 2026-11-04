@@ -78,6 +78,18 @@ export async function setRole(ctx, actor, id, role) {
   return { user: publicUser({ ...target, role }) }
 }
 
+// Beri/cabut centang verified. Khusus OWNER; OWNER sendiri selalu terverifikasi dan tidak bisa diubah.
+export async function setVerified(ctx, actor, id, verified) {
+  needOwner(actor)
+  if (typeof verified !== 'boolean') throw badRequest('"verified" harus true atau false')
+  const uid = idParam(id)
+  const target = await ctx.c.users.findOne({ _id: uid })
+  if (!target) throw notFound('Pengguna tidak ditemukan')
+  if (target.role === 'OWNER') throw forbidden('OWNER selalu terverifikasi')
+  await ctx.c.users.updateOne({ _id: uid }, { $set: { verified } })
+  return { user: publicUser({ ...target, verified }) }
+}
+
 export async function setBan(ctx, actor, id, banned) {
   needMod(actor)
   const uid = idParam(id)
@@ -181,7 +193,10 @@ export async function listUsers(ctx, actor, query) {
     filter.role = role
   }
   if (flag(query, 'banned')) filter.banned = true
-  if (q) filter.$or = [{ username: like(q) }, { name: like(q) }, { email: like(q) }]
+  const search = q ? [{ username: like(q) }, { name: like(q) }, { email: like(q) }] : [{}]
+  // verified=1: OWNER selalu dihitung terverifikasi. Satu $or saja supaya tetap sederhana.
+  if (flag(query, 'verified')) filter.$or = search.flatMap(s => [{ ...s, verified: true }, { ...s, role: 'OWNER' }])
+  else if (q) filter.$or = search
   const [rows, total] = await Promise.all([
     ctx.c.users.find(filter, { sort: { createdAt: -1, _id: -1 }, skip: (page - 1) * PAGE_SIZE, limit: PAGE_SIZE + 1 }).toArray(),
     ctx.c.users.countDocuments(filter)

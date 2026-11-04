@@ -6,7 +6,7 @@ import { getProfile, listActivity } from './profile.js'
 import { resolveTarget, listComments, listReplies, createComment, chapterCounts, editComment, removeComment, likeComment, reportComment } from './comments.js'
 import { deleteAccount } from './account.js'
 import { saveProgress, trackReadingTime } from './reading.js'
-import { listReports, resolveReport, findUser, userDetail, grantXp, resetMedia, setRole, setBan, adminStats, listUsers, listAdminComments } from './admin.js'
+import { listReports, resolveReport, findUser, userDetail, grantXp, resetMedia, setRole, setVerified, setBan, adminStats, listUsers, listAdminComments } from './admin.js'
 
 const P = '/api/community'
 
@@ -81,5 +81,6 @@ export function registerCommunityRoutes(router, { registry, community }) {
   router.post(`${P}/admin/users/:id/xp`, authed((cm, { params, body }, user) => grantXp(cm, user, params.id, body.amount)))
   router.post(`${P}/admin/users/:id/reset-media`, authed((cm, { params, body }, user) => resetMedia(cm, user, params.id, body)))
   router.put(`${P}/admin/users/:id/role`, authed((cm, { params, body }, user) => setRole(cm, user, params.id, body.role)))
+  router.put(`${P}/admin/users/:id/verified`, authed((cm, { params, body }, user) => setVerified(cm, user, params.id, body.verified)))
   router.put(`${P}/admin/users/:id/ban`, authed((cm, { params, body }, user) => setBan(cm, user, params.id, body.banned)))
 }

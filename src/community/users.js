@@ -30,6 +30,8 @@ export const publicUser = (u, self = false) => {
     name: u.name,
     picture: u.customPicture ? `/api/community/users/${u._id}/avatar` : u.picture,
     role: u.role,
+    // OWNER selalu terverifikasi; akun lain diberi centang oleh OWNER lewat panel admin.
+    verified: owner || !!u.verified,
     publicNo: owner ? 1 : u.publicNo || 0,
     level: owner ? OWNER_LEVEL : p.level,
     ...(self ? { email: u.email, ...p, ...(owner ? { level: OWNER_LEVEL, xpCurrentLevel: p.xp, xpNextLevel: p.xp } : {}), usernameChangeableAt: u.usernameChangedAt ? u.usernameChangedAt + USERNAME_COOLDOWN : 0, joinedAt: u.createdAt || 0 } : {})
