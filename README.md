@@ -165,6 +165,9 @@ Endpoint (header `Authorization: Bearer <token>`):
 | `GET /api/community/admin/reports`, `POST .../admin/reports/:id/resolve {action: delete\|dismiss}` | MODERATOR/OWNER |
 | `GET /api/community/admin/users?username=`, `PUT .../admin/users/:id/ban {banned}` | MODERATOR/OWNER (MODERATOR hanya bisa ke USER dan PREMIUM) |
 | `PUT /api/community/admin/users/:id/role {role: MODERATOR\|PREMIUM\|USER}` | hanya OWNER, tidak bisa ke diri sendiri, OWNER tidak bisa diberikan lewat API |
+| `GET /api/community/admin/stats` | hanya OWNER: ringkasan (`users`, `newUsers7d`, `active24h`, `banned`, `owners`, `moderators`, `premiums`, `comments`, `comments24h`, `openReports`, `chaptersRead`) |
+| `GET /api/community/admin/users?q=&role=&banned=1&page=` | hanya OWNER: daftar pengguna terbaru dulu, 20 per halaman. `q` mencari username/nama/email, `role` = OWNER\|MODERATOR\|PREMIUM\|USER. Tanpa `username` ini yang dipakai; dengan `?username=` tetap pencarian persis (MODERATOR/OWNER) |
+| `GET /api/community/admin/comments?q=&reported=1&page=` | hanya OWNER: semua komentar termasuk yang sudah dihapus, terbaru dulu. `q` mencari isi atau username/nama pembuat, `reported=1` hanya yang dilaporkan |
 
 XP: komentar +5, balasan +3, like diterima +2. Hanya komentar bermutu (min. 8 karakter, 2 kata, bukan huruf berulang), batas 50 XP/hari dari posting dan 20 XP/hari dari like, like hanya dihitung dari akun berumur > 1 jam dan maks 3 per pasangan akun per hari, komentar identik 24 jam ditolak, menghapus komentar membalikkan XP-nya. Level = `floor((1+sqrt(1+4*xp/25))/2)`, maks 100. Rate limit per pengguna ada di memori proses (cukup untuk 1 instance).
 

@@ -6,7 +6,9 @@ const ops = {
   $gt: (v, arg) => v > arg,
   $lt: (v, arg) => v < arg,
   $ne: (v, arg) => !eq(v, arg),
-  $exists: (v, arg) => (v !== undefined) === arg
+  $exists: (v, arg) => (v !== undefined) === arg,
+  $regex: (v, arg) => typeof v === 'string' && new RegExp(arg, 'i').test(v),
+  $options: () => true
 }
 const match = (doc, filter) =>
   Object.entries(filter).every(([k, cond]) => {

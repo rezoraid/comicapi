@@ -1,5 +1,5 @@
 import { badRequest, forbidden, notFound } from '../lib/errors.js'
-import { rank, idParam, qstr, newId } from './util.js'
+import { rank, idParam, qstr, qint, newId, DAY } from './util.js'
 import { publicUser } from './users.js'
 import { deleteDoc } from './comments.js'
 import { reconcileXp } from './xp.js'
@@ -139,4 +139,94 @@ export async function resetMedia(ctx, actor, id, input) {
   if (!Object.keys(set).length) throw badRequest('Pilih "avatar"')
   await ctx.c.users.updateOne({ _id: uid }, { $set: set })
   return { ok: true }
+}
+
+// ---- Panel OWNER: statistik, daftar pengguna, daftar komentar ----
+
+const PAGE_SIZE = 20
+const ROLES = ['OWNER', 'MODERATOR', 'PREMIUM', 'USER']
+const escapeRe = t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const like = t => ({ $regex: escapeRe(t), $options: 'i' })
+const flag = (q, name) => ['1', 'true'].includes(qstr(q, name, 5).toLowerCase())
+
+// Ringkasan angka untuk tab "Ringkasan". Semua dihitung dari data server.
+export async function adminStats(ctx, actor) {
+  needOwner(actor)
+  const now = ctx.now()
+  const [users, newUsers7d, active24h, banned, owners, moderators, premiums, comments, comments24h, openReports, chaptersReadTotal] = await Promise.all([
+    ctx.c.users.countDocuments({}),
+    ctx.c.users.countDocuments({ createdAt: { $gte: now - 7 * DAY } }),
+    ctx.c.users.countDocuments({ lastLoginAt: { $gte: now - DAY } }),
+    ctx.c.users.countDocuments({ banned: true }),
+    ctx.c.users.countDocuments({ role: 'OWNER' }),
+    ctx.c.users.countDocuments({ role: 'MODERATOR' }),
+    ctx.c.users.countDocuments({ role: 'PREMIUM' }),
+    ctx.c.comments.countDocuments({ deleted: false }),
+    ctx.c.comments.countDocuments({ deleted: false, createdAt: { $gte: now - DAY } }),
+    ctx.c.reports.countDocuments({ status: 'open' }),
+    ctx.c.chapterReads.countDocuments({ counted: true })
+  ])
+  return { users, newUsers7d, active24h, banned, owners, moderators, premiums, comments, comments24h, openReports, chaptersRead: chaptersReadTotal }
+}
+
+// Daftar pengguna: cari (username/nama/email), filter role atau diblokir, terbaru dulu.
+export async function listUsers(ctx, actor, query) {
+  needOwner(actor)
+  const page = qint(query, 'page', 1, 1, 500)
+  const q = qstr(query, 'q', 60)
+  const role = qstr(query, 'role', 12).toUpperCase()
+  const filter = {}
+  if (role) {
+    if (!ROLES.includes(role)) throw badRequest('"role" harus OWNER, MODERATOR, PREMIUM, atau USER')
+    filter.role = role
+  }
+  if (flag(query, 'banned')) filter.banned = true
+  if (q) filter.$or = [{ username: like(q) }, { name: like(q) }, { email: like(q) }]
+  const [rows, total] = await Promise.all([
+    ctx.c.users.find(filter, { sort: { createdAt: -1, _id: -1 }, skip: (page - 1) * PAGE_SIZE, limit: PAGE_SIZE + 1 }).toArray(),
+    ctx.c.users.countDocuments(filter)
+  ])
+  return {
+    page,
+    total,
+    hasMore: rows.length > PAGE_SIZE,
+    items: rows.slice(0, PAGE_SIZE).map(u => ({ ...publicUser(u, true), banned: !!u.banned, hasAvatar: !!u.customPicture, lastLoginAt: u.lastLoginAt || 0 }))
+  }
+}
+
+// Semua komentar (termasuk yang sudah dihapus), terbaru dulu. Cari isi komentar atau pembuatnya; filter hanya yang dilaporkan.
+export async function listAdminComments(ctx, actor, query) {
+  needOwner(actor)
+  const page = qint(query, 'page', 1, 1, 500)
+  const q = qstr(query, 'q', 60)
+  const filter = {}
+  if (flag(query, 'reported')) filter.reportCount = { $gt: 0 }
+  if (q) {
+    const authors = await ctx.c.users.find({ $or: [{ username: like(q) }, { name: like(q) }] }, { limit: 50 }).toArray()
+    filter.$or = [{ body: like(q) }, ...(authors.length ? [{ userId: { $in: authors.map(a => a._id) } }] : [])]
+  }
+  const [rows, total] = await Promise.all([
+    ctx.c.comments.find(filter, { sort: { _id: -1 }, skip: (page - 1) * PAGE_SIZE, limit: PAGE_SIZE + 1 }).toArray(),
+    ctx.c.comments.countDocuments(filter)
+  ])
+  const items = rows.slice(0, PAGE_SIZE)
+  const ids = [...new Set(items.map(c => c.userId))]
+  const users = ids.length ? await ctx.c.users.find({ _id: { $in: ids } }).toArray() : []
+  const byId = new Map(users.map(u => [u._id, u]))
+  return {
+    page,
+    total,
+    hasMore: rows.length > PAGE_SIZE,
+    items: items.map(c => ({
+      id: c._id,
+      body: c.body,
+      deleted: !!c.deleted,
+      targetKey: c.targetKey,
+      createdAt: c.createdAt,
+      likeCount: c.likeCount || 0,
+      replyCount: c.replyCount || 0,
+      reportCount: c.reportCount || 0,
+      user: byId.has(c.userId) ? publicUser(byId.get(c.userId)) : null
+    }))
+  }
 }

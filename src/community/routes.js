@@ -6,7 +6,7 @@ import { getProfile, listActivity } from './profile.js'
 import { resolveTarget, listComments, listReplies, createComment, chapterCounts, editComment, removeComment, likeComment, reportComment } from './comments.js'
 import { deleteAccount } from './account.js'
 import { saveProgress, trackReadingTime } from './reading.js'
-import { listReports, resolveReport, findUser, userDetail, grantXp, resetMedia, setRole, setBan } from './admin.js'
+import { listReports, resolveReport, findUser, userDetail, grantXp, resetMedia, setRole, setBan, adminStats, listUsers, listAdminComments } from './admin.js'
 
 const P = '/api/community'
 
@@ -73,7 +73,10 @@ export function registerCommunityRoutes(router, { registry, community }) {
 
   router.get(`${P}/admin/reports`, authed((cm, { query }, user) => listReports(cm, user, { status: qstr(query, 'status', 10) || 'open', page: qint(query, 'page', 1, 1, 200), limit: 20 })))
   router.post(`${P}/admin/reports/:id/resolve`, authed((cm, { params, body }, user) => resolveReport(cm, user, params.id, body.action)))
-  router.get(`${P}/admin/users`, authed((cm, { query }, user) => findUser(cm, user, query)))
+  // ?username= = cari satu akun persis (MODERATOR/OWNER). Tanpa itu = daftar pengguna untuk panel OWNER (q, role, banned, page).
+  router.get(`${P}/admin/users`, authed((cm, { query }, user) => (query.has('username') ? findUser(cm, user, query) : listUsers(cm, user, query))))
+  router.get(`${P}/admin/stats`, authed((cm, ctx, user) => adminStats(cm, user)))
+  router.get(`${P}/admin/comments`, authed((cm, { query }, user) => listAdminComments(cm, user, query)))
   router.get(`${P}/admin/users/:id`, authed((cm, { params }, user) => userDetail(cm, user, params.id)))
   router.post(`${P}/admin/users/:id/xp`, authed((cm, { params, body }, user) => grantXp(cm, user, params.id, body.amount)))
   router.post(`${P}/admin/users/:id/reset-media`, authed((cm, { params, body }, user) => resetMedia(cm, user, params.id, body)))

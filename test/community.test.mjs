@@ -716,6 +716,69 @@ test('panel OWNER: detail akun, atur XP, reset foto; non-owner ditolak', async (
   assert.equal((await post(`/admin/users/${u.user.id}/reset-media`, o.token, {})).status, 400)
 })
 
+test('panel OWNER: statistik, daftar pengguna (cari/filter/halaman) dan daftar komentar', async () => {
+  const o = await login('ls-o', 'owner@example.com')
+  const mod = await login('ls-m', 'dev@example.com')
+  const a = await login('ls-a', 'lsalpha@example.com')
+  const b = await login('ls-b', 'lsbeta@example.com')
+  const adm = (path, token) => call('GET', `/api/community/admin${path}`, { token })
+
+  // hanya OWNER: anonim 401, member dan MODERATOR 403
+  for (const path of ['/stats', '/users', '/comments']) {
+    assert.equal((await adm(path)).status, 401)
+    assert.equal((await adm(path, a.token)).status, 403)
+    assert.equal((await adm(path, mod.token)).status, 403)
+  }
+
+  const s1 = await adm('/stats', o.token)
+  assert.equal(s1.status, 200)
+  for (const k of ['users', 'newUsers7d', 'active24h', 'banned', 'owners', 'moderators', 'premiums', 'comments', 'comments24h', 'openReports', 'chaptersRead']) {
+    assert.equal(typeof s1.data[k], 'number', k)
+  }
+  assert.ok(s1.data.users >= 4 && s1.data.owners >= 1 && s1.data.moderators >= 1)
+
+  // pengguna: cari, filter role/diblokir, validasi
+  const byName = await adm('/users?q=lsalpha', o.token)
+  assert.equal(byName.data.items.length, 1)
+  assert.equal(byName.data.items[0].id, a.user.id)
+  assert.equal(byName.data.items[0].email, 'lsalpha@example.com')
+  assert.equal(byName.data.items[0].banned, false)
+  assert.equal(byName.data.total, 1)
+  assert.equal((await adm('/users?q=ls.lpha', o.token)).data.items.length, 0, 'karakter regex diperlakukan sebagai teks biasa')
+  assert.ok((await adm('/users?role=MODERATOR', o.token)).data.items.every(u => u.role === 'MODERATOR'))
+  assert.equal((await adm('/users?role=ADMIN', o.token)).status, 400)
+  assert.equal((await call('PUT', `/api/community/admin/users/${b.user.id}/ban`, { token: o.token, body: { banned: true } })).status, 200)
+  const bannedList = await adm('/users?banned=1', o.token)
+  assert.ok(bannedList.data.items.some(u => u.id === b.user.id && u.banned === true))
+  assert.ok(bannedList.data.items.every(u => u.banned))
+  assert.equal((await adm('/stats', o.token)).data.banned, s1.data.banned + 1)
+  assert.equal((await adm('/users?page=0', o.token)).status, 400)
+  // pencarian persis oleh MODERATOR tetap jalan
+  assert.equal((await adm(`/users?username=${a.user.username}`, mod.token)).data.user.id, a.user.id)
+
+  // komentar: daftar, cari isi / pembuat, filter dilaporkan, termasuk yang sudah dihapus
+  const c1 = await post(a.token, { ...comic, body: 'komentar panel admin pertama' })
+  const c2 = await post(a.token, { ...comic, body: 'komentar panel admin kedua yang melanggar' })
+  assert.equal(c1.status, 200, JSON.stringify(c1))
+  assert.equal((await call('POST', `/api/community/comments/${c2.data.comment.id}/report`, { token: mod.token, body: { reason: 'spam' } })).status, 200)
+  const all = await adm('/comments', o.token)
+  assert.equal(all.data.items[0].id, c2.data.comment.id, 'terbaru dulu')
+  assert.equal(all.data.items[0].reportCount, 1)
+  assert.equal(all.data.items[0].user.username, a.user.username)
+  assert.equal(all.data.items[0].targetKey, 'mock:solo-leveling')
+  assert.equal((await adm('/comments?reported=1', o.token)).data.items.every(c => c.reportCount > 0), true)
+  assert.equal((await adm('/comments?q=pertama', o.token)).data.items[0].id, c1.data.comment.id)
+  assert.ok((await adm(`/comments?q=${a.user.username}`, o.token)).data.items.length >= 2, 'cari lewat username pembuat')
+  assert.equal((await call('DELETE', `/api/community/comments/${c1.data.comment.id}`, { token: o.token })).status, 200)
+  const withDeleted = await adm('/comments?q=lsalpha', o.token)
+  assert.ok(withDeleted.data.items.some(c => c.id === c1.data.comment.id && c.deleted === true))
+
+  // paginasi
+  const p1 = await adm('/users', o.token)
+  assert.equal(p1.data.page, 1)
+  assert.ok(p1.data.items.length <= 20 && typeof p1.data.hasMore === 'boolean')
+})
+
 test('profil: ID publik berurutan dan stabil, bulan bergabung dari data nyata', async () => {
   const a = await login('id-a', 'ida@example.com')
   const b = await login('id-b', 'idb@example.com')
