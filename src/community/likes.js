@@ -27,7 +27,7 @@ export async function likeStatus(ctx, viewer, input, hasSource) {
   const t = resolveTarget(input, hasSource)
   const [count, mine] = await Promise.all([
     ctx.c.likes.countDocuments({ targetKey: t.targetKey }),
-    viewer ? ctx.c.likes.findOne({ _id: `${viewer._id}:${t.targetKey}` }) : null
+    viewer ? ctx.c.likes.findOne({ _id: `${viewer._id}:${t.targetKey}` }, { projection: { _id: 1 } }) : null
   ])
   return { liked: !!mine, count }
 }

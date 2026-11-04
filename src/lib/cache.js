@@ -19,7 +19,7 @@ export class TtlCache {
     const now = Date.now()
     this.map.delete(key)
     this.map.set(key, { value, exp: now + ttlMs, staleUntil: now + ttlMs + this.staleMs })
-    if (this.map.size > this.max) this.map.delete(this.map.keys().next().value)
+    while (this.map.size > this.max) this.map.delete(this.map.keys().next().value)
   }
 
   /** loader() dipanggil hanya saat cache kosong/kadaluarsa. Return { value, state: HIT|MISS|STALE } */
@@ -48,5 +48,15 @@ export class TtlCache {
 
     this.inflight.set(key, p)
     return p
+  }
+
+  delete(key) {
+    this.map.delete(key)
+    this.inflight.delete(key)
+  }
+
+  clear() {
+    this.map.clear()
+    this.inflight.clear()
   }
 }

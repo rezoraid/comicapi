@@ -2,6 +2,7 @@ import { badRequest, notFound, forbidden, conflict } from '../lib/errors.js'
 import { newId, isDup, rank, hit, idParam, bodyText, bodyHash, SLUG, CHAPTER, DAY } from './util.js'
 import { publicUser } from './users.js'
 import { XP, LIKER_MIN_AGE_MS, awardXp, reverseXp, isQuality } from './xp.js'
+import { USER_LIGHT } from './db.js'
 
 export const REPORT_REASONS = ['spam', 'abuse', 'hate', 'spoiler', 'other']
 
@@ -18,15 +19,17 @@ const canDeleteComment = (viewer, comment, author) =>
   !!viewer && !comment.deleted && (viewer._id === comment.userId || rank(viewer) === 3 || (rank(viewer) === 2 && rank(author) < 2))
 
 const hydrate = async (ctx, viewer, docs) => {
+  if (!docs.length) return []
   const ids = new Set()
   docs.forEach(d => (ids.add(d.userId), d.replyToUserId && ids.add(d.replyToUserId)))
-  const users = ids.size ? await ctx.c.users.find({ _id: { $in: [...ids] } }).toArray() : []
+  const userIds = [...ids]
+  // Parallel: users (tanpa base64 avatar) + likes viewer
+  const [users, likes] = await Promise.all([
+    userIds.length ? ctx.c.users.find({ _id: { $in: userIds } }, { projection: USER_LIGHT }).toArray() : [],
+    viewer ? ctx.c.commentLikes.find({ userId: viewer._id, commentId: { $in: docs.map(d => d._id) } }, { projection: { commentId: 1 } }).toArray() : []
+  ])
   const byId = new Map(users.map(u => [u._id, u]))
-  const liked = new Set()
-  if (viewer && docs.length) {
-    const likes = await ctx.c.commentLikes.find({ userId: viewer._id, commentId: { $in: docs.map(d => d._id) } }).toArray()
-    likes.forEach(l => liked.add(l.commentId))
-  }
+  const liked = new Set(likes.map(l => l.commentId))
   return docs.map(d => {
     const author = byId.get(d.userId)
     return {
@@ -121,7 +124,10 @@ export async function createComment(ctx, user, input, hasSource) {
     })
     if (xpGained <= 0) xpReason = 'DAILY_CAP'
   }
-  const fresh = await ctx.c.users.findOne({ _id: user._id })
+  const fresh =
+    xpGained > 0
+      ? (await ctx.c.users.findOne({ _id: user._id }, { projection: USER_LIGHT })) || user
+      : user
   const [comment] = await hydrate(ctx, fresh, [doc])
   return { comment, xpGained, xpReason, user: publicUser(fresh, true) }
 }
@@ -170,14 +176,17 @@ export async function deleteDoc(ctx, c, byId) {
 
 export async function likeComment(ctx, user, id, on) {
   hit(ctx.limits.like, user._id, 'Terlalu banyak like')
-  const c = await ctx.c.comments.findOne({ _id: idParam(id), deleted: false })
+  const c = await ctx.c.comments.findOne({ _id: idParam(id), deleted: false }, { projection: { userId: 1, likeCount: 1 } })
   if (!c) throw notFound('Komentar tidak ditemukan')
+  let likeCount = c.likeCount || 0
   if (on) {
     try {
       await ctx.c.commentLikes.insertOne({ _id: newId(), commentId: c._id, userId: user._id, createdAt: ctx.now() })
       await ctx.c.comments.updateOne({ _id: c._id }, { $inc: { likeCount: 1 } })
+      likeCount += 1
+      // XP like_received: fire-and-forget agar response like tetap cepat
       if (c.userId !== user._id && ctx.now() - user.createdAt >= LIKER_MIN_AGE_MS) {
-        await awardXp(ctx, {
+        awardXp(ctx, {
           userId: c.userId,
           type: 'like_received',
           refId: `${c._id}:${user._id}`,
@@ -185,17 +194,19 @@ export async function likeComment(ctx, user, id, on) {
           amount: XP.likeReceived,
           group: 'like',
           fromUserId: user._id
-        })
+        }).catch(() => {})
       }
     } catch (e) {
       if (!isDup(e)) throw e
     }
   } else {
     const r = await ctx.c.commentLikes.deleteOne({ commentId: c._id, userId: user._id })
-    if (r.deletedCount === 1) await ctx.c.comments.updateOne({ _id: c._id }, { $inc: { likeCount: -1 } })
+    if (r.deletedCount === 1) {
+      await ctx.c.comments.updateOne({ _id: c._id }, { $inc: { likeCount: -1 } })
+      likeCount = Math.max(0, likeCount - 1)
+    }
   }
-  const fresh = await ctx.c.comments.findOne({ _id: c._id })
-  return { liked: on, likeCount: Math.max(0, fresh.likeCount) }
+  return { liked: on, likeCount: Math.max(0, likeCount) }
 }
 
 export async function reportComment(ctx, user, id, input) {
@@ -219,13 +230,23 @@ export async function chapterCounts(ctx, source, slug) {
   const cache = (ctx.countCache ||= new Map())
   const key = `${source}:${slug}`
   const now = ctx.now()
-  const hit = cache.get(key)
-  if (hit && now - hit.t < 15_000) return hit.v
-  const rows = await ctx.c.comments.find({ type: 'chapter', source, slug, deleted: false }, { projection: { chapter: 1 } }).toArray()
+  const cached = cache.get(key)
+  if (cached && now - cached.t < 15_000) return cached.v
+  // Aggregation di server jauh lebih ringan daripada load semua dokumen chapter.
+  const rows = await ctx.c.comments
+    .aggregate([
+      { $match: { type: 'chapter', source, slug, deleted: false } },
+      { $group: { _id: '$chapter', n: { $sum: 1 } } }
+    ])
+    .toArray()
   const counts = {}
-  for (const r of rows) counts[r.chapter] = (counts[r.chapter] || 0) + 1
+  for (const r of rows) counts[r._id] = r.n
   const v = { counts }
   cache.set(key, { t: now, v })
-  if (cache.size > 500) cache.delete(cache.keys().next().value)
+  if (cache.size > 500) {
+    // Hapus entry tertua (Map insertion order)
+    const first = cache.keys().next().value
+    if (first !== undefined) cache.delete(first)
+  }
   return v
 }

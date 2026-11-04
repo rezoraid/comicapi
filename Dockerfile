@@ -1,5 +1,8 @@
 FROM node:22-alpine
 ENV NODE_ENV=production
+# Heap & threadpool lebih siap untuk concurrent I/O (scrape + mongo + proxy)
+ENV NODE_OPTIONS="--max-old-space-size=512"
+ENV UV_THREADPOOL_SIZE=16
 WORKDIR /app
 
 COPY package*.json ./

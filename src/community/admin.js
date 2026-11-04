@@ -75,6 +75,7 @@ export async function setRole(ctx, actor, id, role) {
   if (!target) throw notFound('Pengguna tidak ditemukan')
   if (target.role === 'OWNER') throw forbidden('Role OWNER tidak bisa diubah lewat API')
   await ctx.c.users.updateOne({ _id: uid }, { $set: { role, roleManual: true } })
+  ctx.invalidateUser?.(uid)
   return { user: publicUser({ ...target, role }) }
 }
 
@@ -87,6 +88,7 @@ export async function setVerified(ctx, actor, id, verified) {
   if (!target) throw notFound('Pengguna tidak ditemukan')
   if (target.role === 'OWNER') throw forbidden('OWNER selalu terverifikasi')
   await ctx.c.users.updateOne({ _id: uid }, { $set: { verified } })
+  ctx.invalidateUser?.(uid)
   return { user: publicUser({ ...target, verified }) }
 }
 
@@ -99,6 +101,7 @@ export async function setBan(ctx, actor, id, banned) {
   if (!target) throw notFound('Pengguna tidak ditemukan')
   if (rank(target) >= rank(actor)) throw forbidden('Kamu tidak boleh memblokir pengguna dengan role ini')
   await ctx.c.users.updateOne({ _id: uid }, { $set: { banned } })
+  ctx.invalidateUser?.(uid)
   return { ok: true, banned }
 }
 
@@ -120,7 +123,7 @@ export async function userDetail(ctx, actor, id) {
       commentCount,
       chaptersRead: await chaptersRead(ctx, u._id),
       lastLoginAt: u.lastLoginAt || 0,
-      hasAvatar: !!u.customPicture
+      hasAvatar: !!(u.customPicture || u.hasCustomPicture)
     }
   }
 }
@@ -147,9 +150,13 @@ export async function resetMedia(ctx, actor, id, input) {
   if (!target) throw notFound('Pengguna tidak ditemukan')
   if (uid !== actor._id && rank(actor) < 3 && rank(target) >= rank(actor)) throw forbidden('Kamu tidak boleh mengubah akun dengan role ini')
   const set = {}
-  if (input?.avatar === true) set.customPicture = ''
+  if (input?.avatar === true) {
+    set.customPicture = ''
+    set.hasCustomPicture = false
+  }
   if (!Object.keys(set).length) throw badRequest('Pilih "avatar"')
   await ctx.c.users.updateOne({ _id: uid }, { $set: set })
+  ctx.invalidateUser?.(uid)
   return { ok: true }
 }
 
@@ -198,7 +205,14 @@ export async function listUsers(ctx, actor, query) {
   if (flag(query, 'verified')) filter.$or = search.flatMap(s => [{ ...s, verified: true }, { ...s, role: 'OWNER' }])
   else if (q) filter.$or = search
   const [rows, total] = await Promise.all([
-    ctx.c.users.find(filter, { sort: { createdAt: -1, _id: -1 }, skip: (page - 1) * PAGE_SIZE, limit: PAGE_SIZE + 1 }).toArray(),
+    ctx.c.users
+      .find(filter, {
+        projection: { customPicture: 0 },
+        sort: { createdAt: -1, _id: -1 },
+        skip: (page - 1) * PAGE_SIZE,
+        limit: PAGE_SIZE + 1
+      })
+      .toArray(),
     ctx.c.users.countDocuments(filter)
   ])
   return {

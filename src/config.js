@@ -15,12 +15,15 @@ export function loadConfig(env = process.env) {
     apiKey: env.API_KEY || '',
     // di belakang proxy (Railway, Nginx, Cloudflare) → baca IP asli dari x-forwarded-for
     trustProxy: env.TRUST_PROXY !== 'false',
-    rateLimit: { max: int(env.RATE_LIMIT_MAX, 120), windowMs: int(env.RATE_LIMIT_WINDOW_MS, 60_000) },
-    imageRateLimit: { max: int(env.IMAGE_RATE_LIMIT_MAX, 1500), windowMs: int(env.RATE_LIMIT_WINDOW_MS, 60_000) },
-    cacheMax: int(env.CACHE_MAX, 1000),
+    // Default longgar untuk APK: 1 user ≈ puluhan request/menit (browse + chapter + progress)
+    rateLimit: { max: int(env.RATE_LIMIT_MAX, 180), windowMs: int(env.RATE_LIMIT_WINDOW_MS, 60_000) },
+    imageRateLimit: { max: int(env.IMAGE_RATE_LIMIT_MAX, 2000), windowMs: int(env.RATE_LIMIT_WINDOW_MS, 60_000) },
+    // Default lebih besar: homepage + search + detail chapter sering di-hit ulang
+    cacheMax: int(env.CACHE_MAX, 4000),
     requestTimeoutMs: int(env.REQUEST_TIMEOUT_MS, 25_000),
+    // Di production set LOG_REQUESTS=false atau LOG_SAMPLE=20 untuk kurangi I/O
     logRequests: env.LOG_REQUESTS !== 'false',
-    // halaman tes di /playground — set PLAYGROUND=false untuk mematikan
+    // halaman tes di /playground — set PLAYGROUND=false untuk mematikan di production
     playground: env.PLAYGROUND !== 'false',
     contactEmail: env.CONTACT_EMAIL || '',
     community: {

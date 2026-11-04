@@ -20,15 +20,22 @@ export function createApp({ registry, config, logger = console, community = null
   registerRoutes(router, { registry, config, community })
 
   const limiters = {
-    default: createRateLimiter(config.rateLimit),
-    image: createRateLimiter(config.imageRateLimit)
+    default: createRateLimiter({ ...config.rateLimit, maxKeys: 80_000 }),
+    image: createRateLimiter({ ...config.imageRateLimit, maxKeys: 80_000 })
   }
+
+  // Sampling log: di traffic tinggi jangan log 100% request (I/O sinkron bisa jadi bottleneck).
+  const logEvery = Math.max(1, parseInt(process.env.LOG_SAMPLE || '1', 10) || 1)
+  let logCounter = 0
 
   async function handler(req, res) {
     const started = Date.now()
     const path = req.url
     if (config.logRequests && path !== '/health') {
-      res.on('finish', () => logger.log(`${req.method} ${path} ${res.statusCode} ${Date.now() - started}ms`))
+      const n = ++logCounter
+      if (n % logEvery === 0) {
+        res.on('finish', () => logger.log(`${req.method} ${path} ${res.statusCode} ${Date.now() - started}ms`))
+      }
     }
 
     try {

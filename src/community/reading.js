@@ -49,20 +49,34 @@ export async function trackReadingTime(ctx, user, input, hasSource) {
   const seconds = input.seconds
   if (!Number.isInteger(seconds) || seconds < 1 || seconds > MAX_PING_SECONDS) throw badRequest(`"seconds" harus bilangan bulat 1-${MAX_PING_SECONDS}`)
   const now = ctx.now()
-  const prev = user.readTimeAt ?? null
+  // Baca readTimeAt segar dari DB (bukan dari user-cache) supaya klaim atomik tetap benar.
+  const live = await ctx.c.users.findOne({ _id: user._id }, { projection: { readTimeAt: 1 } })
+  const prev = live?.readTimeAt ?? null
   const gap = prev && now - prev < 600_000 ? Math.ceil((now - prev) / 1000) + 5 : 60
   const credit = Math.min(seconds, gap)
+
+  // Klaim atomik: hanya satu request yang menang race.
   const claim = await ctx.c.users.updateOne({ _id: user._id, readTimeAt: prev }, { $inc: { readSeconds: credit }, $set: { readTimeAt: now } })
   if (claim.matchedCount !== 1) return { ok: true, credited: 0, xpGained: 0 }
-  await ctx.c.readingProgress.updateOne({ _id: `${user._id}:${source}:${slug}` }, { $inc: { readSeconds: credit } })
+  // Update cache agar request berikutnya tidak membawa readTimeAt usang (opsional).
+  ctx.invalidateUser?.(user._id)
 
   const id = `${user._id}:${source}:${slug}:${chapter}`
-  await ctx.c.chapterReads.updateOne(
-    { _id: id },
-    { $inc: { seconds: credit }, $set: { updatedAt: now }, $setOnInsert: { userId: user._id, source, slug, chapter, createdAt: now } },
-    { upsert: true }
-  )
-  const row = await ctx.c.chapterReads.findOne({ _id: id })
+  // Parallel: progress + chapterReads upsert
+  const [, chapterRow] = await Promise.all([
+    ctx.c.readingProgress.updateOne({ _id: `${user._id}:${source}:${slug}` }, { $inc: { readSeconds: credit } }),
+    ctx.c.chapterReads.findOneAndUpdate(
+      { _id: id },
+      {
+        $inc: { seconds: credit },
+        $set: { updatedAt: now },
+        $setOnInsert: { userId: user._id, source, slug, chapter, createdAt: now }
+      },
+      { upsert: true, returnDocument: 'after' }
+    )
+  ])
+
+  const row = chapterRow
   let xpGained = 0
   if (row && !row.counted && (row.seconds || 0) >= MIN_CHAPTER_SECONDS) {
     const today = await ctx.c.chapterReads.countDocuments({ userId: user._id, counted: true, countedAt: { $gte: now - DAY } })
@@ -71,5 +85,8 @@ export async function trackReadingTime(ctx, user, input, hasSource) {
       if (won.matchedCount === 1) xpGained = await awardXp(ctx, { userId: user._id, type: 'read', refId: id, amount: XP.chapterRead, group: 'read' })
     }
   }
-  return { ok: true, credited: credit, xpGained, chaptersRead: await chaptersRead(ctx, user._id) }
+
+  // chaptersRead dihitung paralel dengan response path yang sudah selesai — tetap await agar API konsisten
+  const total = await chaptersRead(ctx, user._id)
+  return { ok: true, credited: credit, xpGained, chaptersRead: total }
 }

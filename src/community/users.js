@@ -1,12 +1,15 @@
 import { randomInt } from 'node:crypto'
 import { badRequest, conflict, forbidden, unauthorized, notFound } from '../lib/errors.js'
 import { newId, isDup, rank, DAY, idParam, hit } from './util.js'
-import { progress, reconcileXp } from './xp.js'
+import { progress, reconcileXp, syncLevel } from './xp.js'
 import { chaptersRead } from './stats.js'
+import { USER_LIGHT } from './db.js'
 
 const USERNAME = /^[a-z][a-z0-9_]{2,19}$/
 const RESERVED = new Set(['admin', 'administrator', 'owner', 'dev', 'developer', 'komikta', 'system', 'moderator', 'mod', 'support', 'staff', 'root', 'null', 'undefined'])
 const USERNAME_COOLDOWN = 7 * DAY
+/** Rekonsiliasi XP penuh maksimal sekali per 6 jam per user (hot path /me). */
+const XP_RECONCILE_INTERVAL = 6 * 60 * 60 * 1000
 
 const cleanName = n => (typeof n === 'string' ? n.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 60) : '')
 const cleanPicture = p => {
@@ -24,11 +27,12 @@ export const OWNER_LEVEL = 99999
 export const publicUser = (u, self = false) => {
   const owner = u.role === 'OWNER'
   const p = progress(u.xp || 0)
+  const hasAvatar = !!(u.customPicture || u.hasCustomPicture)
   return {
     id: u._id,
     username: u.username,
     name: u.name,
-    picture: u.customPicture ? `/api/community/users/${u._id}/avatar` : u.picture,
+    picture: hasAvatar ? `/api/community/users/${u._id}/avatar` : u.picture,
     role: u.role,
     // OWNER selalu terverifikasi; akun lain diberi centang oleh OWNER lewat panel admin.
     verified: owner || !!u.verified,
@@ -56,7 +60,7 @@ export const resolveRole = (cfg, email, current = 'USER', manual = false) => {
 export async function loginWithGoogle(ctx, idToken) {
   const g = await ctx.google.verify(idToken)
   const now = ctx.now()
-  let user = await ctx.c.users.findOne({ googleSub: g.sub })
+  let user = await ctx.c.users.findOne({ googleSub: g.sub }, { projection: USER_LIGHT })
   if (!user) {
     const base = baseUsername(g.email, g.name)
     for (let i = 0; i < 8 && !user; i++) {
@@ -81,7 +85,7 @@ export async function loginWithGoogle(ctx, idToken) {
         user = doc
       } catch (e) {
         if (!isDup(e)) throw e
-        user = await ctx.c.users.findOne({ googleSub: g.sub })
+        user = await ctx.c.users.findOne({ googleSub: g.sub }, { projection: USER_LIGHT })
       }
     }
     if (!user) throw conflict('Gagal membuat akun, coba lagi', 'USERNAME_TAKEN')
@@ -107,14 +111,19 @@ export async function authenticate(ctx, req, { optional = false } = {}) {
     if (optional) return null
     throw unauthorized('Sesi tidak valid atau kedaluwarsa, masuk lagi')
   }
-  const user = await ctx.c.users.findOne({ _id: p.sub })
+  // Cache pendek (≈45s) + projection ringan: path auth tidak memukul Mongo di setiap request.
+  let user = ctx.userCache?.get(p.sub)
+  if (!user) {
+    user = await ctx.c.users.findOne({ _id: p.sub }, { projection: USER_LIGHT })
+    if (user && ctx.userCache) ctx.userCache.set(p.sub, user)
+  }
   if (!user) {
     if (optional) return null
     throw unauthorized('Akun tidak ditemukan')
   }
   if (user.banned) throw forbidden('Akun ini diblokir')
-  user.tokenExp = p.exp
-  return user
+  // Salin agar tokenExp tidak mencemari objek di cache antar-request
+  return { ...user, tokenExp: p.exp }
 }
 
 const nextNo = async ctx => {
@@ -126,7 +135,7 @@ const nextNo = async ctx => {
 
 async function claimOwnerNo(ctx, u) {
   if (u.publicNo === 1) return u
-  const holder = await ctx.c.users.findOne({ publicNo: 1, _id: { $ne: u._id } })
+  const holder = await ctx.c.users.findOne({ publicNo: 1, _id: { $ne: u._id } }, { projection: { publicNo: 1, role: 1 } })
   // Pemegang lama nomor 1 (bukan owner) menerima nomor owner sebelumnya supaya tidak ada dua #1.
   if (holder && holder.role !== 'OWNER') await ctx.c.users.updateOne({ _id: holder._id }, { $set: { publicNo: u.publicNo > 1 ? u.publicNo : await nextNo(ctx) } })
   await ctx.c.users.updateOne({ _id: u._id }, { $set: { publicNo: 1 } })
@@ -138,18 +147,35 @@ export async function ensurePublicNo(ctx, u) {
   if (u.publicNo) return u
   const seq = await nextNo(ctx)
   await ctx.c.users.updateOne({ _id: u._id, publicNo: { $exists: false } }, { $set: { publicNo: seq } })
-  return (await ctx.c.users.findOne({ _id: u._id })) || u
+  return (await ctx.c.users.findOne({ _id: u._id }, { projection: USER_LIGHT })) || u
 }
 
 export const monthsSince = (ctx, ts) => (ts > 0 ? Math.max(0, Math.floor((ctx.now() - ts) / (30.4375 * DAY))) : 0)
 
 export const me = async (ctx, user) => {
   user = { ...(await ensurePublicNo(ctx, user)), tokenExp: user.tokenExp }
-  const synced = await reconcileXp(ctx, user._id)
-  if (synced) user = { ...user, xp: synced.xp, level: synced.level }
+  // Rekonsiliasi penuh jarang; di path hot cukup pastikan level konsisten dengan xp.
+  const due = !user.xpReconciledAt || ctx.now() - user.xpReconciledAt > XP_RECONCILE_INTERVAL
+  if (due) {
+    const synced = await reconcileXp(ctx, user._id)
+    if (synced) {
+      user = { ...user, xp: synced.xp, level: synced.level, xpReconciledAt: ctx.now() }
+      // fire-and-forget flag; tidak perlu menunggu
+      ctx.c.users.updateOne({ _id: user._id }, { $set: { xpReconciledAt: user.xpReconciledAt } }).catch(() => {})
+    }
+  } else {
+    const synced = await syncLevel(ctx, user._id, user)
+    if (synced) user = { ...user, xp: synced.xp, level: synced.level }
+  }
   const left = user.tokenExp * 1000 - ctx.now()
-  const commentCount = await ctx.c.comments.countDocuments({ userId: user._id, deleted: false })
-  return { user: { ...publicUser(user, true), commentCount, chaptersRead: await chaptersRead(ctx, user._id), monthsJoined: monthsSince(ctx, user.createdAt) }, ...(left < ctx.tokens.ttlMs / 2 ? { token: ctx.tokens.sign(user._id) } : {}) }
+  const [commentCount, chapters] = await Promise.all([
+    ctx.c.comments.countDocuments({ userId: user._id, deleted: false }),
+    chaptersRead(ctx, user._id)
+  ])
+  return {
+    user: { ...publicUser(user, true), commentCount, chaptersRead: chapters, monthsJoined: monthsSince(ctx, user.createdAt) },
+    ...(left < ctx.tokens.ttlMs / 2 ? { token: ctx.tokens.sign(user._id) } : {})
+  }
 }
 
 const DISPLAY_NAME = /^[\p{L}\p{N}][\p{L}\p{N} ._'\-]{0,28}[\p{L}\p{N}._]?$/u
@@ -168,6 +194,7 @@ export async function updateProfile(ctx, user, body) {
     if (RESERVED.has(name.toLowerCase()) && rank(user) < 2) throw badRequest('Nama ini tidak tersedia')
     if (name !== user.name) {
       await ctx.c.users.updateOne({ _id: user._id }, { $set: { name, nameCustom: true } })
+      ctx.invalidateUser?.(user._id)
       current = { ...user, name, nameCustom: true }
     }
   }
@@ -183,6 +210,7 @@ export async function updateProfile(ctx, user, body) {
   const changedAt = ctx.now()
   try {
     await ctx.c.users.updateOne({ _id: user._id }, { $set: { username, usernameChangedAt: changedAt } })
+    ctx.invalidateUser?.(user._id)
   } catch (e) {
     if (isDup(e)) throw conflict('Username sudah dipakai', 'USERNAME_TAKEN')
     throw e
@@ -206,12 +234,13 @@ function parseImage(data, { maxData, maxRaw, tooBig }) {
 
 export async function updateAvatar(ctx, user, body) {
   const data = parseImage(body?.image, { maxData: 400_000, maxRaw: 280_000, tooBig: 'Foto harus berupa JPG, PNG, atau WebP dan berukuran kecil (maksimal sekitar 280 KB)' })
-  await ctx.c.users.updateOne({ _id: user._id }, { $set: { customPicture: data } })
-  return { user: publicUser({ ...user, customPicture: data }, true) }
+  await ctx.c.users.updateOne({ _id: user._id }, { $set: { customPicture: data, hasCustomPicture: true } })
+  ctx.invalidateUser?.(user._id)
+  return { user: publicUser({ ...user, customPicture: data, hasCustomPicture: true }, true) }
 }
 
 export async function getUser(ctx, id) {
-  const u = await ctx.c.users.findOne({ _id: idParam(id) })
+  const u = await ctx.c.users.findOne({ _id: idParam(id) }, { projection: USER_LIGHT })
   if (!u) throw notFound('Pengguna tidak ditemukan')
   return { user: publicUser(u) }
 }

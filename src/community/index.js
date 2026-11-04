@@ -2,6 +2,7 @@ import { createRateLimiter } from '../http/middleware.js'
 import { connectMongo, collections, ensureIndexes } from './db.js'
 import { createGoogleVerifier } from './google.js'
 import { createTokens } from './tokens.js'
+import { TtlMap } from '../lib/ttl-map.js'
 
 const defaultLimits = {
   commentBurst: { max: 4, windowMs: 30_000 },
@@ -31,6 +32,11 @@ export async function createCommunity(cfg, { db = null, fetchJwks, limits = {}, 
   const c = collections(conn.db)
   await ensureIndexes(c)
   const cfgLimits = Object.fromEntries(Object.entries(defaultLimits).map(([k, v]) => [k, createRateLimiter({ ...v, ...limits[k] })]))
+
+  // Cache user hasil authenticate: ribuan request /me + like + progress tidak perlu hit Mongo tiap kali.
+  // TTL pendek supaya ban/role cepat terasa; invalidate manual saat update profil.
+  const userCache = new TtlMap({ max: 20_000, ttlMs: 45_000 })
+
   const ctx = {
     c,
     cfg,
@@ -38,8 +44,14 @@ export async function createCommunity(cfg, { db = null, fetchJwks, limits = {}, 
     google: createGoogleVerifier({ clientIds: cfg.googleClientIds, fetchJwks, now }),
     tokens: createTokens({ secret: cfg.authSecret, ttlDays: cfg.tokenTtlDays, now }),
     limits: cfgLimits,
+    userCache,
+    /** Invalidate cache user (setelah update profil / ban / role). */
+    invalidateUser(id) {
+      if (id) userCache.delete(id)
+    },
     close: async () => {
       Object.values(cfgLimits).forEach(l => l.close())
+      userCache.clear()
       await conn.close()
     }
   }

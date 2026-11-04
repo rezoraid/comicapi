@@ -48,13 +48,17 @@ export function clientIp(req, trustProxy) {
   return req.socket.remoteAddress || 'unknown'
 }
 
-/** Fixed-window rate limiter per IP (in-memory). */
-export function createRateLimiter({ max, windowMs }) {
+/**
+ * Fixed-window rate limiter per key (in-memory), bounded:
+ * - maxKeys mencegah Map membengkak saat serangan dari banyak IP
+ * - sweep periodik membersihkan window kadaluarsa
+ */
+export function createRateLimiter({ max, windowMs, maxKeys = 50_000 }) {
   const hits = new Map()
   const sweep = setInterval(() => {
     const now = Date.now()
     for (const [k, v] of hits) if (v.reset <= now) hits.delete(k)
-  }, windowMs)
+  }, Math.min(windowMs, 60_000))
   sweep.unref()
 
   return {
@@ -62,6 +66,8 @@ export function createRateLimiter({ max, windowMs }) {
       const now = Date.now()
       let h = hits.get(key)
       if (!h || h.reset <= now) {
+        // Evict oldest jika penuh (serangan IP acak)
+        if (hits.size >= maxKeys) hits.delete(hits.keys().next().value)
         h = { count: 0, reset: now + windowMs }
         hits.set(key, h)
       }
