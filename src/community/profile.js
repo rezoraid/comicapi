@@ -38,13 +38,15 @@ const titleLookup = async (ctx, rows) => {
     ctx.c.readingProgress.find({ $or: or, comicTitle: { $ne: '' } }, { limit: 100 }).toArray(),
     ctx.c.likes.find({ $or: or, comicTitle: { $ne: '' } }, { limit: 100 }).toArray()
   ])
-  for (const r of [...a, ...b]) {
+  for (const r of [...a, ...b].filter(r => !badTitle(r))) {
     const k = `${r.source}:${r.slug}`
     const cur = out.get(k) || {}
     out.set(k, { comicTitle: cur.comicTitle || r.comicTitle, coverUrl: cur.coverUrl || r.coverUrl || '' })
   }
   return out
 }
+
+const badTitle = r => !r.comicTitle || r.comicTitle === r.chapterTitle || /^(chapter|ch\.?|bab|episode)\s*\d/i.test(r.comicTitle)
 
 const pretty = slug => slug.replace(/[-_]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
 
@@ -58,7 +60,7 @@ export async function listActivity(ctx, viewer, id, { tab, page, limit }) {
   else rows = await ctx.c.comments.find({ userId: u._id, deleted: false }, { sort: { _id: -1 }, skip, limit: limit + 1 }).toArray()
   const hasMore = rows.length > limit
   rows = rows.slice(0, limit)
-  const titles = tab === 'comments' || rows.some(r => !r.comicTitle) ? await titleLookup(ctx, rows) : new Map()
+  const titles = tab === 'comments' || rows.some(badTitle) ? await titleLookup(ctx, rows) : new Map()
   const reads = tab === 'all' ? new Map(await Promise.all(rows.map(async r => [`${r.source}:${r.slug}`, await chaptersReadByComic(ctx, u._id, r.source, r.slug)]))) : new Map()
   const items = rows.map(r => {
     const t = titles.get(`${r.source}:${r.slug}`) || {}
@@ -66,7 +68,7 @@ export async function listActivity(ctx, viewer, id, { tab, page, limit }) {
       source: r.source,
       slug: r.slug,
       chapter: r.chapter || null,
-      comicTitle: r.comicTitle || t.comicTitle || pretty(r.slug),
+      comicTitle: (!badTitle(r) && r.comicTitle) || t.comicTitle || pretty(r.slug),
       chapterTitle: r.chapterTitle || '',
       coverUrl: r.coverUrl || t.coverUrl || ''
     }

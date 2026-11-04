@@ -776,3 +776,33 @@ test('hapus akun ikut menghapus likes dan riwayat', async () => {
   assert.equal((await call('DELETE', '/api/community/me', { token: a.token })).status, 200)
   assert.equal((await getp('/likes/status?type=comic&source=mock&slug=del-me')).data.count, 0)
 })
+
+test('nama tampilan: bisa diganti, tervalidasi, tidak tertimpa login Google berikutnya', async () => {
+  const a = await login('dn-a', 'dna@example.com')
+  const patch = body => call('PATCH', '/api/community/me', { token: a.token, body })
+  const ok = await patch({ name: '  Reyz   Forever ' })
+  assert.equal(ok.status, 200)
+  assert.equal(ok.data.user.name, 'Reyz Forever')
+  assert.equal(ok.data.user.username, a.user.username)
+  for (const name of ['', 'a', 'x'.repeat(31), '<b>', 123, null]) assert.equal((await patch({ name })).status, 400)
+  assert.equal((await patch({})).status, 400)
+  assert.equal((await login('dn-a', 'dna@example.com')).user.name, 'Reyz Forever')
+  const both = await patch({ name: 'Nama Baru', username: 'nama_baru1' })
+  assert.equal(both.data.user.name, 'Nama Baru')
+  assert.equal(both.data.user.username, 'nama_baru1')
+})
+
+test('riwayat: judul komik keliru (sama dengan judul chapter) tidak menimpa judul benar', async () => {
+  const a = await login('rh-a', 'rha@example.com')
+  const base = { source: 'mock', slug: 'villain-of-destiny', chapter: '1', chapterTitle: 'Chapter 1' }
+  await put('/me/reading-progress', a.token, { ...base, comicTitle: 'The Villain Of Destiny', coverUrl: 'https://img.example/v.jpg' })
+  await put('/me/reading-progress', a.token, { ...base, comicTitle: 'Chapter 1', coverUrl: '' })
+  const list = await getp(`/users/${a.user.id}/activity?tab=all`, a.token)
+  assert.equal(list.data.items[0].comicTitle, 'The Villain Of Destiny')
+  assert.equal(list.data.items[0].coverUrl, 'https://img.example/v.jpg')
+  // Baris lama yang sudah terlanjur salah tersimpan tetap tampil rapi (judul dari slug), bukan "Chapter 1".
+  const b = await login('rh-b', 'rhb@example.com')
+  await put('/me/reading-progress', b.token, { ...base, slug: 'shepherd-wizard', comicTitle: 'Chapter 1', coverUrl: '' })
+  const old = await getp(`/users/${b.user.id}/activity?tab=all`, b.token)
+  assert.equal(old.data.items[0].comicTitle, 'Shepherd Wizard')
+})

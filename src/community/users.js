@@ -85,7 +85,7 @@ export async function loginWithGoogle(ctx, idToken) {
     if (!user) throw conflict('Gagal membuat akun, coba lagi', 'USERNAME_TAKEN')
   } else {
     const role = resolveRole(ctx.cfg, g.email, user.role, user.roleManual)
-    const set = { email: g.email, name: cleanName(g.name) || user.name, picture: cleanPicture(g.picture), lastLoginAt: now, role }
+    const set = { email: g.email, name: user.nameCustom ? user.name : cleanName(g.name) || user.name, picture: cleanPicture(g.picture), lastLoginAt: now, role }
     await ctx.c.users.updateOne({ _id: user._id }, { $set: set })
     user = { ...user, ...set }
   }
@@ -150,12 +150,31 @@ export const me = async (ctx, user) => {
   return { user: { ...publicUser(user, true), commentCount, chaptersRead: await chaptersRead(ctx, user._id), monthsJoined: monthsSince(ctx, user.createdAt) }, ...(left < ctx.tokens.ttlMs / 2 ? { token: ctx.tokens.sign(user._id) } : {}) }
 }
 
+const DISPLAY_NAME = /^[\p{L}\p{N}][\p{L}\p{N} ._'\-]{0,28}[\p{L}\p{N}._]?$/u
+
+// Ganti username dan/atau nama tampilan. Nama tampilan bebas (huruf, angka, spasi), tidak harus unik.
 export async function updateProfile(ctx, user, body) {
+  const hasName = body.name !== undefined
+  const hasUsername = body.username !== undefined
+  if (!hasName && !hasUsername) throw badRequest('Tidak ada yang diubah')
+  let current = user
+  if (hasName) {
+    if (typeof body.name !== 'string') throw badRequest('"name" harus berupa teks')
+    hit(ctx.limits.write, user._id, 'Terlalu banyak permintaan')
+    const name = cleanName(body.name).replace(/\s+/g, ' ')
+    if (name.length < 2 || name.length > 30 || !DISPLAY_NAME.test(name)) throw badRequest('Nama tampilan 2-30 karakter: huruf, angka, spasi')
+    if (RESERVED.has(name.toLowerCase()) && rank(user) < 2) throw badRequest('Nama ini tidak tersedia')
+    if (name !== user.name) {
+      await ctx.c.users.updateOne({ _id: user._id }, { $set: { name, nameCustom: true } })
+      current = { ...user, name, nameCustom: true }
+    }
+  }
+  if (!hasUsername) return { user: publicUser(current, true) }
   const next = body.username
   if (typeof next !== 'string') throw badRequest('"username" harus berupa teks')
   const username = next.trim().toLowerCase()
   if (!USERNAME.test(username)) throw badRequest('Username 3-20 karakter: huruf kecil, angka, underscore, diawali huruf')
-  if (username === user.username) return { user: publicUser(user, true) }
+  if (username === current.username) return { user: publicUser(current, true) }
   if (RESERVED.has(username) && rank(user) < 2) throw badRequest('Username ini tidak tersedia')
   const wait = (user.usernameChangedAt || 0) + USERNAME_COOLDOWN - ctx.now()
   if (wait > 0) throw badRequest(`Username baru bisa diganti lagi ${Math.ceil(wait / DAY)} hari lagi`)
@@ -166,7 +185,7 @@ export async function updateProfile(ctx, user, body) {
     if (isDup(e)) throw conflict('Username sudah dipakai', 'USERNAME_TAKEN')
     throw e
   }
-  return { user: publicUser({ ...user, username, usernameChangedAt: changedAt }, true) }
+  return { user: publicUser({ ...current, username, usernameChangedAt: changedAt }, true) }
 }
 
 // Memeriksa data URI gambar (JPEG/PNG/WebP): tipe, ukuran, dan tanda tangan file asli.

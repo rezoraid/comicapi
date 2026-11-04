@@ -14,15 +14,20 @@ export async function saveProgress(ctx, user, input, hasSource) {
   const chapter = text(input.chapter, 'chapter', 50)
   if (!hasSource(source) || !SLUG.test(slug) || !CHAPTER.test(chapter)) throw badRequest('Data chapter tidak valid')
   const now = ctx.now()
-  const doc = {
-    _id: `${user._id}:${source}:${slug}`,
-    userId: user._id, source, slug, chapter,
-    comicTitle: typeof input.comicTitle === 'string' ? input.comicTitle.trim().slice(0, 180) : '',
-    chapterTitle: typeof input.chapterTitle === 'string' ? input.chapterTitle.trim().slice(0, 100) : '',
-    coverUrl: typeof input.coverUrl === 'string' && input.coverUrl.startsWith('https://') ? input.coverUrl.slice(0, 1000) : '',
-    updatedAt: now
-  }
-  await ctx.c.readingProgress.updateOne({ _id: doc._id }, { $set: doc, $setOnInsert: { createdAt: now } }, { upsert: true })
+  const chapterTitle = typeof input.chapterTitle === 'string' ? input.chapterTitle.trim().slice(0, 100) : ''
+  let comicTitle = typeof input.comicTitle === 'string' ? input.comicTitle.trim().slice(0, 180) : ''
+  // Judul komik yang sama dengan judul chapter / berawalan "Chapter" berarti detail komik belum sempat dimuat.
+  if (comicTitle && (comicTitle === chapterTitle || /^(chapter|ch\.?|bab|episode)\s*\d/i.test(comicTitle))) comicTitle = ''
+  const coverUrl = typeof input.coverUrl === 'string' && input.coverUrl.startsWith('https://') ? input.coverUrl.slice(0, 1000) : ''
+  const set = { userId: user._id, source, slug, chapter, chapterTitle, updatedAt: now }
+  if (comicTitle) set.comicTitle = comicTitle
+  if (coverUrl) set.coverUrl = coverUrl
+  const id = `${user._id}:${source}:${slug}`
+  await ctx.c.readingProgress.updateOne(
+    { _id: id },
+    { $set: set, $setOnInsert: { createdAt: now, ...(comicTitle ? {} : { comicTitle: '' }), ...(coverUrl ? {} : { coverUrl: '' }) } },
+    { upsert: true }
+  )
   return { ok: true, updatedAt: now }
 }
 
