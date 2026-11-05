@@ -29,6 +29,8 @@ const slugParam = (v, name, re = SLUG) => {
 }
 
 export function registerRoutes(router, { registry, config, community = null }) {
+  // community boleh berupa objek atau fungsi getter (komunitas bisa baru tersambung setelah server jalan)
+  const cm = () => (typeof community === 'function' ? community() : community)
   const source = params => {
     if (!registry.has(params.source)) throw notFound(`Sumber "${params.source}" tidak ada`)
     return registry.get(params.source)
@@ -47,7 +49,7 @@ export function registerRoutes(router, { registry, config, community = null }) {
   if (config.playground) router.get('/playground', playground(), { raw: true, public: true })
   router.get('/privacy', legalHandler(privacyPage(config.contactEmail)), { raw: true, public: true })
   router.get('/terms', legalHandler(termsPage(config.contactEmail)), { raw: true, public: true })
-  router.get('/health', () => ({ status: 'ok', uptime: Math.round(process.uptime()), sources: registry.list().length, community: !!community }), {
+  router.get('/health', () => ({ status: 'ok', uptime: Math.round(process.uptime()), sources: registry.list().length, community: !!cm() }), {
     public: true
   })
   router.get('/api/sources', () => ({ items: registry.list() }), { ttl: 3600 })

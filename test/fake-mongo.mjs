@@ -5,6 +5,7 @@ const ops = {
   $gte: (v, arg) => v >= arg,
   $gt: (v, arg) => v > arg,
   $lt: (v, arg) => v < arg,
+  $nin: (v, arg) => !arg.some(a => eq(v, a)),
   $ne: (v, arg) => !eq(v, arg),
   $exists: (v, arg) => (v !== undefined) === arg,
   $regex: (v, arg) => typeof v === 'string' && new RegExp(arg, 'i').test(v),
@@ -99,6 +100,31 @@ class FakeCollection {
     const i = this.docs.findIndex(x => match(x, filter))
     if (i >= 0) this.docs.splice(i, 1)
     return { deletedCount: i >= 0 ? 1 : 0 }
+  }
+  // aggregate minimal: $match + $group (_id: null | '$field' | {a:'$field'}, akumulator $sum: angka | '$field')
+  aggregate(pipeline) {
+    const ref = (d, e) => (typeof e === 'string' && e.startsWith('$') ? d[e.slice(1)] : e)
+    return {
+      toArray: async () => {
+        let rows = this.docs
+        for (const stage of pipeline) {
+          if (stage.$match) rows = rows.filter(d => match(d, stage.$match))
+          else if (stage.$group) {
+            const { _id, ...acc } = stage.$group
+            const groups = new Map()
+            for (const d of rows) {
+              const id = _id && typeof _id === 'object' ? Object.fromEntries(Object.entries(_id).map(([k, e]) => [k, ref(d, e)])) : ref(d, _id)
+              const key = JSON.stringify(id ?? null)
+              if (!groups.has(key)) groups.set(key, { _id: id ?? null, ...Object.fromEntries(Object.keys(acc).map(k => [k, 0])) })
+              const g = groups.get(key)
+              for (const [k, spec] of Object.entries(acc)) g[k] += Number(ref(d, spec.$sum)) || 0
+            }
+            rows = [...groups.values()]
+          } else throw new Error('stage aggregate tidak didukung fake')
+        }
+        return structuredClone(rows)
+      }
+    }
   }
   async countDocuments(filter = {}) {
     return this.docs.filter(d => match(d, filter)).length

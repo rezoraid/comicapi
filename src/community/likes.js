@@ -5,6 +5,15 @@ import { resolveTarget } from './comments.js'
 const clean = (v, max) => (typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, max) : '')
 
 // Like sebuah komik atau chapter. Satu dokumen per (user, target) sehingga idempotent.
+// Jumlah like per target ditahan 5 dtk di memori; langsung diperbarui oleh like/unlike yang masuk ke instance ini.
+const likeCount = async (ctx, targetKey) => {
+  const hit = ctx.stats?.likeCount.get(targetKey)
+  if (hit !== undefined) return hit
+  const n = await ctx.c.likes.countDocuments({ targetKey })
+  ctx.stats?.likeCount.set(targetKey, n)
+  return n
+}
+
 export async function setLike(ctx, user, input, hasSource, on) {
   hit(ctx.limits.like, user._id, 'Terlalu banyak like')
   const t = resolveTarget(input, hasSource)
@@ -20,14 +29,15 @@ export async function setLike(ctx, user, input, hasSource, on) {
       { upsert: true }
     )
   } else await ctx.c.likes.deleteOne({ _id })
-  return { liked: on, count: await ctx.c.likes.countDocuments({ targetKey: t.targetKey }) }
+  ctx.stats?.likeCount.delete(t.targetKey)
+  return { liked: on, count: await likeCount(ctx, t.targetKey) }
 }
 
 export async function likeStatus(ctx, viewer, input, hasSource) {
   const t = resolveTarget(input, hasSource)
   const [count, mine] = await Promise.all([
-    ctx.c.likes.countDocuments({ targetKey: t.targetKey }),
-    viewer ? ctx.c.likes.findOne({ _id: `${viewer._id}:${t.targetKey}` }, { projection: { _id: 1 } }) : null
+    likeCount(ctx, t.targetKey),
+    viewer ? ctx.c.likes.findOne({ _id: `${viewer._id}:${t.targetKey}` }) : null
   ])
   return { liked: !!mine, count }
 }

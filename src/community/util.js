@@ -7,6 +7,11 @@ export const ID = /^[0-9a-f]{24}$/
 export const ROLE_RANK = { USER: 1, PREMIUM: 1, MODERATOR: 2, OWNER: 3 }
 export const DAY = 86_400_000
 
+// Foto profil kustom disimpan sebagai data URI base64 (hingga ~400 KB) langsung di dokumen user.
+// Semua pembacaan user yang bukan untuk menyajikan foto itu WAJIB memakai proyeksi ini; kalau tidak,
+// setiap request terautentikasi / daftar komentar ikut menarik ratusan KB per user dari MongoDB.
+export const NO_BLOB = { projection: { customPicture: 0 } }
+
 export const newId = () => Date.now().toString(16).padStart(12, '0') + randomBytes(6).toString('hex')
 export const isDup = e => e?.code === 11000
 export const rank = u => ROLE_RANK[u?.role] || 0

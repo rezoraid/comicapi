@@ -20,7 +20,11 @@ export function createGoogleVerifier({ clientIds, fetchJwks = defaultFetchJwks, 
   let expires = 0
   let lastFetch = 0
 
-  const refresh = async () => {
+  let inflight = null
+  // banyak login bersamaan saat kunci kedaluwarsa → satu fetch saja, semua menunggu hasil yang sama
+  const refresh = () => (inflight ||= doRefresh().finally(() => (inflight = null)))
+
+  const doRefresh = async () => {
     lastFetch = now()
     try {
       const { keys: list, maxAge } = await fetchJwks()
@@ -32,7 +36,17 @@ export function createGoogleVerifier({ clientIds, fetchJwks = defaultFetchJwks, 
   }
 
   const keyFor = async kid => {
-    if (now() >= expires || (!keys.has(kid) && now() - lastFetch > 60_000)) await refresh()
+    const expired = now() >= expires
+    if (expired || (!keys.has(kid) && now() - lastFetch > 60_000)) {
+      try {
+        await refresh()
+      } catch (err) {
+        // Google sedang tak terjangkau tapi kunci lama masih kita punya → tetap verifikasi dengan kunci itu
+        // (kunci Google berlaku berhari-hari) dan coba lagi semenit lagi, daripada menolak semua login.
+        if (!(expired && keys.has(kid))) throw err
+        expires = now() + 60_000
+      }
+    }
     return keys.get(kid)
   }
 

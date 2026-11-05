@@ -48,17 +48,14 @@ export function clientIp(req, trustProxy) {
   return req.socket.remoteAddress || 'unknown'
 }
 
-/**
- * Fixed-window rate limiter per key (in-memory), bounded:
- * - maxKeys mencegah Map membengkak saat serangan dari banyak IP
- * - sweep periodik membersihkan window kadaluarsa
- */
-export function createRateLimiter({ max, windowMs, maxKeys = 50_000 }) {
+/** Fixed-window rate limiter per IP (in-memory). */
+export function createRateLimiter({ max, windowMs, maxKeys = 100_000 }) {
   const hits = new Map()
-  const sweep = setInterval(() => {
+  const prune = () => {
     const now = Date.now()
     for (const [k, v] of hits) if (v.reset <= now) hits.delete(k)
-  }, Math.min(windowMs, 60_000))
+  }
+  const sweep = setInterval(prune, windowMs)
   sweep.unref()
 
   return {
@@ -66,9 +63,12 @@ export function createRateLimiter({ max, windowMs, maxKeys = 50_000 }) {
       const now = Date.now()
       let h = hits.get(key)
       if (!h || h.reset <= now) {
-        // Evict oldest jika penuh (serangan IP acak)
-        if (hits.size >= maxKeys) hits.delete(hits.keys().next().value)
         h = { count: 0, reset: now + windowMs }
+        // batas memori: banjir IP/ID palsu tidak boleh membuat Map membengkak sampai OOM
+        if (!hits.has(key) && hits.size >= maxKeys) {
+          prune()
+          if (hits.size >= maxKeys) hits.delete(hits.keys().next().value)
+        }
         hits.set(key, h)
       }
       h.count++

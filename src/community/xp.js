@@ -1,4 +1,4 @@
-import { newId, isDup, sum, DAY } from './util.js'
+import { newId, isDup, sum, DAY, NO_BLOB } from './util.js'
 
 export const XP = { comment: 5, reply: 3, likeReceived: 2, chapterRead: 8 }
 export const DAILY_CAP = { post: 50, like: 20, read: 80 }
@@ -22,135 +22,67 @@ export const isQuality = text => {
   return words.length < 3 || new Set(words).size > 1
 }
 
-/** Sinkron level dari field xp yang sudah ada. Bisa terima user cached agar hemat 1 query. */
-export const syncLevel = async (ctx, userId, cached = null) => {
-  const u = cached && cached._id === userId ? cached : await ctx.c.users.findOne({ _id: userId }, { projection: { xp: 1, level: 1 } })
+// Samakan xp/level di dokumen user dengan nilai yang benar; hanya menulis kalau memang berbeda.
+const fixLevel = async (ctx, u) => {
   if (!u) return null
   const xp = Math.max(0, u.xp || 0)
   const level = levelFromXp(xp)
-  if (xp !== (u.xp || 0) || level !== (u.level || 0)) {
-    await ctx.c.users.updateOne({ _id: userId }, { $set: { xp, level } })
-  }
+  if (xp !== u.xp || level !== u.level) await ctx.c.users.updateOne({ _id: u._id }, { $set: { xp, level } })
   return { ...u, xp, level }
 }
 
-/**
- * Award XP dengan 1 aggregation untuk cap harian + insert + $inc.
- * Hindari double-fetch seluruh event seperti versi lama.
- */
+// $inc lalu baca dokumen hasilnya dalam satu round-trip (sebelumnya: updateOne + findOne terpisah).
+const incXp = async (ctx, userId, delta) =>
+  fixLevel(ctx, await ctx.c.users.findOneAndUpdate({ _id: userId }, { $inc: { xp: delta } }, { returnDocument: 'after', projection: { customPicture: 0 } }))
+
 export async function awardXp(ctx, { userId, type, refId, commentId, amount, group, fromUserId = null }) {
   const now = ctx.now()
   const since = now - DAY
   const cap = DAILY_CAP[group]
-  if (!cap || amount <= 0) return 0
-
-  // Satu aggregation: total XP group hari ini + jumlah pair dari fromUserId
-  const [agg] = await ctx.c.xpEvents
-    .aggregate([
-      { $match: { userId, group, reversed: false, createdAt: { $gte: since } } },
-      {
-        $group: {
-          _id: null,
-          total: { $sum: '$xp' },
-          fromPair: {
-            $sum: {
-              $cond: [{ $and: [{ $ne: [fromUserId, null] }, { $eq: ['$fromUserId', fromUserId] }] }, 1, 0]
-            }
-          }
-        }
-      }
-    ])
-    .toArray()
-
-  const used = agg?.total || 0
-  const pairCount = agg?.fromPair || 0
-  if (fromUserId && pairCount >= LIKE_PAIR_DAILY) return 0
-  const grant = Math.min(amount, cap - used)
+  const recent = await ctx.c.xpEvents.find({ userId, group, reversed: false, createdAt: { $gte: since } }, { projection: { xp: 1, fromUserId: 1 } }).toArray()
+  const grant = Math.min(amount, cap - sum(recent, 'xp'))
   if (grant <= 0) return 0
-
+  if (fromUserId && recent.filter(e => e.fromUserId === fromUserId).length >= LIKE_PAIR_DAILY) return 0
   const id = newId()
   try {
-    await ctx.c.xpEvents.insertOne({
-      _id: id,
-      userId,
-      type,
-      refId,
-      commentId,
-      group,
-      fromUserId,
-      xp: grant,
-      reversed: false,
-      createdAt: now
-    })
+    await ctx.c.xpEvents.insertOne({ _id: id, userId, type, refId, commentId, group, fromUserId, xp: grant, reversed: false, createdAt: now })
   } catch (e) {
     if (isDup(e)) return 0
     throw e
   }
-
-  // Race: request paralel bisa melebihi cap. Cek ulang cepat; kalau overflow, potong.
-  const [after] = await ctx.c.xpEvents
-    .aggregate([
-      { $match: { userId, group, reversed: false, createdAt: { $gte: since } } },
-      {
-        $group: {
-          _id: null,
-          total: { $sum: '$xp' },
-          fromPair: {
-            $sum: {
-              $cond: [{ $and: [{ $ne: [fromUserId, null] }, { $eq: ['$fromUserId', fromUserId] }] }, 1, 0]
-            }
-          }
-        }
-      }
-    ])
-    .toArray()
-
-  let final = grant
-  const over = (after?.total || 0) - cap
-  if (over > 0) final = Math.max(0, grant - over)
-  if (fromUserId && (after?.fromPair || 0) > LIKE_PAIR_DAILY) final = 0
-
+  const rows = await ctx.c.xpEvents.find({ userId, group, reversed: false, createdAt: { $gte: since } }, { projection: { xp: 1, fromUserId: 1 } }).toArray()
+  let final = Math.max(0, Math.min(grant, grant - (sum(rows, 'xp') - cap)))
+  if (fromUserId && rows.filter(e => e.fromUserId === fromUserId).length > LIKE_PAIR_DAILY) final = 0
   if (final !== grant) {
     if (final <= 0) await ctx.c.xpEvents.deleteOne({ _id: id })
     else await ctx.c.xpEvents.updateOne({ _id: id }, { $set: { xp: final } })
   }
   if (final <= 0) return 0
-
-  await ctx.c.users.updateOne({ _id: userId }, { $inc: { xp: final } })
-  // Level dihitung lazy di syncLevel /me; hindari find+update ekstra di path like/comment.
-  // Tetap sync di sini agar response yang butuh level tetap akurat.
-  await syncLevel(ctx, userId)
+  await incXp(ctx, userId, final)
   return final
 }
 
 export async function reverseXp(ctx, commentId, group = null) {
-  const filter = { commentId, reversed: false, ...(group ? { group } : {}) }
-  const events = await ctx.c.xpEvents.find(filter, { projection: { userId: 1, xp: 1 } }).toArray()
-  if (!events.length) return
-
-  const ids = events.map(e => e._id)
-  const r = await ctx.c.xpEvents.updateMany({ _id: { $in: ids }, reversed: false }, { $set: { reversed: true } })
-  if (r.modifiedCount === 0) return
-
+  const events = await ctx.c.xpEvents.find({ commentId, reversed: false, ...(group ? { group } : {}) }).toArray()
   const byUser = new Map()
-  for (const e of events) byUser.set(e.userId, (byUser.get(e.userId) || 0) + (e.xp || 0))
-
-  await Promise.all(
-    [...byUser.entries()].map(async ([userId, total]) => {
-      await ctx.c.users.updateOne({ _id: userId }, { $inc: { xp: -total } })
-      await syncLevel(ctx, userId)
-    })
-  )
+  for (const e of events) {
+    const r = await ctx.c.xpEvents.updateOne({ _id: e._id, reversed: false }, { $set: { reversed: true } })
+    if (r.modifiedCount === 1) byUser.set(e.userId, (byUser.get(e.userId) || 0) + e.xp)
+  }
+  for (const [userId, total] of byUser) {
+    await incXp(ctx, userId, -total)
+  }
 }
 
-/** Rekonsiliasi penuh: jumlah ulang semua event non-reversed. Mahal — panggil jarang. */
+// Total XP dihitung di database ($sum, terlayani indeks userId+reversed+xp) — bukan dengan menarik semua event ke Node.
 export async function reconcileXp(ctx, userId) {
-  const [agg] = await ctx.c.xpEvents
-    .aggregate([{ $match: { userId, reversed: false } }, { $group: { _id: null, total: { $sum: '$xp' } } }])
-    .toArray()
-  const total = Math.max(0, agg?.total || 0)
-  const u = await ctx.c.users.findOne({ _id: userId }, { projection: { xp: 1, level: 1 } })
+  const [rows, u] = await Promise.all([
+    ctx.c.xpEvents.aggregate([{ $match: { userId, reversed: false } }, { $group: { _id: null, total: { $sum: '$xp' } } }]).toArray(),
+    ctx.c.users.findOne({ _id: userId }, NO_BLOB)
+  ])
   if (!u) return null
-  if ((u.xp || 0) !== total) await ctx.c.users.updateOne({ _id: userId }, { $set: { xp: total } })
-  return syncLevel(ctx, userId, { ...u, xp: total })
+  const xp = Math.max(0, rows[0]?.total || 0)
+  const level = levelFromXp(xp)
+  if (xp !== u.xp || level !== u.level) await ctx.c.users.updateOne({ _id: userId }, { $set: { xp, level } })
+  return { ...u, xp, level }
 }

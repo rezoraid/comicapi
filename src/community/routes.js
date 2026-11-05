@@ -12,9 +12,12 @@ const P = '/api/community'
 
 export function registerCommunityRoutes(router, { registry, community }) {
   const hasSource = id => registry.has(id)
+  // community boleh berupa objek atau fungsi getter (koneksi MongoDB bisa tersambung belakangan, dengan retry)
+  const current = () => (typeof community === 'function' ? community() : community)
   const guard = fn => ctx => {
-    if (!community) throw new HttpError(503, 'COMMUNITY_DISABLED', 'Fitur komunitas belum diaktifkan di server')
-    return fn(community, ctx)
+    const cm = current()
+    if (!cm) throw new HttpError(503, 'COMMUNITY_DISABLED', 'Fitur komunitas belum diaktifkan di server')
+    return fn(cm, ctx)
   }
   const authed = fn => guard(async (cm, ctx) => fn(cm, ctx, await authenticate(cm, ctx.req)))
   const maybe = fn => guard(async (cm, ctx) => fn(cm, ctx, await authenticate(cm, ctx.req, { optional: true })))
@@ -29,8 +32,9 @@ export function registerCommunityRoutes(router, { registry, community }) {
   router.put(`${P}/me/avatar`, authed((cm, { body }, user) => updateAvatar(cm, user, body)))
   router.delete(`${P}/me`, authed((cm, ctx, user) => deleteAccount(cm, user)))
   router.get(`${P}/users/:id/avatar`, async ({ params, res }) => {
-    if (!community) throw new HttpError(503, 'COMMUNITY_DISABLED', 'Fitur komunitas belum diaktifkan di server')
-    const user = await community.c.users.findOne({ _id: params.id })
+    const cm = current()
+    if (!cm) throw new HttpError(503, 'COMMUNITY_DISABLED', 'Fitur komunitas belum diaktifkan di server')
+    const user = await cm.c.users.findOne({ _id: params.id }, { projection: { customPicture: 1 } })
     if (!user?.customPicture) throw new HttpError(404, 'AVATAR_NOT_FOUND', 'Foto profil tidak ditemukan')
     const match = /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/]+=*)$/.exec(user.customPicture)
     if (!match) throw new HttpError(404, 'AVATAR_NOT_FOUND', 'Foto profil tidak valid')

@@ -1,8 +1,7 @@
 import { badRequest, notFound, forbidden, conflict } from '../lib/errors.js'
-import { newId, isDup, rank, hit, idParam, bodyText, bodyHash, SLUG, CHAPTER, DAY } from './util.js'
+import { newId, isDup, rank, hit, idParam, bodyText, bodyHash, SLUG, CHAPTER, DAY, NO_BLOB } from './util.js'
 import { publicUser } from './users.js'
 import { XP, LIKER_MIN_AGE_MS, awardXp, reverseXp, isQuality } from './xp.js'
-import { USER_LIGHT } from './db.js'
 
 export const REPORT_REASONS = ['spam', 'abuse', 'hate', 'spoiler', 'other']
 
@@ -19,14 +18,12 @@ const canDeleteComment = (viewer, comment, author) =>
   !!viewer && !comment.deleted && (viewer._id === comment.userId || rank(viewer) === 3 || (rank(viewer) === 2 && rank(author) < 2))
 
 const hydrate = async (ctx, viewer, docs) => {
-  if (!docs.length) return []
   const ids = new Set()
   docs.forEach(d => (ids.add(d.userId), d.replyToUserId && ids.add(d.replyToUserId)))
-  const userIds = [...ids]
-  // Parallel: users (tanpa base64 avatar) + likes viewer
+  // pengguna & like milik viewer saling lepas → ambil paralel; user dibaca TANPA foto base64-nya
   const [users, likes] = await Promise.all([
-    userIds.length ? ctx.c.users.find({ _id: { $in: userIds } }, { projection: USER_LIGHT }).toArray() : [],
-    viewer ? ctx.c.commentLikes.find({ userId: viewer._id, commentId: { $in: docs.map(d => d._id) } }, { projection: { commentId: 1 } }).toArray() : []
+    ids.size ? ctx.c.users.find({ _id: { $in: [...ids] } }, NO_BLOB).toArray() : [],
+    viewer && docs.length ? ctx.c.commentLikes.find({ userId: viewer._id, commentId: { $in: docs.map(d => d._id) } }, { projection: { commentId: 1 } }).toArray() : []
   ])
   const byId = new Map(users.map(u => [u._id, u]))
   const liked = new Set(likes.map(l => l.commentId))
@@ -59,11 +56,26 @@ const page = async (ctx, viewer, filter, sort, pageNo, limit) => {
   return { items: await hydrate(ctx, viewer, rows.slice(0, limit)), hasMore: rows.length > limit, page: pageNo }
 }
 
+// Total komentar per target (COUNT) ditahan 5 dtk; dibuang saat ada komentar baru/terhapus di instance ini.
+const commentTotal = async (ctx, targetKey) => {
+  const hit = ctx.stats?.commentTotal.get(targetKey)
+  if (hit !== undefined) return hit
+  const n = await ctx.c.comments.countDocuments({ targetKey, deleted: false })
+  ctx.stats?.commentTotal.set(targetKey, n)
+  return n
+}
+
+const touchTarget = (ctx, d) => {
+  if (!ctx.stats) return
+  ctx.stats.commentTotal.delete(d.targetKey)
+  ctx.stats.chapterCounts.delete(`${d.source}:${d.slug}`)
+}
+
 export async function listComments(ctx, viewer, target, { sort = 'newest', page: pageNo = 1, limit = 15 }) {
   const order = sort === 'top' ? { likeCount: -1, _id: -1 } : { _id: -1 }
   const [res, total] = await Promise.all([
     page(ctx, viewer, { targetKey: target.targetKey, parentId: null, listed: true }, order, pageNo, limit),
-    ctx.c.comments.countDocuments({ targetKey: target.targetKey, deleted: false })
+    commentTotal(ctx, target.targetKey)
   ])
   return { ...res, total }
 }
@@ -109,6 +121,7 @@ export async function createComment(ctx, user, input, hasSource) {
     createdAt: now
   }
   await ctx.c.comments.insertOne(doc)
+  touchTarget(ctx, doc)
   if (root) await ctx.c.comments.updateOne({ _id: root._id }, { $inc: { replyCount: 1 }, $set: { listed: true } })
   let xpGained = 0
   let xpReason = null
@@ -124,10 +137,7 @@ export async function createComment(ctx, user, input, hasSource) {
     })
     if (xpGained <= 0) xpReason = 'DAILY_CAP'
   }
-  const fresh =
-    xpGained > 0
-      ? (await ctx.c.users.findOne({ _id: user._id }, { projection: USER_LIGHT })) || user
-      : user
+  const fresh = await ctx.c.users.findOne({ _id: user._id }, NO_BLOB)
   const [comment] = await hydrate(ctx, fresh, [doc])
   return { comment, xpGained, xpReason, user: publicUser(fresh, true) }
 }
@@ -154,7 +164,7 @@ export async function removeComment(ctx, actor, id) {
   const c = await ctx.c.comments.findOne({ _id: idParam(id) })
   if (!c) throw notFound('Komentar tidak ditemukan')
   if (c.deleted) return { ok: true }
-  const author = await ctx.c.users.findOne({ _id: c.userId })
+  const author = await ctx.c.users.findOne({ _id: c.userId }, NO_BLOB)
   if (!canDeleteComment(actor, c, author || { role: 'USER' })) throw forbidden('Kamu tidak boleh menghapus komentar ini')
   await deleteDoc(ctx, c, actor._id)
   return { ok: true }
@@ -166,6 +176,7 @@ export async function deleteDoc(ctx, c, byId) {
     { $set: { deleted: true, deletedAt: ctx.now(), deletedBy: byId, body: '', listed: c.parentId ? false : c.replyCount > 0 } }
   )
   if (r.modifiedCount !== 1) return
+  touchTarget(ctx, c)
   if (c.parentId) {
     await ctx.c.comments.updateOne({ _id: c.parentId }, { $inc: { replyCount: -1 } })
     const root = await ctx.c.comments.findOne({ _id: c.parentId })
@@ -176,17 +187,14 @@ export async function deleteDoc(ctx, c, byId) {
 
 export async function likeComment(ctx, user, id, on) {
   hit(ctx.limits.like, user._id, 'Terlalu banyak like')
-  const c = await ctx.c.comments.findOne({ _id: idParam(id), deleted: false }, { projection: { userId: 1, likeCount: 1 } })
+  const c = await ctx.c.comments.findOne({ _id: idParam(id), deleted: false })
   if (!c) throw notFound('Komentar tidak ditemukan')
-  let likeCount = c.likeCount || 0
   if (on) {
     try {
       await ctx.c.commentLikes.insertOne({ _id: newId(), commentId: c._id, userId: user._id, createdAt: ctx.now() })
       await ctx.c.comments.updateOne({ _id: c._id }, { $inc: { likeCount: 1 } })
-      likeCount += 1
-      // XP like_received: fire-and-forget agar response like tetap cepat
       if (c.userId !== user._id && ctx.now() - user.createdAt >= LIKER_MIN_AGE_MS) {
-        awardXp(ctx, {
+        await awardXp(ctx, {
           userId: c.userId,
           type: 'like_received',
           refId: `${c._id}:${user._id}`,
@@ -194,19 +202,17 @@ export async function likeComment(ctx, user, id, on) {
           amount: XP.likeReceived,
           group: 'like',
           fromUserId: user._id
-        }).catch(() => {})
+        })
       }
     } catch (e) {
       if (!isDup(e)) throw e
     }
   } else {
     const r = await ctx.c.commentLikes.deleteOne({ commentId: c._id, userId: user._id })
-    if (r.deletedCount === 1) {
-      await ctx.c.comments.updateOne({ _id: c._id }, { $inc: { likeCount: -1 } })
-      likeCount = Math.max(0, likeCount - 1)
-    }
+    if (r.deletedCount === 1) await ctx.c.comments.updateOne({ _id: c._id }, { $inc: { likeCount: -1 } })
   }
-  return { liked: on, likeCount: Math.max(0, likeCount) }
+  const fresh = await ctx.c.comments.findOne({ _id: c._id }, { projection: { likeCount: 1 } })
+  return { liked: on, likeCount: Math.max(0, fresh.likeCount) }
 }
 
 export async function reportComment(ctx, user, id, input) {
@@ -226,27 +232,20 @@ export async function reportComment(ctx, user, id, input) {
   return { ok: true }
 }
 
-export async function chapterCounts(ctx, source, slug) {
-  const cache = (ctx.countCache ||= new Map())
+// Jumlah komentar per chapter dihitung di database ($group) — bukan dengan menarik semua dokumen komentar ke Node.
+// Hasilnya (bahkan yang masih berjalan) di-cache 15 dtk per komik, jadi lonjakan request tidak menggandakan query.
+export function chapterCounts(ctx, source, slug) {
   const key = `${source}:${slug}`
-  const now = ctx.now()
-  const cached = cache.get(key)
-  if (cached && now - cached.t < 15_000) return cached.v
-  // Aggregation di server jauh lebih ringan daripada load semua dokumen chapter.
-  const rows = await ctx.c.comments
+  const cached = ctx.stats.chapterCounts.get(key)
+  if (cached) return cached
+  const p = ctx.c.comments
     .aggregate([
       { $match: { type: 'chapter', source, slug, deleted: false } },
       { $group: { _id: '$chapter', n: { $sum: 1 } } }
     ])
     .toArray()
-  const counts = {}
-  for (const r of rows) counts[r._id] = r.n
-  const v = { counts }
-  cache.set(key, { t: now, v })
-  if (cache.size > 500) {
-    // Hapus entry tertua (Map insertion order)
-    const first = cache.keys().next().value
-    if (first !== undefined) cache.delete(first)
-  }
-  return v
+    .then(rows => ({ counts: Object.fromEntries(rows.map(r => [r._id, r.n])) }))
+  ctx.stats.chapterCounts.set(key, p)
+  p.catch(() => ctx.stats.chapterCounts.delete(key)) // gagal jangan di-cache
+  return p
 }

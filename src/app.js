@@ -1,5 +1,5 @@
 import { Router } from './http/router.js'
-import { encode, send, sendError } from './http/respond.js'
+import { encode, send, sendError, acceptsGzip } from './http/respond.js'
 import { applyCors, isAuthorized, clientIp, createRateLimiter, readJson } from './http/middleware.js'
 import { HttpError, badRequest, notFound, toHttpError } from './lib/errors.js'
 import { withTimeout } from './lib/timeout.js'
@@ -14,28 +14,31 @@ function cacheKey(url) {
 }
 
 export function createApp({ registry, config, logger = console, community = null }) {
-  const cache = new TtlCache({ max: config.cacheMax })
+  const cache = new TtlCache({
+    max: config.cacheMax,
+    maxBytes: (config.cacheMaxMb ?? 96) * 1024 * 1024,
+    onError: (key, err) => {
+      if (!(err?.status >= 400 && err.status < 500)) logger.error(`[cache] refresh gagal ${key} → ${err?.message || err}`)
+    }
+  })
   const router = new Router()
   registerCommunityRoutes(router, { registry, community })
   registerRoutes(router, { registry, config, community })
 
   const limiters = {
-    default: createRateLimiter({ ...config.rateLimit, maxKeys: 80_000 }),
-    image: createRateLimiter({ ...config.imageRateLimit, maxKeys: 80_000 })
+    default: createRateLimiter(config.rateLimit),
+    image: createRateLimiter(config.imageRateLimit)
   }
-
-  // Sampling log: di traffic tinggi jangan log 100% request (I/O sinkron bisa jadi bottleneck).
-  const logEvery = Math.max(1, parseInt(process.env.LOG_SAMPLE || '1', 10) || 1)
-  let logCounter = 0
 
   async function handler(req, res) {
     const started = Date.now()
     const path = req.url
-    if (config.logRequests && path !== '/health') {
-      const n = ++logCounter
-      if (n % logEvery === 0) {
-        res.on('finish', () => logger.log(`${req.method} ${path} ${res.statusCode} ${Date.now() - started}ms`))
-      }
+    const logMode = config.logRequests === true ? 'all' : config.logRequests || 'off'
+    if (logMode !== 'off' && path !== '/health') {
+      res.on('finish', () => {
+        const ms = Date.now() - started
+        if (logMode === 'all' || res.statusCode >= 400 || ms >= (config.slowRequestMs ?? 1000)) logger.log(`${req.method} ${path} ${res.statusCode} ${ms}ms`)
+      })
     }
 
     try {
@@ -70,14 +73,15 @@ export function createApp({ registry, config, logger = console, community = null
       if (route.body) ctx.body = await readJson(req, url.pathname.endsWith('/me/avatar') ? 512 * 1024 : 16_384)
       if (route.raw) return await route.handler(ctx)
 
-      const run = async () =>
-        encode({ ok: true, data: await withTimeout(Promise.resolve(route.handler(ctx)), config.requestTimeoutMs) })
+      const data = () => withTimeout(Promise.resolve(route.handler(ctx)), config.requestTimeoutMs)
 
       if (route.ttl > 0) {
-        const { value, state } = await cache.remember(cacheKey(url), route.ttl * 1000, run)
+        // di-cache: dikompres sekali (level tinggi) lalu dipakai ulang oleh semua request berikutnya
+        const { value, state } = await cache.remember(cacheKey(url), route.ttl * 1000, async () => encode({ ok: true, data: await data() }))
         return send(req, res, value, { cacheSeconds: route.ttl, cacheState: state })
       }
-      return send(req, res, await run())
+      // dinamis: kompres hanya kalau klien meminta, level ringan
+      return send(req, res, await encode({ ok: true, data: await data() }, { gzip: acceptsGzip(req), level: 4 }))
     } catch (err) {
       const e = toHttpError(err)
       if (e.status >= 500) logger.error(`[${e.code}] ${path} → ${err?.message || err}`)

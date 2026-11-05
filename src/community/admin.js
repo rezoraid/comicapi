@@ -1,6 +1,6 @@
 import { badRequest, forbidden, notFound } from '../lib/errors.js'
-import { rank, idParam, qstr, qint, newId, DAY } from './util.js'
-import { publicUser } from './users.js'
+import { rank, idParam, qstr, qint, newId, DAY, NO_BLOB } from './util.js'
+import { publicUser, hasAvatar } from './users.js'
 import { deleteDoc } from './comments.js'
 import { reconcileXp } from './xp.js'
 import { chaptersRead } from './stats.js'
@@ -16,7 +16,7 @@ export async function listReports(ctx, actor, { status = 'open', page = 1, limit
   const reports = rows.slice(0, limit)
   const comments = reports.length ? await ctx.c.comments.find({ _id: { $in: reports.map(r => r.commentId) } }).toArray() : []
   const userIds = [...new Set([...reports.map(r => r.reporterId), ...comments.map(c => c.userId)])]
-  const users = userIds.length ? await ctx.c.users.find({ _id: { $in: userIds } }).toArray() : []
+  const users = userIds.length ? await ctx.c.users.find({ _id: { $in: userIds } }, NO_BLOB).toArray() : []
   const cById = new Map(comments.map(c => [c._id, c]))
   const uById = new Map(users.map(u => [u._id, u]))
   return {
@@ -47,7 +47,7 @@ export async function resolveReport(ctx, actor, id, action) {
   if (action === 'delete') {
     const c = await ctx.c.comments.findOne({ _id: report.commentId })
     if (c && !c.deleted) {
-      const author = await ctx.c.users.findOne({ _id: c.userId })
+      const author = await ctx.c.users.findOne({ _id: c.userId }, NO_BLOB)
       if (rank(actor) < 3 && rank(author) >= rank(actor)) throw forbidden('Kamu tidak boleh menghapus komentar pengguna dengan role ini')
       await deleteDoc(ctx, c, actor._id)
     }
@@ -61,7 +61,7 @@ export async function findUser(ctx, actor, query) {
   needMod(actor)
   const username = qstr(query, 'username', 20).toLowerCase()
   if (!username) throw badRequest('Parameter "username" wajib diisi')
-  const u = await ctx.c.users.findOne({ username })
+  const u = await ctx.c.users.findOne({ username }, NO_BLOB)
   if (!u) throw notFound('Pengguna tidak ditemukan')
   return { user: { ...publicUser(u), email: u.email, banned: !!u.banned } }
 }
@@ -71,11 +71,10 @@ export async function setRole(ctx, actor, id, role) {
   const uid = idParam(id)
   if (uid === actor._id) throw forbidden('Tidak bisa mengubah role sendiri')
   if (!['MODERATOR', 'PREMIUM', 'USER'].includes(role)) throw badRequest('Role yang bisa diberikan: MODERATOR, PREMIUM, USER')
-  const target = await ctx.c.users.findOne({ _id: uid })
+  const target = await ctx.c.users.findOne({ _id: uid }, NO_BLOB)
   if (!target) throw notFound('Pengguna tidak ditemukan')
   if (target.role === 'OWNER') throw forbidden('Role OWNER tidak bisa diubah lewat API')
   await ctx.c.users.updateOne({ _id: uid }, { $set: { role, roleManual: true } })
-  ctx.invalidateUser?.(uid)
   return { user: publicUser({ ...target, role }) }
 }
 
@@ -84,11 +83,10 @@ export async function setVerified(ctx, actor, id, verified) {
   needOwner(actor)
   if (typeof verified !== 'boolean') throw badRequest('"verified" harus true atau false')
   const uid = idParam(id)
-  const target = await ctx.c.users.findOne({ _id: uid })
+  const target = await ctx.c.users.findOne({ _id: uid }, NO_BLOB)
   if (!target) throw notFound('Pengguna tidak ditemukan')
   if (target.role === 'OWNER') throw forbidden('OWNER selalu terverifikasi')
   await ctx.c.users.updateOne({ _id: uid }, { $set: { verified } })
-  ctx.invalidateUser?.(uid)
   return { user: publicUser({ ...target, verified }) }
 }
 
@@ -97,11 +95,10 @@ export async function setBan(ctx, actor, id, banned) {
   const uid = idParam(id)
   if (typeof banned !== 'boolean') throw badRequest('"banned" harus true atau false')
   if (uid === actor._id) throw forbidden('Tidak bisa memblokir diri sendiri')
-  const target = await ctx.c.users.findOne({ _id: uid })
+  const target = await ctx.c.users.findOne({ _id: uid }, NO_BLOB)
   if (!target) throw notFound('Pengguna tidak ditemukan')
   if (rank(target) >= rank(actor)) throw forbidden('Kamu tidak boleh memblokir pengguna dengan role ini')
   await ctx.c.users.updateOne({ _id: uid }, { $set: { banned } })
-  ctx.invalidateUser?.(uid)
   return { ok: true, banned }
 }
 
@@ -112,7 +109,7 @@ const needOwner = u => {
 // Ringkasan akun untuk panel OWNER. Semua angka dihitung dari data server.
 export async function userDetail(ctx, actor, id) {
   needOwner(actor)
-  const u = await ctx.c.users.findOne({ _id: idParam(id) })
+  const u = await ctx.c.users.findOne({ _id: idParam(id) }, NO_BLOB)
   if (!u) throw notFound('Pengguna tidak ditemukan')
   const commentCount = await ctx.c.comments.countDocuments({ userId: u._id, deleted: false })
   return {
@@ -123,7 +120,7 @@ export async function userDetail(ctx, actor, id) {
       commentCount,
       chaptersRead: await chaptersRead(ctx, u._id),
       lastLoginAt: u.lastLoginAt || 0,
-      hasAvatar: !!(u.customPicture || u.hasCustomPicture)
+      hasAvatar: hasAvatar(u)
     }
   }
 }
@@ -135,7 +132,7 @@ export async function grantXp(ctx, actor, id, amount) {
   needOwner(actor)
   if (!Number.isInteger(amount) || amount === 0 || Math.abs(amount) > MAX_GRANT) throw badRequest(`"amount" harus bilangan bulat bukan nol, maksimal ±${MAX_GRANT}`)
   const uid = idParam(id)
-  const target = await ctx.c.users.findOne({ _id: uid })
+  const target = await ctx.c.users.findOne({ _id: uid }, NO_BLOB)
   if (!target) throw notFound('Pengguna tidak ditemukan')
   await ctx.c.xpEvents.insertOne({ _id: newId(), userId: uid, type: 'admin', refId: newId(), group: 'admin', fromUserId: actor._id, xp: amount, reversed: false, createdAt: ctx.now() })
   const synced = await reconcileXp(ctx, uid)
@@ -146,17 +143,13 @@ export async function grantXp(ctx, actor, id, amount) {
 export async function resetMedia(ctx, actor, id, input) {
   needMod(actor)
   const uid = idParam(id)
-  const target = await ctx.c.users.findOne({ _id: uid })
+  const target = await ctx.c.users.findOne({ _id: uid }, NO_BLOB)
   if (!target) throw notFound('Pengguna tidak ditemukan')
   if (uid !== actor._id && rank(actor) < 3 && rank(target) >= rank(actor)) throw forbidden('Kamu tidak boleh mengubah akun dengan role ini')
   const set = {}
-  if (input?.avatar === true) {
-    set.customPicture = ''
-    set.hasCustomPicture = false
-  }
+  if (input?.avatar === true) Object.assign(set, { customPicture: '', hasAvatar: false })
   if (!Object.keys(set).length) throw badRequest('Pilih "avatar"')
   await ctx.c.users.updateOne({ _id: uid }, { $set: set })
-  ctx.invalidateUser?.(uid)
   return { ok: true }
 }
 
@@ -205,21 +198,14 @@ export async function listUsers(ctx, actor, query) {
   if (flag(query, 'verified')) filter.$or = search.flatMap(s => [{ ...s, verified: true }, { ...s, role: 'OWNER' }])
   else if (q) filter.$or = search
   const [rows, total] = await Promise.all([
-    ctx.c.users
-      .find(filter, {
-        projection: { customPicture: 0 },
-        sort: { createdAt: -1, _id: -1 },
-        skip: (page - 1) * PAGE_SIZE,
-        limit: PAGE_SIZE + 1
-      })
-      .toArray(),
+    ctx.c.users.find(filter, { sort: { createdAt: -1, _id: -1 }, skip: (page - 1) * PAGE_SIZE, limit: PAGE_SIZE + 1, projection: { customPicture: 0 } }).toArray(),
     ctx.c.users.countDocuments(filter)
   ])
   return {
     page,
     total,
     hasMore: rows.length > PAGE_SIZE,
-    items: rows.slice(0, PAGE_SIZE).map(u => ({ ...publicUser(u, true), banned: !!u.banned, hasAvatar: !!u.customPicture, lastLoginAt: u.lastLoginAt || 0 }))
+    items: rows.slice(0, PAGE_SIZE).map(u => ({ ...publicUser(u, true), banned: !!u.banned, hasAvatar: hasAvatar(u), lastLoginAt: u.lastLoginAt || 0 }))
   }
 }
 
@@ -231,7 +217,7 @@ export async function listAdminComments(ctx, actor, query) {
   const filter = {}
   if (flag(query, 'reported')) filter.reportCount = { $gt: 0 }
   if (q) {
-    const authors = await ctx.c.users.find({ $or: [{ username: like(q) }, { name: like(q) }] }, { limit: 50 }).toArray()
+    const authors = await ctx.c.users.find({ $or: [{ username: like(q) }, { name: like(q) }] }, { limit: 50, projection: { _id: 1 } }).toArray()
     filter.$or = [{ body: like(q) }, ...(authors.length ? [{ userId: { $in: authors.map(a => a._id) } }] : [])]
   }
   const [rows, total] = await Promise.all([
@@ -240,7 +226,7 @@ export async function listAdminComments(ctx, actor, query) {
   ])
   const items = rows.slice(0, PAGE_SIZE)
   const ids = [...new Set(items.map(c => c.userId))]
-  const users = ids.length ? await ctx.c.users.find({ _id: { $in: ids } }).toArray() : []
+  const users = ids.length ? await ctx.c.users.find({ _id: { $in: ids } }, NO_BLOB).toArray() : []
   const byId = new Map(users.map(u => [u._id, u]))
   return {
     page,

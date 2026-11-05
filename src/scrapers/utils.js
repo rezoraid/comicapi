@@ -1,23 +1,5 @@
 import net from 'node:net'
 
-/** Batasi outbound HTTP global agar ribuan user concurrent tidak menenggelamkan sumber/scraper. */
-const MAX_OUTBOUND = Math.max(20, parseInt(process.env.SCRAPER_CONCURRENCY || '80', 10) || 80)
-let outboundActive = 0
-const outboundWait = []
-function acquireOutbound() {
-  if (outboundActive < MAX_OUTBOUND) {
-    outboundActive++
-    return Promise.resolve()
-  }
-  return new Promise(resolve => outboundWait.push(resolve))
-}
-function releaseOutbound() {
-  const next = outboundWait.shift()
-  if (next) next()
-  else outboundActive = Math.max(0, outboundActive - 1)
-}
-
-
 export const UA =
   'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36'
 
@@ -74,24 +56,19 @@ export function createHttp({
     template.includes('{url}') ? template.replace('{url}', encodeURIComponent(url)) : template + encodeURIComponent(url)
 
   async function request(url, json, ms = timeout) {
-    await acquireOutbound()
-    try {
-      const res = await fetch(url, {
-        headers: {
-          accept: json ? 'application/json, text/plain, */*' : 'text/html,application/xhtml+xml,*/*',
-          ...baseHeaders
-        },
-        signal: AbortSignal.timeout(ms)
-      })
-      if (!res.ok) {
-        const err = new Error(`HTTP ${res.status}`)
-        err.status = res.status
-        throw err
-      }
-      return json ? await res.json() : await res.text()
-    } finally {
-      releaseOutbound()
+    const res = await fetch(url, {
+      headers: {
+        accept: json ? 'application/json, text/plain, */*' : 'text/html,application/xhtml+xml,*/*',
+        ...baseHeaders
+      },
+      signal: AbortSignal.timeout(ms)
+    })
+    if (!res.ok) {
+      const err = new Error(`HTTP ${res.status}`)
+      err.status = res.status
+      throw err
     }
+    return json ? await res.json() : await res.text()
   }
 
   async function withRetry(url, json) {
