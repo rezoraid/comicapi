@@ -17,28 +17,15 @@ const METHODS = ['search', 'latest', 'popular', 'browse', 'genres', 'detail', 'c
 
 const providers = new Map()
 
-function normalizeId(id) {
-  return String(id ?? '')
-    .trim()
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[\s_]+/g, '-')
-}
-
 export function register(p) {
-  const id = normalizeId(p?.id)
-  if (!id) throw new TypeError('Scraper wajib memiliki id')
-  // Simpan dengan ID kanonis agar pencarian sumber tidak sensitif huruf besar/kecil.
-  providers.set(id, { ...p, id })
+  providers.set(p.id, p)
 }
 PROVIDERS.forEach(register)
 
-export const has = id => providers.has(normalizeId(id))
+export const has = id => providers.has(id)
 
 export function get(id) {
-  const key = normalizeId(id)
-  const p = providers.get(key)
+  const p = providers.get(id)
   if (!p) throw new Error(`Scraper "${id}" tidak ditemukan`)
   return p
 }

@@ -4,25 +4,12 @@ import { createHash } from 'node:crypto'
 
 const gzip = promisify(gzipCb)
 
-/**
- * Serialisasi sekali (+ gzip + ETag).
- * Respons yang di-cache: gzip level tinggi sekali jalan lalu dipakai ulang.
- * Respons dinamis: gzip hanya kalau klien mau (gzip: false → lewati), level ringan supaya CPU hemat.
- */
-export async function encode(payload, { gzip: wantGzip = true, level = 6 } = {}) {
+/** Serialisasi sekali (+ gzip + ETag) lalu simpan di cache → request berikutnya nol kerja. */
+export async function encode(payload) {
   const body = Buffer.from(JSON.stringify(payload))
   const etag = `"${createHash('md5').update(body).digest('base64url').slice(0, 22)}"`
-  const gzipped = wantGzip && body.length > 1024 ? await gzip(body, { level }) : null
+  const gzipped = body.length > 1024 ? await gzip(body) : null
   return { body, gzipped, etag }
-}
-
-export const acceptsGzip = req => /\bgzip\b/.test(req.headers['accept-encoding'] || '')
-
-/** If-None-Match boleh berisi beberapa ETag dan/atau prefix W/ (CDN & proxy sering menambahkannya). */
-export function etagMatches(header, etag) {
-  if (!header) return false
-  if (header === '*') return true
-  return header.split(',').some(t => t.trim().replace(/^W\//, '') === etag)
 }
 
 export function send(req, res, entry, { status = 200, cacheSeconds = 0, cacheState } = {}) {
@@ -34,12 +21,12 @@ export function send(req, res, entry, { status = 200, cacheSeconds = 0, cacheSta
   }
   if (cacheState) headers['x-cache'] = cacheState
 
-  if (status === 200 && etagMatches(req.headers['if-none-match'], entry.etag)) {
+  if (status === 200 && req.headers['if-none-match'] === entry.etag) {
     res.writeHead(304, headers)
     return res.end()
   }
 
-  const useGzip = entry.gzipped && acceptsGzip(req)
+  const useGzip = entry.gzipped && /\bgzip\b/.test(req.headers['accept-encoding'] || '')
   const out = useGzip ? entry.gzipped : entry.body
   if (useGzip) headers['content-encoding'] = 'gzip'
   headers['content-length'] = out.length
@@ -49,6 +36,6 @@ export function send(req, res, entry, { status = 200, cacheSeconds = 0, cacheSta
 }
 
 export async function sendError(req, res, httpError) {
-  const entry = await encode({ ok: false, error: { code: httpError.code, message: httpError.message } }, { gzip: false })
+  const entry = await encode({ ok: false, error: { code: httpError.code, message: httpError.message } })
   send(req, res, entry, { status: httpError.status })
 }

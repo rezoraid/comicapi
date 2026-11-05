@@ -185,10 +185,6 @@ test('cache: stale-if-error saat sumber down', async () => {
 })
 
 test('registry asli: lumos, manta, shinigami', async () => {
-  const registry = await import('../src/scrapers/index.js')
-  assert.equal(registry.has('Lumos'), true)
-  assert.equal(registry.has('SHINIGAMI'), true)
-  assert.equal(registry.get('Lumos').id, 'lumos')
   const { default: real } = await import('../src/scrapers/index.js')
   assert.deepEqual(real.list().map(x => x.id), ['lumos', 'manta', 'shinigami'])
   assert.equal(real.has('softkomik'), false)

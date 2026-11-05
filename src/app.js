@@ -1,11 +1,10 @@
 import { Router } from './http/router.js'
-import { encode, send, sendError, acceptsGzip } from './http/respond.js'
-import { applyCors, isAuthorized, clientIp, createRateLimiter, readJson } from './http/middleware.js'
+import { encode, send, sendError } from './http/respond.js'
+import { applyCors, isAuthorized, clientIp, createRateLimiter } from './http/middleware.js'
 import { HttpError, badRequest, notFound, toHttpError } from './lib/errors.js'
 import { withTimeout } from './lib/timeout.js'
 import { TtlCache } from './lib/cache.js'
 import { registerRoutes } from './routes.js'
-import { registerCommunityRoutes } from './community/routes.js'
 
 /** Key cache: path + query yang diurutkan (?a=1&b=2 sama dengan ?b=2&a=1). */
 function cacheKey(url) {
@@ -13,17 +12,10 @@ function cacheKey(url) {
   return `${url.pathname}?${qs.join('&')}`
 }
 
-export function createApp({ registry, config, logger = console, community = null }) {
-  const cache = new TtlCache({
-    max: config.cacheMax,
-    maxBytes: (config.cacheMaxMb ?? 96) * 1024 * 1024,
-    onError: (key, err) => {
-      if (!(err?.status >= 400 && err.status < 500)) logger.error(`[cache] refresh gagal ${key} → ${err?.message || err}`)
-    }
-  })
+export function createApp({ registry, config, logger = console }) {
+  const cache = new TtlCache({ max: config.cacheMax })
   const router = new Router()
-  registerCommunityRoutes(router, { registry, community })
-  registerRoutes(router, { registry, config, community })
+  registerRoutes(router, { registry, config })
 
   const limiters = {
     default: createRateLimiter(config.rateLimit),
@@ -33,30 +25,26 @@ export function createApp({ registry, config, logger = console, community = null
   async function handler(req, res) {
     const started = Date.now()
     const path = req.url
-    const logMode = config.logRequests === true ? 'all' : config.logRequests || 'off'
-    if (logMode !== 'off' && path !== '/health') {
-      res.on('finish', () => {
-        const ms = Date.now() - started
-        if (logMode === 'all' || res.statusCode >= 400 || ms >= (config.slowRequestMs ?? 1000)) logger.log(`${req.method} ${path} ${res.statusCode} ${ms}ms`)
-      })
+    if (config.logRequests && path !== '/health') {
+      res.on('finish', () => logger.log(`${req.method} ${path} ${res.statusCode} ${Date.now() - started}ms`))
     }
 
     try {
       applyCors(res, req.headers.origin, config.corsOrigin)
-      res.setHeader('x-content-type-options', 'nosniff')
 
       if (req.method === 'OPTIONS') {
         res.writeHead(204, { 'access-control-max-age': '86400' })
         return res.end()
       }
-      const url = new URL(req.url, 'http://localhost')
-      const found = router.match(url.pathname, req.method)
-      if (!found) throw notFound('Endpoint tidak ditemukan')
-      if (found.bad) throw badRequest('Path tidak valid')
-      if (found.allowed) {
-        res.setHeader('allow', [...found.allowed, ...(found.allowed.includes('GET') ? ['HEAD'] : []), 'OPTIONS'].join(', '))
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        res.setHeader('allow', 'GET, HEAD, OPTIONS')
         throw new HttpError(405, 'METHOD_NOT_ALLOWED', 'Method tidak didukung')
       }
+
+      const url = new URL(req.url, 'http://localhost')
+      const found = router.match(url.pathname)
+      if (!found) throw notFound('Endpoint tidak ditemukan')
+      if (found.bad) throw badRequest('Path tidak valid')
       const { route, params } = found
 
       if (!route.public) {
@@ -69,19 +57,17 @@ export function createApp({ registry, config, logger = console, community = null
         }
       }
 
-      const ctx = { req, res, params, query: url.searchParams, ip: clientIp(req, config.trustProxy) }
-      if (route.body) ctx.body = await readJson(req, url.pathname.endsWith('/me/avatar') ? 512 * 1024 : 16_384)
+      const ctx = { req, res, params, query: url.searchParams }
       if (route.raw) return await route.handler(ctx)
 
-      const data = () => withTimeout(Promise.resolve(route.handler(ctx)), config.requestTimeoutMs)
+      const run = async () =>
+        encode({ ok: true, data: await withTimeout(Promise.resolve(route.handler(ctx)), config.requestTimeoutMs) })
 
       if (route.ttl > 0) {
-        // di-cache: dikompres sekali (level tinggi) lalu dipakai ulang oleh semua request berikutnya
-        const { value, state } = await cache.remember(cacheKey(url), route.ttl * 1000, async () => encode({ ok: true, data: await data() }))
+        const { value, state } = await cache.remember(cacheKey(url), route.ttl * 1000, run)
         return send(req, res, value, { cacheSeconds: route.ttl, cacheState: state })
       }
-      // dinamis: kompres hanya kalau klien meminta, level ringan
-      return send(req, res, await encode({ ok: true, data: await data() }, { gzip: acceptsGzip(req), level: 4 }))
+      return send(req, res, await run())
     } catch (err) {
       const e = toHttpError(err)
       if (e.status >= 500) logger.error(`[${e.code}] ${path} → ${err?.message || err}`)

@@ -1,6 +1,6 @@
 # comic-api
 
-Server scraper komik untuk aplikasi (APK). Sumber scraper aktif: **Lumos**, **Manta**, **Shinigami**.
+Server scraper komik untuk aplikasi (APK). Sumber: **Lumos**, **Manta**, **Shinigami**.
 Satu pintu API, semua sumber punya bentuk data yang sama — cepat, ringan, cache agresif.
 
 ## Jalankan
@@ -48,27 +48,14 @@ Kalau `API_KEY` diisi, kirim header `x-api-key`.
 | `GET /api/search?q=&limit=` | cari di **semua** sumber sekaligus (hasil `source` per item) |
 | `GET /api/:source/search?q=&limit=` | cari di satu sumber |
 | `GET /api/:source/latest?page=` | update terbaru |
-| `GET /api/:source/popular?period=&limit=` | populer (tidak semua sumber mendukung → `501`) |
+| `GET /api/:source/popular?period=&limit=` | populer (lumos: `weekly`/`monthly`/`alltime`) |
 | `GET /api/:source/browse?q=&genre=&type=&status=&sort=&min=&page=` | filter lengkap |
 | `GET /api/:source/genres` | daftar genre |
 | `GET /api/:source/comic/:slug` | detail + daftar chapter (terbaru → terlama) |
 | `GET /api/:source/chapter/:slug/:chapter` | gambar chapter + `prev`/`next` |
 | `GET /api/image?url=` | image proxy (lihat bawah) |
 
-### Profil, waktu baca, dan Likes (komunitas)
-
-| Endpoint | Fungsi |
-|---|---|
-| `GET /api/community/users/:id/profile` | statistik profil: `readMinutes`, `commentCount`, `monthsJoined`, `level`, `publicNo` (ID publik), `activityVisible` |
-| `GET /api/community/users/:id/activity?tab=all\|comments\|likes&page=&limit=` | daftar aktivitas berpaginasi. semua tab (`all`, `comments`, `likes`) selalu publik; tidak ada lagi pengaturan privasi aktivitas |
-| `PUT /api/community/me/reading-time` | `{source, slug, chapter, seconds}` waktu baca aktif. Kredit dibatasi waktu nyata sejak ping terakhir (ping pertama maks 60 dtk, per ping maks 300 dtk) |
-| `PUT /api/community/likes` | like komik/chapter: `{type, source, slug, chapter?, comicTitle?, chapterTitle?, coverUrl?}` (idempotent) |
-| `DELETE /api/community/likes?type=&source=&slug=&chapter=` | hapus like |
-| `GET /api/community/likes/status?type=&source=&slug=&chapter=` | `{liked, count}` |
-
-Koleksi baru: `likes`, `counters` (ID publik berurutan, diberikan sekali per pengguna saat pertama dibutuhkan). Menit membaca = akumulasi `users.readSeconds`; per komik tersimpan di `reading_progress.readSeconds`. Pengguna lama mulai dari 0 menit karena durasi sebelumnya memang tidak pernah dicatat.
-
-Filter per sumber ada di `/api/sources` → `filters` (mis. manta: `types`).
+Filter per sumber ada di `/api/sources` → `filters` (mis. lumos: `types`, `statuses`, `sorts`).
 
 ### Menampilkan gambar di APK
 
@@ -106,6 +93,7 @@ src/
   lib/               cache TTL, errors, timeout
   scrapers/
     index.js         registry — daftar sumber
+    lumos.js         Lumos (03.lumosgg.com)
     manta.js         Manta Comics
     shinigami.js     Shinigami
     utils.js         HTTP client (retry, cache, dedupe) + trackHost
@@ -117,7 +105,7 @@ scripts/smoke-test.mjs   tes scraper ke situs asli
 
 1. Buat `src/scrapers/namabaru.js`, export default:
    `{ id, name, base, imageHeaders, imageHosts, filters?, search, latest, popular, browse, genres, detail, chapter }`
-   (bentuk item/detail ikuti `manta.js`). Method yang tidak didukung boleh dihilangkan → endpoint jawab `501`.
+   (bentuk item/detail ikuti `lumos.js`). Method yang tidak didukung boleh dihilangkan → endpoint jawab `501`.
 2. Import dan tambahkan ke array `PROVIDERS` di `src/scrapers/index.js`.
 
 Route, cache, rate limit, pencarian gabungan, dan image proxy langsung ikut. Cek dengan `npm run smoke namabaru`.
@@ -125,8 +113,8 @@ Route, cache, rate limit, pencarian gabungan, dan image proxy langsung ikut. Cek
 
 ## Kalau muncul HTTP 403 (IP server diblokir)
 
-Sebagian situs sumber kadang menolak IP datacenter seperti Railway, dan yang diblokir bisa berganti tiap deploy.
-Scraper yang dipasang relay (`createHttp({ relay })` di `utils.js`) akan mengulang lewat relay kalau tetap 403/429/503.
+Lumos kadang menolak IP datacenter seperti Railway, dan yang diblokir bisa berganti tiap deploy.
+Alurnya: request langsung → kalau 403/429/503, diulang lewat relay.
 Relay yang berhasil diingat 10 menit, lalu dicoba langsung lagi.
 
 - **Bawaan**: dua relay publik (kurang stabil, bisa mati kapan saja). Matikan dengan `RELAY_PUBLIC=false`.
@@ -135,53 +123,3 @@ Relay yang berhasil diingat 10 menit, lalu dicoba langsung lagi.
   2. Settings → Variables → tambah `KEY` berisi kata rahasia.
   3. Railway → Variables: `RELAY_URL=https://nama-worker.workers.dev/?key=RAHASIA&url={url}`
   Beberapa relay dipisah tanda `|`. Host yang boleh diakses worker dibatasi di daftar `ALLOWED`.
-
-## Komunitas (login Google, komentar, XP)
-
-Aktif otomatis kalau `MONGODB_URI`, `GOOGLE_CLIENT_ID`, dan `AUTH_SECRET` (min. 32 karakter) terisi. Kalau salah satu kosong, fitur komunitas mati (endpoint `/api/community/*` balas `503`) dan endpoint lama tetap jalan.
-
-| Env | Keterangan |
-|---|---|
-| `MONGODB_URI`, `MONGODB_DB` | koneksi MongoDB (default db `komikta`); index dibuat otomatis saat start |
-| `GOOGLE_CLIENT_ID` | Web client ID Google (boleh beberapa, pisah koma); dipakai memeriksa `aud` ID token |
-| `AUTH_SECRET` | kunci penanda token sesi |
-| `OWNER_EMAILS` | email yang otomatis jadi OWNER saat login (dicabut dari env → turun jadi USER) |
-| `MODERATOR_EMAILS` | email yang otomatis jadi MODERATOR saat login (selama role belum diatur manual oleh OWNER) |
-
-Koleksi: `users`, `comments` (komentar + balasan, soft delete), `comment_likes`, `reports`, `xp_events`.
-
-Endpoint (header `Authorization: Bearer <token>`):
-
-| Endpoint | Keterangan |
-|---|---|
-| `POST /api/community/auth/google` `{idToken}` | tukar ID token Google dengan token sesi |
-| `GET/PATCH/DELETE /api/community/me` | profil sendiri / ganti username (1x per 7 hari) / hapus akun (komentar ikut dihapus, XP dibalik) |
-| `GET /api/community/comments?type=comic\|chapter&source=&slug=&chapter=&sort=newest\|top&page=` | daftar komentar (auth opsional) |
-| `GET /api/community/comments/:id/replies?page=` | balasan |
-| `POST /api/community/comments` | `{type,source,slug,chapter?,body}` atau `{parentId,body}` |
-| `PATCH/DELETE /api/community/comments/:id` | edit (hanya pemilik) / hapus (pemilik atau moderator) |
-| `PUT/DELETE /api/community/comments/:id/like` | like / unlike |
-| `POST /api/community/comments/:id/report` | `{reason: spam\|abuse\|hate\|spoiler\|other, note?}` |
-| `GET /api/community/admin/reports`, `POST .../admin/reports/:id/resolve {action: delete\|dismiss}` | MODERATOR/OWNER |
-| `GET /api/community/admin/users?username=`, `PUT .../admin/users/:id/ban {banned}` | MODERATOR/OWNER (MODERATOR hanya bisa ke USER dan PREMIUM) |
-| `PUT /api/community/admin/users/:id/role {role: MODERATOR\|PREMIUM\|USER}` | hanya OWNER, tidak bisa ke diri sendiri, OWNER tidak bisa diberikan lewat API |
-| `PUT /api/community/admin/users/:id/verified {verified: true\|false}` | hanya OWNER: beri/cabut centang verified. OWNER selalu `verified: true` dan tidak bisa diubah. Semua objek user kini punya field `verified` |
-| `GET /api/community/admin/stats` | hanya OWNER: ringkasan (`users`, `newUsers7d`, `active24h`, `banned`, `owners`, `moderators`, `premiums`, `comments`, `comments24h`, `openReports`, `chaptersRead`) |
-| `GET /api/community/admin/users?q=&role=&banned=1&page=` | hanya OWNER: daftar pengguna terbaru dulu, 20 per halaman. `q` mencari username/nama/email, `role` = OWNER\|MODERATOR\|PREMIUM\|USER, `verified=1` hanya akun terverifikasi. Tanpa `username` ini yang dipakai; dengan `?username=` tetap pencarian persis (MODERATOR/OWNER) |
-| `GET /api/community/admin/comments?q=&reported=1&page=` | hanya OWNER: semua komentar termasuk yang sudah dihapus, terbaru dulu. `q` mencari isi atau username/nama pembuat, `reported=1` hanya yang dilaporkan |
-
-XP: komentar +5, balasan +3, like diterima +2. Hanya komentar bermutu (min. 8 karakter, 2 kata, bukan huruf berulang), batas 50 XP/hari dari posting dan 20 XP/hari dari like, like hanya dihitung dari akun berumur > 1 jam dan maks 3 per pasangan akun per hari, komentar identik 24 jam ditolak, menghapus komentar membalikkan XP-nya. Level = `floor((1+sqrt(1+4*xp/25))/2)`, maks 100. Rate limit per pengguna ada di memori proses (cukup untuk 1 instance).
-
-Halaman publik `/privacy` (Kebijakan Privasi) dan `/terms` (Ketentuan) tersedia untuk diisi di Google OAuth consent screen dan Play Console. Isi `CONTACT_EMAIL` supaya email kontak tampil. `/health` menampilkan `community: true|false`.
-
-## Profil: chapter dibaca, level, alat OWNER
-
-- **Chapter dibaca** dihitung server, bukan klien. `PUT /me/reading-time` hanya mengkredit detik sebesar waktu nyata sejak ping terakhir (diklaim atomik). Sebuah chapter terhitung setelah ≥ 60 dtk aktif terkumpul di chapter itu, maksimal 120 chapter / 24 jam, dan tiap chapter hanya dihitung sekali. Chapter yang terhitung memberi +8 XP (batas 80 XP/hari, grup `read`).
-- **OWNER** selalu tampil `#1` dengan level `99999` (nomor lama pemegang #1 ditukar otomatis). Level pengguna lain tetap murni dari XP.
-- **Banner profil sudah dihapus total**: tidak ada endpoint maupun field `banner`. Data `customBanner` lama di database tidak dipakai lagi (boleh dibersihkan manual).
-- **Khusus OWNER**: `GET /admin/users/:id` (detail akun), `POST /admin/users/:id/xp` (`{ amount }`, ±50.000, dicatat sebagai event `admin`), `POST /admin/users/:id/reset-media` (`{ avatar }`, juga boleh MODERATOR untuk akun di bawahnya).
-- Pengguna lama mulai dari 0 chapter dibaca (riwayat lama tidak punya bukti waktu baca per chapter).
-
-## Performa & operasional
-
-Ringkasan optimasi dan variabel env baru: lihat [`OPTIMIZATION.md`](OPTIMIZATION.md).

@@ -1,18 +1,10 @@
 import { createServer } from 'node:http'
-
-try {
-  process.loadEnvFile()
-} catch {}
-
 import { loadConfig } from './config.js'
 import { createApp } from './app.js'
 import registry from './scrapers/index.js'
-import { startCommunity } from './community/lifecycle.js'
 
 const config = loadConfig()
-// MongoDB disambung di background (dengan retry) → server siap menerima request seketika, tanpa menunggu database
-const community = startCommunity(config.community)
-const app = createApp({ registry, config, community: community.get })
+const app = createApp({ registry, config })
 
 const server = createServer(app.handler)
 // lebih panjang dari idle timeout load balancer (biasanya 60s) → hindari 502 acak
@@ -29,10 +21,8 @@ function shutdown(signal) {
   console.log(`${signal} diterima, mematikan server...`)
   server.close(() => {
     app.close()
-    // stop() juga menguras antrean progres baca sebelum koneksi MongoDB ditutup
-    community.stop().catch(() => {}).finally(() => process.exit(0))
+    process.exit(0)
   })
-  server.closeIdleConnections?.()
   setTimeout(() => process.exit(1), 10_000).unref()
 }
 process.on('SIGTERM', () => shutdown('SIGTERM'))

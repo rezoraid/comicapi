@@ -1,6 +1,5 @@
 FROM node:22-alpine
-ENV NODE_ENV=production \
-    UV_THREADPOOL_SIZE=16
+ENV NODE_ENV=production
 WORKDIR /app
 
 COPY package*.json ./
