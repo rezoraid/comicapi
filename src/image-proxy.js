@@ -1,6 +1,6 @@
 import dns from 'node:dns/promises'
 import net from 'node:net'
-import { Readable } from 'node:stream'
+import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { badRequest, HttpError } from './lib/errors.js'
 
@@ -20,8 +20,12 @@ export function imageProxy(registry) {
     if (!raw) throw badRequest('Parameter "url" wajib diisi')
 
     const ac = new AbortController()
-    res.on('close', () => !res.writableEnded && ac.abort())
     const timer = setTimeout(() => ac.abort(), TIMEOUT_MS)
+    const clearTimer = () => clearTimeout(timer)
+    res.on('close', () => {
+      if (!res.writableEnded) ac.abort()
+      clearTimer()
+    })
 
     let target
     let provider
@@ -47,21 +51,25 @@ export function imageProxy(registry) {
         }
         break
       }
-    } finally {
-      clearTimeout(timer)
+    } catch (error) {
+      clearTimer()
+      throw error
     }
 
     if (!upstream.ok) {
+      clearTimer()
       upstream.body?.cancel()
       throw new HttpError(upstream.status === 404 ? 404 : 502, 'SOURCE_ERROR', `Gambar gagal diambil (HTTP ${upstream.status})`)
     }
     const type = upstream.headers.get('content-type') || ''
     if (!type.startsWith('image/')) {
+      clearTimer()
       upstream.body?.cancel()
       throw new HttpError(502, 'SOURCE_ERROR', 'Sumber tidak mengembalikan gambar')
     }
     const length = Number(upstream.headers.get('content-length')) || 0
     if (length > MAX_BYTES) {
+      clearTimer()
       upstream.body?.cancel()
       throw new HttpError(413, 'TOO_LARGE', 'Gambar terlalu besar')
     }
@@ -76,13 +84,28 @@ export function imageProxy(registry) {
     res.writeHead(200, headers)
 
     if (req.method === 'HEAD') {
+      clearTimer()
       upstream.body?.cancel()
       return res.end()
     }
+
+    // Batasi ukuran aktual juga: Content-Length dari upstream bisa tidak ada atau tidak jujur.
+    let received = 0
+    const sizeGuard = new Transform({
+      transform(chunk, _encoding, callback) {
+        received += chunk.length
+        if (received > MAX_BYTES) {
+          ac.abort()
+          callback(new Error('Gambar melebihi batas ukuran'))
+        } else callback(null, chunk)
+      }
+    })
     try {
-      await pipeline(Readable.fromWeb(upstream.body), res)
+      await pipeline(Readable.fromWeb(upstream.body), sizeGuard, res)
     } catch {
-      res.destroy() // klien putus / upstream error di tengah stream
+      res.destroy() // klien putus, timeout, atau upstream melewati batas ukuran
+    } finally {
+      clearTimer()
     }
   }
 }

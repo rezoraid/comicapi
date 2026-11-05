@@ -1,10 +1,20 @@
 import { createServer } from 'node:http'
+
+try {
+  process.loadEnvFile()
+} catch {}
+
 import { loadConfig } from './config.js'
 import { createApp } from './app.js'
+import { RedisRestCache } from './lib/redis-rest-cache.js'
 import registry from './scrapers/index.js'
+import { startCommunity } from './community/lifecycle.js'
 
 const config = loadConfig()
-const app = createApp({ registry, config })
+// MongoDB disambung di background (dengan retry) → server siap menerima request seketika, tanpa menunggu database
+const sharedCache = new RedisRestCache({ url: config.redisRestUrl, token: config.redisRestToken, prefix: config.redisKeyPrefix, timeoutMs: config.redisTimeoutMs })
+const community = startCommunity(config.community, { sharedCache })
+const app = createApp({ registry, config, community: community.get, sharedCache })
 
 const server = createServer(app.handler)
 // lebih panjang dari idle timeout load balancer (biasanya 60s) → hindari 502 acak
@@ -21,8 +31,10 @@ function shutdown(signal) {
   console.log(`${signal} diterima, mematikan server...`)
   server.close(() => {
     app.close()
-    process.exit(0)
+    // stop() juga menguras antrean progres baca sebelum koneksi MongoDB ditutup
+    community.stop().catch(() => {}).finally(() => process.exit(0))
   })
+  server.closeIdleConnections?.()
   setTimeout(() => process.exit(1), 10_000).unref()
 }
 process.on('SIGTERM', () => shutdown('SIGTERM'))
