@@ -217,7 +217,7 @@ async function listType(type) {
   for (const g of nodes(view, 3)) {
     const gg = nodes(g, 3).map(x => str(x, 2)).filter(Boolean)
     const variants = nodes(g, 2).filter(isTitle).map(t => ({ ...mapTitle(t), genres: gg }))
-    if (variants.length) groups.push(variants)
+    if (variants.length) groups.push(Object.assign(variants, { type }))
   }
   if (!groups.length) {
     // struktur tak dikenal: kelompokkan sendiri berdasarkan judul + penulis agar bahasa tidak jadi duplikat
@@ -227,7 +227,7 @@ async function listType(type) {
       if (!byName.has(k)) byName.set(k, [])
       byName.get(k).push({ ...t, genres: [] })
     }
-    groups.push(...byName.values())
+    groups.push(...[...byName.values()].map(g => Object.assign(g, { type })))
   }
   return { genres, groups }
 }
@@ -254,19 +254,48 @@ const groupMatches = (group, tokens) => {
 
 const tokensOf = q => q.toLowerCase().split(/\s+/).filter(Boolean)
 
-/** Bahasa lain yang tersedia untuk serial ini: [{ code, slug }], masing-masing ID judul bahasa itu. */
-async function variantsOf(slug, language) {
-  const self = [{ code: language, slug }]
+const nameKey = t => `${t.title}|${t.author}`.toLowerCase()
+
+/**
+ * Cadangan kalau server hanya mengirim satu bahasa per daftar (mengikuti ?lang=): cari serial yang sama
+ * di daftar bahasa lain, cocokkan lewat ID yang sama atau judul + penulis yang sama. Dibatasi 6 detik.
+ */
+async function probeOtherLanguages(group, slug, found) {
+  const me = group.find(t => t.slug === slug)
+  const types = group.type ? [group.type] : TYPES
+  const work = Promise.allSettled(
+    LANGS.filter(c => !found.has(c)).map(async c => {
+      const { groups } = await requestScope.run({ lang: c }, () => everything(types))
+      for (const g of groups) {
+        const hit = g.find(t => t.lang === c && (t.slug === slug || (me && nameKey(t) === nameKey(me))))
+        if (hit) return void found.set(c, hit.slug)
+      }
+    })
+  )
+  let timer
   try {
-    const { groups } = await everything(TYPES)
-    const g = groups.find(x => x.some(t => t.slug === slug))
-    if (!g || g.length < 2) return self
-    const found = g.map(t => ({ code: t.lang, slug: t.slug }))
-    return LANGS.map(c => found.find(x => x.code === c)).filter(Boolean)
-  } catch {
-    return self
+    await Promise.race([work, new Promise(resolve => (timer = setTimeout(resolve, 6000)))])
+  } finally {
+    clearTimeout(timer)
   }
 }
+
+/** Bahasa yang tersedia untuk serial ini: [{ code, slug }], slug = ID judul pada bahasa itu. */
+const variantsOf = (slug, language) =>
+  cached(`variants|${slug}|${language}`, 30 * MIN, async () => {
+    const self = [{ code: language, slug }]
+    try {
+      const { groups } = await requestScope.run({ lang: language }, () => everything(TYPES))
+      const g = groups.find(x => x.some(t => t.slug === slug))
+      if (!g) return self
+      const found = new Map(g.map(t => [t.lang, t.slug]))
+      if (!found.has(language)) found.set(language, slug)
+      if (found.size < 2) await probeOtherLanguages(g, slug, found)
+      return LANGS.filter(c => found.has(c)).map(c => ({ code: c, slug: found.get(c) }))
+    } catch {
+      return self
+    }
+  })
 
 /** Daftar ranking/terbaru: hanya judul bahasa terpilih (kalau server mengirim campuran). */
 const inLang = items => {

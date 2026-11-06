@@ -118,3 +118,27 @@ test('detail: serial satu bahasa tidak punya pilihan bahasa lain', async () => {
   const d = await mangaplus.detail('100021')
   assert.deepEqual(d.languages, [{ code: 'eng', slug: '100021' }])
 })
+
+// --- server yang hanya mengirim satu bahasa per daftar (mengikuti ?lang=) ---
+test('detail: bahasa lain ditemukan lewat daftar tiap bahasa saat server hanya kirim satu bahasa per daftar', async () => {
+  const saved = responses['title_list/all_v3']
+  responses['title_list/all_v3'] = p => {
+    const lang = p.get('lang')
+    const id = OP[lang]
+    const group = id ? m(3, m(2, ...title(id, 'One Piece', 'Eiichiro Oda', lang)), m(3, l(2, 'action'))) : Buffer.alloc(0)
+    return ok(m(35, m(2, l(1, 'Action'), l(2, 'action')), group))
+  }
+  try {
+    resetCache()
+    const d = await as('ind', () => mangaplus.detail(String(OP.ind)))
+    assert.equal(d.language, 'ind')
+    assert.deepEqual(d.languages, [
+      { code: 'eng', slug: String(OP.eng) },
+      { code: 'ind', slug: String(OP.ind) },
+      { code: 'esp', slug: String(OP.esp) }
+    ])
+    assert.deepEqual(d.chapters.map(c => c.slug), [String(OP.ind * 10 + 2), String(OP.ind * 10 + 1)])
+  } finally {
+    responses['title_list/all_v3'] = saved
+  }
+})
