@@ -1,6 +1,6 @@
 # comic-api
 
-Server scraper komik untuk aplikasi (APK). Sumber scraper aktif: **Lumos**, **Manta**, **Shinigami**.
+Server scraper komik untuk aplikasi (APK). Sumber scraper aktif: **Lumos**, **Manta**, **MANGA Plus**, **Shinigami**.
 Satu pintu API, semua sumber punya bentuk data yang sama — cepat, ringan, cache agresif.
 
 ## Jalankan
@@ -107,6 +107,7 @@ src/
   scrapers/
     index.js         registry — daftar sumber
     manta.js         Manta Comics
+    mangaplus.js     MANGA Plus (Shueisha, API protobuf resmi)
     shinigami.js     Shinigami
     utils.js         HTTP client (retry, cache, dedupe) + trackHost
 test/                tes server

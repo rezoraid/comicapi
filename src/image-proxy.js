@@ -10,6 +10,9 @@ const TIMEOUT_MS = 20_000
 const CACHE_ITEM_MAX = 1_500_000 // gambar > 1,5 MB tetap di-stream tanpa disimpan
 
 /** LRU berbasis total byte untuk gambar kecil/sedang (halaman chapter yang sering dibuka banyak orang). */
+const sniff = b =>
+  b[0] === 0xff && b[1] === 0xd8 ? 'image/jpeg' : b[0] === 0x89 && b[1] === 0x50 ? 'image/png' : b.length > 11 && b.toString('latin1', 8, 12) === 'WEBP' ? 'image/webp' : null
+
 function createImageCache(maxMb) {
   const maxBytes = Math.max(0, maxMb) * 1024 * 1024
   const map = new Map()
@@ -64,8 +67,11 @@ export function imageProxy(registry, { cacheMb = 48 } = {}) {
     let target
     let provider
     let upstream
+    let prep = null
+    let firstHref
     try {
       target = parse(raw)
+      firstHref = target.href
       // cache hanya dilayani untuk host yang diizinkan (aturan anti-SSRF tetap berlaku sebelum cache)
       const cached = cache.enabled && registry.findByImageHost(target.hostname) ? cache.get(target.href) : null
       if (cached) {
@@ -78,12 +84,14 @@ export function imageProxy(registry, { cacheMb = 48 } = {}) {
         if (hop === 0) {
           provider = known
           if (!provider) throw new HttpError(403, 'FORBIDDEN_HOST', `Host gambar tidak diizinkan: ${target.hostname}`)
+          prep = provider.imagePrep?.(target) ?? null
         } else if (!known && !(await isPublicHost(target.hostname))) {
           // redirect dari host sumber ke CDN lain boleh, asal bukan alamat internal
           throw new HttpError(403, 'FORBIDDEN_HOST', `Redirect ke host tidak diizinkan: ${target.hostname}`)
         }
 
-        upstream = await fetch(target, { headers: (known || provider).imageHeaders, signal: ac.signal, redirect: 'manual' })
+        const baseHeaders = (known || provider).imageHeaders
+        upstream = await fetch(target, { headers: hop === 0 && prep ? { ...baseHeaders, ...prep.headers } : baseHeaders, signal: ac.signal, redirect: 'manual' })
         if (upstream.status >= 300 && upstream.status < 400 && upstream.headers.get('location')) {
           if (hop >= MAX_REDIRECTS) throw new HttpError(502, 'SOURCE_ERROR', 'Terlalu banyak redirect')
           target = parse(new URL(upstream.headers.get('location'), target).href)
@@ -102,8 +110,8 @@ export function imageProxy(registry, { cacheMb = 48 } = {}) {
       upstream.body?.cancel()
       throw new HttpError(upstream.status === 404 ? 404 : 502, 'SOURCE_ERROR', `Gambar gagal diambil (HTTP ${upstream.status})`)
     }
-    const type = upstream.headers.get('content-type') || ''
-    if (!type.startsWith('image/')) {
+    let type = upstream.headers.get('content-type') || ''
+    if (!prep?.decode && !type.startsWith('image/')) {
       clearTimer()
       upstream.body?.cancel()
       throw new HttpError(502, 'SOURCE_ERROR', 'Sumber tidak mengembalikan gambar')
@@ -113,6 +121,26 @@ export function imageProxy(registry, { cacheMb = 48 } = {}) {
       clearTimer()
       upstream.body?.cancel()
       throw new HttpError(413, 'TOO_LARGE', 'Gambar terlalu besar')
+    }
+
+    if (prep?.decode) {
+      try {
+        if (req.method === 'HEAD') {
+          upstream.body?.cancel()
+          res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'public, max-age=604800, immutable' })
+          return res.end()
+        }
+        const enc = Buffer.from(await upstream.arrayBuffer())
+        if (enc.length > MAX_BYTES) throw new HttpError(413, 'TOO_LARGE', 'Gambar terlalu besar')
+        const buf = prep.decode(enc)
+        type = sniff(buf)
+        if (!type) throw new HttpError(502, 'SOURCE_ERROR', 'Gambar gagal didekripsi')
+        cache.set(firstHref, { type, buf })
+        res.writeHead(200, { 'content-type': type, 'cache-control': 'public, max-age=604800, immutable', 'x-content-type-options': 'nosniff', 'content-length': buf.length })
+        return res.end(buf)
+      } finally {
+        clearTimer()
+      }
     }
 
     const headers = {
@@ -134,7 +162,6 @@ export function imageProxy(registry, { cacheMb = 48 } = {}) {
     let received = 0
     // salin ke memori hanya selama masih di bawah batas item cache; disimpan setelah seluruh body sukses terkirim
     let keep = cache.enabled && length <= CACHE_ITEM_MAX ? [] : null
-    const firstUrl = parse(raw).href
     const sizeGuard = new Transform({
       transform(chunk, _encoding, callback) {
         received += chunk.length
@@ -152,7 +179,7 @@ export function imageProxy(registry, { cacheMb = 48 } = {}) {
     })
     try {
       await pipeline(Readable.fromWeb(upstream.body), sizeGuard, res)
-      if (keep && received > 0 && (!length || length === received || upstream.headers.get('content-encoding'))) cache.set(firstUrl, { type, buf: Buffer.concat(keep) })
+      if (keep && received > 0 && (!length || length === received || upstream.headers.get('content-encoding'))) cache.set(firstHref, { type, buf: Buffer.concat(keep) })
     } catch {
       res.destroy() // klien putus, timeout, atau upstream melewati batas ukuran
     } finally {

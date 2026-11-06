@@ -77,8 +77,14 @@ for (const { id, name } of providers) {
     return `ch ${ch.number}: ${c.images.length} gambar`
   })
   await step('download gambar', async () => {
-    const res = await fetch(ch.images[0], { headers: p.imageHeaders, signal: AbortSignal.timeout(20000) })
+    const prep = p.imagePrep?.(new URL(ch.images[0]))
+    const res = await fetch(ch.images[0], { headers: { ...p.imageHeaders, ...prep?.headers }, signal: AbortSignal.timeout(20000) })
     need(res.ok, `HTTP ${res.status}`)
+    if (prep?.decode) {
+      const buf = prep.decode(Buffer.from(await res.arrayBuffer()))
+      need(buf[0] === 0xff || buf[0] === 0x89 || buf.toString('latin1', 8, 12) === 'WEBP', 'dekripsi gagal (bukan gambar)')
+      return `terdekripsi, ${(buf.length / 1024).toFixed(0)}KB`
+    }
     const type = res.headers.get('content-type') || ''
     need(type.startsWith('image/'), `bukan gambar (${type})`)
     return `${type}, ${(Number(res.headers.get('content-length')) / 1024).toFixed(0)}KB`
