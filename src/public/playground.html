@@ -72,6 +72,7 @@ small,.muted{color:var(--mut);font-size:12px}
 .ld dd{margin:0;word-break:break-all}
 .hint{margin:8px 0;padding:6px 9px;border:1px solid var(--c);font-size:12px}
 .ld pre{max-height:220px;margin-bottom:8px}
+.mx td,.mx th{text-align:center}.mx td:first-child,.mx th:first-child{text-align:left}.mx td b{font-size:15px}.fl{margin-bottom:8px}.fl div{padding:2px 0;word-break:break-word}
 .empty{padding:16px;text-align:center;color:var(--mut);border:1px dashed var(--mut)}
 </style>
 </head>
@@ -85,6 +86,7 @@ small,.muted{color:var(--mut);font-size:12px}
     <label>Server URL<input id="base" placeholder="https://server-kamu.com" autocomplete="off" autocapitalize="off"></label>
     <label>API key<input id="key" type="password" placeholder="x-api-key (opsional)" autocomplete="off"></label>
     <label>Kata kunci tes<input id="q" value="solo" autocomplete="off" autocapitalize="off"></label>
+    <label>Bahasa (MANGA Plus)<select id="lang"><option value="">(default server)</option></select></label>
   </div>
 </section>
 
@@ -131,19 +133,20 @@ const F = {
   type: { label: 'type', sel: 'types' },
   status: { label: 'status', sel: 'statuses' },
   sort: { label: 'sort', sel: 'sorts' },
+  lang: { label: 'lang', sel: 'languages' },
   min: { label: 'min chapter' },
   slug: { label: 'slug *', req: 1 },
   chapter: { label: 'chapter *', req: 1 },
   url: { label: 'url gambar *', req: 1 }
 }
 const EP = {
-  search: { path: '/api/{src}/search', f: ['q', 'limit'], scoped: 1 },
-  latest: { path: '/api/{src}/latest', f: ['page'], scoped: 1 },
-  popular: { path: '/api/{src}/popular', f: ['period', 'limit'], scoped: 1 },
-  browse: { path: '/api/{src}/browse', f: ['q', 'genre', 'type', 'status', 'sort', 'min', 'page'], scoped: 1 },
-  genres: { path: '/api/{src}/genres', f: [], scoped: 1 },
-  comic: { path: '/api/{src}/comic/{slug}', f: ['slug'], scoped: 1 },
-  chapter: { path: '/api/{src}/chapter/{slug}/{chapter}', f: ['slug', 'chapter'], scoped: 1 },
+  search: { path: '/api/{src}/search', f: ['q', 'limit', 'lang'], scoped: 1 },
+  latest: { path: '/api/{src}/latest', f: ['page', 'lang'], scoped: 1 },
+  popular: { path: '/api/{src}/popular', f: ['period', 'limit', 'lang'], scoped: 1 },
+  browse: { path: '/api/{src}/browse', f: ['q', 'genre', 'type', 'status', 'sort', 'min', 'page', 'lang'], scoped: 1 },
+  genres: { path: '/api/{src}/genres', f: ['lang'], scoped: 1 },
+  comic: { path: '/api/{src}/comic/{slug}', f: ['slug', 'lang'], scoped: 1 },
+  chapter: { path: '/api/{src}/chapter/{slug}/{chapter}', f: ['slug', 'chapter', 'lang'], scoped: 1 },
   'search-all': { path: '/api/search', f: ['q', 'limit'] },
   image: { path: '/api/image', f: ['url'] },
   sources: { path: '/api/sources', f: [] },
@@ -348,6 +351,7 @@ $('#form').oninput = e => { const k = e.target.dataset.k; if (k) setVals({ [k]: 
 $('#form').onchange = $('#form').oninput
 $('#form').onkeydown = e => { if (e.key === 'Enter') run() }
 $('#q').oninput = () => store.set('q', $('#q').value)
+$('#lang').onchange = () => store.set('lang', $('#lang').value)
 
 let blobs = [], active = 0
 const queue = []
@@ -538,10 +542,11 @@ function serverSteps(q, firstId) {
   ]
 }
 
-function sourceSteps(id, q) {
+function sourceSteps(id, q, lang = '') {
   const P = `/api/${encodeURIComponent(id)}`
+  const L = lang ? { lang } : {}
   const list = (path, params, keep) => async c => {
-    const r = await call(P + path, params, { ignore: [501] })
+    const r = await call(P + path, { ...params, ...L }, { ignore: [501] })
     const items = Array.isArray(r.json?.data?.items) ? r.json.data.items : null
     need(r, items?.length, 'kosong')
     if (keep) c.first = items[0]
@@ -556,7 +561,7 @@ function sourceSteps(id, q) {
     ['genres', list('/genres', {})],
     ['detail', async c => {
       dep(c, 'first', 'search gagal')
-      const r = await call(`${P}/comic/${encodeURIComponent(c.first.slug)}`, {}, { ignore: [501] })
+      const r = await call(`${P}/comic/${encodeURIComponent(c.first.slug)}`, L, { ignore: [501] })
       const d = r.json?.data
       need(r, d?.title && d.chapters?.length, 'title/chapter kosong')
       c.ch = d.chapters[d.chapters.length - 1].slug
@@ -564,7 +569,7 @@ function sourceSteps(id, q) {
     }],
     ['chapter', async c => {
       dep(c, 'ch', 'detail gagal')
-      const r = await call(`${P}/chapter/${encodeURIComponent(c.first.slug)}/${encodeURIComponent(c.ch)}`, {}, { ignore: [501] })
+      const r = await call(`${P}/chapter/${encodeURIComponent(c.first.slug)}/${encodeURIComponent(c.ch)}`, L, { ignore: [501] })
       const d = r.json?.data
       need(r, d?.images?.length && d.proxy?.length, 'gambar kosong')
       c.img = d.proxy[0]
@@ -585,26 +590,44 @@ const groupHTML = (title, rows) =>
   rows.map(r => `<tr><td class="r ${label[r.res]}">${r.res}</td><td>${esc(r.name)}</td><td class="ms">${r.ms.toFixed(0)} ms</td><td class="${r.res === 'FAIL' ? 'bad' : ''}">${esc(r.note)}</td></tr>`).join('') +
   '</table>'
 
+const COLS = ['search', 'latest', 'popular', 'browse', 'genres', 'detail', 'chapter', 'gambar (proxy)']
+const MARK = { PASS: '✓', FAIL: '✗', SKIP: '–' }
+const cell = r => (r ? `<td class="${label[r.res]}" title="${esc(r.note)}"><b>${MARK[r.res]}</b></td>` : '<td class="muted">·</td>')
+const matrix = gs =>
+  '<table class="mx"><tr><th>Sumber</th>' + COLS.map(c => `<th>${esc(c.replace(' (proxy)', ''))}</th>`).join('') + '</tr>' +
+  gs.filter(g => g.src).map(g => `<tr><td><b>${esc(g.title.replace('Sumber: ', ''))}</b></td>${COLS.map(c => cell(g.rows.find(r => r.name === c))).join('')}</tr>`).join('') +
+  '</table>'
+const failures = gs => {
+  const f = gs.flatMap(g => g.rows.filter(r => r.res === 'FAIL').map(r => ({ g: g.title, ...r })))
+  return f.length ? `<div class="sum bad fl"><b>Yang error (${f.length})</b>${f.map(x => `<div>✗ ${esc(x.g)} › ${esc(x.name)} — ${esc(x.note)}</div>`).join('')}</div>` : ''
+}
+
 async function runAll() {
   if (!baseUrl()) return fail('Isi Server URL dulu')
   if (!sources.length) await loadSources()
   if (!sources.length) return
   const q = testQ()
-  const groups = [{ title: 'Server', rows: [] }, ...sources.map(s => ({ title: 'Sumber: ' + s.id, rows: [] }))]
+  const pick = $('#lang').value
+  const targets = sources.flatMap(s => {
+    const langs = s.filters?.languages || []
+    if (pick === '*' && langs.length) return langs.map(l => ({ id: s.id, lang: l }))
+    return [{ id: s.id, lang: langs.includes(pick) ? pick : '' }]
+  })
+  const groups = [{ title: 'Server', rows: [] }, ...targets.map(t => ({ title: 'Sumber: ' + t.id + (t.lang ? ' [' + t.lang + ']' : ''), rows: [], src: true }))]
   const draw = (done = false) => {
     const all = groups.flatMap(g => g.rows)
     const n = x => all.filter(r => r.res === x).length
     const sum = done
       ? `<div class="sum ${n('FAIL') ? 'bad' : 'ok'}">${n('FAIL') ? 'ADA YANG GAGAL' : 'SEMUA LOLOS'} — ${n('PASS')} pass · ${n('FAIL')} fail · ${n('SKIP')} skip</div>`
       : `<div class="sum">Menjalankan… ${all.length} langkah selesai</div>`
-    $('#tests').innerHTML = `<p><small>q = "${esc(q)}"</small></p>` + sum + groups.map(g => groupHTML(g.title, g.rows)).join('')
+    $('#tests').innerHTML = `<p><small>q = "${esc(q)}"</small></p>` + sum + matrix(groups) + failures(groups) + groups.map(g => groupHTML(g.title, g.rows)).join('')
   }
   const btn = $('#all')
   btn.disabled = true
   draw()
   const jobs = [
     runGroup(serverSteps(q, sources[0].id), rows => { groups[0].rows = rows; draw() }, 'server'),
-    ...sources.map((s, i) => runGroup(sourceSteps(s.id, q), rows => { groups[i + 1].rows = rows; draw() }, s.id))
+    ...targets.map((t, i) => runGroup(sourceSteps(t.id, q, t.lang), rows => { groups[i + 1].rows = rows; draw() }, t.id + (t.lang ? '[' + t.lang + ']' : '')))
   ]
   await Promise.all(jobs.map(j => j.catch(e => { groups[0].rows.push({ name: 'error', res: 'FAIL', note: e.message, ms: 0 }) })))
   draw(true)
@@ -623,6 +646,10 @@ async function loadSources() {
   const r = await call('/api/sources').catch(() => null)
   sources = r?.json?.data?.items || []
   if (!sources.some(s => s.id === src)) src = sources[0]?.id || ''
+  const langs = [...new Set(sources.flatMap(s => s.filters?.languages || []))]
+  const keep = $('#lang').value || store.get('lang', '')
+  $('#lang').innerHTML = '<option value="">(default server)</option>' + langs.map(l => `<option value="${esc(l)}">${esc(l)}</option>`).join('') + (langs.length ? '<option value="*">* tes semua bahasa</option>' : '')
+  $('#lang').value = langs.includes(keep) || keep === '*' ? keep : ''
   renderSelects(); renderForm()
   if (r && r.status === 401) fail('API key salah / belum diisi')
   else if (!sources.length) fail('Tidak bisa memuat sumber' + (r?.err ? ': ' + r.err : ''))

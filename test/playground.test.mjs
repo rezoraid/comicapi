@@ -103,6 +103,9 @@ test('playground: tes otomatis menandai FAIL kalau endpoint rusak', async () => 
   const out = el('#tests').innerHTML
   assert.match(out, /ADA YANG GAGAL/)
   assert.equal((out.match(/FAIL<\/td>/g) || []).length, 1)
+  assert.match(out, /class="mx"/)
+  assert.match(out, /Yang error \(1\)/)
+  assert.match(out, /✗ Sumber: mock › genres/)
   await new Promise(r => setTimeout(r, 150))
   const log = el('#loglist').innerHTML
   assert.match(log, /class="lk">TES</)
@@ -152,4 +155,34 @@ test('playground: server tidak terjangkau → log JARINGAN + saran', async () =>
   assert.match(log, /class="lk">JARINGAN</)
   assert.match(log, /Server tidak terjangkau/)
   assert.match(el('#logbar').innerHTML, /data-act="lclear"/)
+})
+
+test('playground: pilihan bahasa → tes tiap bahasa + matriks ringkasan', async () => {
+  const reg = { ...registry, list: () => [{ ...registry.list()[0], filters: { types: ['manhwa'], languages: ['eng', 'ind'] } }] }
+  const wrapped = { ...registry, list: reg.list, get: registry.get }
+  const a = createApp({ registry: wrapped, config: loadConfig({ LOG_REQUESTS: 'false' }), logger: quiet })
+  const s = await listen(a.handler)
+  const html = readFileSync(new URL('../src/public/playground.html', import.meta.url), 'utf8')
+  const els = new Map()
+  const el = sel => (els.has(sel) || els.set(sel, { value: '', innerHTML: '', textContent: '', hidden: false, className: '', title: '', disabled: false, dataset: {}, classList: { toggle() {} } }), els.get(sel))
+  const ctx = vm.createContext({
+    document: { querySelector: el, querySelectorAll: () => [] },
+    localStorage: { getItem: () => null, setItem() {} },
+    location: { origin: s.url },
+    IntersectionObserver: class { observe() {} unobserve() {} disconnect() {} },
+    fetch, URL, URLSearchParams, performance, setTimeout, clearTimeout, console, JSON, Promise, Object, String, Number, Math, Error, Array
+  })
+  vm.runInContext(html.match(/<script>([\s\S]*)<\/script>/)[1], ctx)
+  for (let i = 0; i < 40 && !el('#src').innerHTML.includes('mock'); i++) await new Promise(r => setTimeout(r, 25))
+  assert.match(el('#lang').innerHTML, /value="ind"/)
+  assert.match(el('#lang').innerHTML, /value="\*"/)
+  el('#lang').value = '*'
+  await el('#all').onclick()
+  const out = el('#tests').innerHTML
+  assert.match(out, /Sumber: mock \[eng\]/)
+  assert.match(out, /Sumber: mock \[ind\]/)
+  assert.match(out, /SEMUA LOLOS/)
+  assert.equal((out.match(/<tr><td><b>mock \[/g) || []).length, 2)
+  s.server.close()
+  a.close()
 })

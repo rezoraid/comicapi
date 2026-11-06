@@ -93,7 +93,7 @@ export function createApp({ registry, config, logger = console, community = null
         const id = encodeURIComponent(s.id)
         try {
           const latest = await warmPath(`/api/${id}/latest?page=1`)
-          const popular = await warmPath(`/api/${id}/popular`)
+          const popular = s.features?.includes('popular') === false ? null : await warmPath(`/api/${id}/popular`)
           const slugs = [...new Set([...(latest?.items || []), ...(popular?.items || [])].map(i => i?.slug).filter(x => typeof x === 'string' && x))].slice(0, config.warmDetails ?? 6)
           let chapters = 0
           for (const slug of slugs) {

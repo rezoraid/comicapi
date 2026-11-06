@@ -51,7 +51,7 @@ export function makeRegistry(imagePort) {
     provider,
     has: id => all.has(id),
     get: id => all.get(id),
-    list: () => [{ id: 'mock', name: 'Mock', base: provider.base, filters: provider.filters, features: ['search'] }],
+    list: () => [{ id: 'mock', name: 'Mock', base: provider.base, filters: provider.filters, features: ['search', 'latest', 'popular', 'browse', 'genres', 'detail', 'chapter'] }],
     findByImageHost: h => (h === '127.0.0.1' ? provider : null),
     async searchAll(q, { limit }) {
       return { items: (await provider.search(q, { limit })).map(x => ({ ...x, source: 'mock' })), failed: [] }
