@@ -16,6 +16,8 @@ const RANKINGS = ['hottest', 'trending', 'completed']
 const MIN = 60 * 1000
 const PAGE_SIZE = 20
 const imageHosts = ['tokyo-cdn.com', 'mangaplus.shueisha.co.jp']
+// Enum Language di protobuf MANGA Plus (urutan resmi, BUKAN urutan LANGS di atas).
+const LANG_BY_ID = ['eng', 'esp', 'fra', 'ind', 'ptb', 'rus', 'tha', 'deu', 'vie']
 
 const readVarint = (b, c) => {
   let v = 0
@@ -110,7 +112,10 @@ const item = (o = {}) => ({
   ...o
 })
 
-const mapTitle = n => item({ slug: String(int(n, 1)), title: str(n, 2).trim(), author: str(n, 3).trim(), cover: img(str(n, 4)) })
+// Tiap bahasa adalah judul sendiri dengan ID sendiri (chapter-nya pun terpisah per bahasa).
+const titleLang = n => LANG_BY_ID[int(n, 7) ?? 0] ?? 'eng'
+
+const mapTitle = n => item({ slug: String(int(n, 1)), title: str(n, 2).trim(), author: str(n, 3).trim(), cover: img(str(n, 4)), lang: titleLang(n) })
 
 const chapterNumber = name => {
   const m = String(name ?? '').match(/^#?\s*(\d+(?:\.\d+)?)/)
@@ -199,35 +204,81 @@ const titleList = (view, slot) => {
   return out
 }
 
+/**
+ * Daftar semua judul. Server mengelompokkan per serial: satu grup berisi varian bahasa
+ * (judul + ID berbeda per bahasa). Dulu hanya varian pertama yang dibaca, sehingga memilih
+ * Indonesia tetap menghasilkan judul/chapter bahasa lain.
+ */
 async function listType(type) {
   const d = await call('title_list/all_v3', { type }, 30 * MIN)
   const view = msg(d, 35)
   const genres = nodes(view, 2).map(g => ({ name: str(g, 1), slug: str(g, 2) })).filter(g => g.name)
-  const items = []
+  const groups = []
   for (const g of nodes(view, 3)) {
-    const t = msg(g, 2)
-    if (t && isTitle(t)) items.push({ ...mapTitle(t), genres: nodes(g, 3).map(x => str(x, 2)).filter(Boolean) })
+    const gg = nodes(g, 3).map(x => str(x, 2)).filter(Boolean)
+    const variants = nodes(g, 2).filter(isTitle).map(t => ({ ...mapTitle(t), genres: gg }))
+    if (variants.length) groups.push(variants)
   }
-  if (!items.length) items.push(...grab(d, isTitle, mapTitle))
-  return { genres, items: uniq(items, 'slug') }
+  if (!groups.length) {
+    // struktur tak dikenal: kelompokkan sendiri berdasarkan judul + penulis agar bahasa tidak jadi duplikat
+    const byName = new Map()
+    for (const t of grab(d, isTitle, mapTitle)) {
+      const k = `${t.title}|${t.author}`.toLowerCase()
+      if (!byName.has(k)) byName.set(k, [])
+      byName.get(k).push({ ...t, genres: [] })
+    }
+    groups.push(...byName.values())
+  }
+  return { genres, groups }
 }
 
 const everything = async types => {
   const all = await Promise.all(types.map(listType))
-  return { genres: uniq(all.flatMap(x => x.genres), 'name'), items: uniq(all.flatMap(x => x.items), 'slug') }
+  const seen = new Set()
+  const groups = []
+  for (const g of all.flatMap(x => x.groups)) {
+    if (g.some(t => seen.has(t.slug))) continue
+    g.forEach(t => seen.add(t.slug))
+    groups.push(g)
+  }
+  return { genres: uniq(all.flatMap(x => x.genres), 'name'), groups }
 }
 
-const matches = (it, tokens) => {
-  const hay = `${it.title} ${it.author || ''}`.toLowerCase()
+/** Satu serial -> satu judul: bahasa yang dipilih, kalau tidak ada English, kalau tidak ada varian pertama. */
+const pick = (group, lang = currentLang()) => group.find(t => t.lang === lang) || group.find(t => t.lang === 'eng') || group[0]
+
+const groupMatches = (group, tokens) => {
+  const hay = `${group.map(t => t.title).join(' ')} ${group.map(t => t.author || '').join(' ')}`.toLowerCase()
   return tokens.every(t => hay.includes(t))
 }
 
 const tokensOf = q => q.toLowerCase().split(/\s+/).filter(Boolean)
 
+/** Bahasa lain yang tersedia untuk serial ini: [{ code, slug }], masing-masing ID judul bahasa itu. */
+async function variantsOf(slug, language) {
+  const self = [{ code: language, slug }]
+  try {
+    const { groups } = await everything(TYPES)
+    const g = groups.find(x => x.some(t => t.slug === slug))
+    if (!g || g.length < 2) return self
+    const found = g.map(t => ({ code: t.lang, slug: t.slug }))
+    return LANGS.map(c => found.find(x => x.code === c)).filter(Boolean)
+  } catch {
+    return self
+  }
+}
+
+/** Daftar ranking/terbaru: hanya judul bahasa terpilih (kalau server mengirim campuran). */
+const inLang = items => {
+  const lang = currentLang()
+  const same = items.filter(t => t.lang === lang)
+  return uniq(same.length ? same : items, 'slug')
+}
+
 export async function search(query, { limit = 10 } = {}) {
   const tokens = tokensOf(query)
-  const { items } = await everything(TYPES)
-  return items.filter(it => matches(it, tokens)).slice(0, limit)
+  const { groups } = await everything(TYPES)
+  return groups.filter(g => groupMatches(g, tokens)).map(g => pick(g)).slice(0, limit)
 }
 
 export async function latest({ page = 1 } = {}) {
@@ -238,7 +289,7 @@ export async function latest({ page = 1 } = {}) {
     if (t && isTitle(t)) out.push({ ...mapTitle(t), updatedAt: iso(int(g, 2)) })
   }
   const items = out.length ? out : grab(d, isTitle, mapTitle)
-  return paginate(uniq(items, 'slug'), page).items
+  return paginate(inLang(items), page).items
 }
 
 export async function popular({ period = '', limit = 10 } = {}) {
@@ -250,14 +301,14 @@ export async function popular({ period = '', limit = 10 } = {}) {
     if (n && isTitle(n)) out.push(mapTitle(n))
   }
   const items = out.length ? out : grab(d, isTitle, mapTitle)
-  return uniq(items, 'slug').slice(0, limit)
+  return inLang(items).slice(0, limit)
 }
 
 export async function browse({ q = '', type = '', genre = [], page = 1 } = {}) {
-  const { genres, items } = await everything(type ? [type] : q ? TYPES : ['serializing'])
+  const { genres, groups } = await everything(type ? [type] : q ? TYPES : ['serializing'])
   const wanted = [].concat(genre).filter(Boolean).map(g => genres.find(x => x.name.toLowerCase() === g || x.slug === g)?.slug ?? g)
   const tokens = tokensOf(q)
-  const list = items.filter(it => matches(it, tokens) && wanted.every(g => it.genres.includes(g)))
+  const list = groups.filter(g => groupMatches(g, tokens) && wanted.every(w => g[0].genres.includes(w))).map(g => pick(g))
   return paginate(list, page)
 }
 
@@ -265,7 +316,7 @@ export async function genres() {
   return (await everything(['serializing'])).genres.map(g => g.name)
 }
 
-export async function detail(slug) {
+async function detailCore(slug) {
   if (!/^\d+$/.test(slug)) throw fail(`Series "${slug}" tidak ditemukan`, 404)
   const d = await call('title_detailV4', { title_id: slug, avif_enable: 'yes' }, 5 * MIN).catch(e => {
     throw e.status === 404 || /MANGA Plus:/.test(e.message) ? fail(`Series "${slug}" tidak ditemukan`, 404) : e
@@ -273,9 +324,11 @@ export async function detail(slug) {
   const v = msg(d, 8)
   const t = msg(v, 1)
   if (!t || !str(t, 2)) throw fail(`Series "${slug}" tidak ditemukan`, 404)
-  const chapters = uniq(grab(v, isChapter, n => ({ id: int(n, 2), ...mapChapter(n) })), 'id')
+  // Hanya chapter milik judul (bahasa) ini: chapter judul lain tidak boleh ikut tercampur.
+  const chapters = uniq(grab(v, isChapter, n => ({ id: int(n, 2), tid: int(n, 1), ...mapChapter(n) })), 'id')
+    .filter(c => c.tid === undefined || c.tid === Number(slug))
     .sort((a, b) => b.id - a.id)
-    .map(({ id, ...c }) => c)
+    .map(({ id, tid, ...c }) => c)
   const next = iso(int(v, 5))
   return {
     title: str(t, 2).trim(),
@@ -287,6 +340,7 @@ export async function detail(slug) {
     synopsis: (str(v, 3) || '').trim(),
     status: '',
     type: 'manga',
+    language: titleLang(t),
     author: (str(t, 3) || '').trim(),
     artist: '',
     year: '',
@@ -301,8 +355,13 @@ export async function detail(slug) {
   }
 }
 
+export async function detail(slug) {
+  const d = await detailCore(slug)
+  return { ...d, languages: await variantsOf(slug, d.language) }
+}
+
 export async function chapter(slug, chapterSlug) {
-  const info = await detail(slug).catch(() => null)
+  const info = await detailCore(slug).catch(() => null)
   const list = info?.chapters ?? []
   let id = chapterSlug
   if (Number(id) < 1000) id = list.find(c => c.number === id)?.slug ?? id

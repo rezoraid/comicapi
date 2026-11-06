@@ -6,7 +6,6 @@ import { badRequest, HttpError } from './lib/errors.js'
 
 const MAX_BYTES = 25 * 1024 * 1024
 const MAX_REDIRECTS = 3
-const TIMEOUT_MS = 20_000
 const CACHE_ITEM_MAX = 1_500_000 // gambar > 1,5 MB tetap di-stream tanpa disimpan
 
 /** LRU berbasis total byte untuk gambar kecil/sedang (halaman chapter yang sering dibuka banyak orang). */
@@ -50,19 +49,57 @@ function createImageCache(maxMb) {
  * menampilkan gambar tanpa kena hotlink-protection. Hanya host milik
  * scraper yang diizinkan (anti-SSRF), redirect divalidasi ulang.
  */
-export function imageProxy(registry, { cacheMb = 48 } = {}) {
+export function imageProxy(registry, { cacheMb = 48, headerTimeoutMs = 12_000, bodyIdleMs = 15_000, retries = 1 } = {}) {
+  // headerTimeoutMs: tunggu sumber mulai merespons (per percobaan) · bodyIdleMs: batas diam saat unduh (reset tiap ada data)
+  // retries: ulang kalau sumber timeout / koneksi putus (batal dari klien tidak pernah diulang)
+  const HEADER_TIMEOUT_MS = headerTimeoutMs
+  const BODY_IDLE_MS = bodyIdleMs
+  const FETCH_RETRIES = retries
   const cache = createImageCache(cacheMb)
   return async ({ req, res, query }) => {
     const raw = query.get('url')
     if (!raw) throw badRequest('Parameter "url" wajib diisi')
 
-    const ac = new AbortController()
-    const timer = setTimeout(() => ac.abort(), TIMEOUT_MS)
+    // clientGone = klien (APK) membatalkan request, mis. pindah chapter / scroll cepat. Itu bukan error server.
+    // timedOut  = sumber gambar yang terlalu lambat.
+    let ac = new AbortController()
+    let timer = null
+    let clientGone = false
+    let timedOut = false
     const clearTimer = () => clearTimeout(timer)
+    const arm = ms => {
+      clearTimeout(timer)
+      timer = setTimeout(() => {
+        timedOut = true
+        ac.abort()
+      }, ms)
+    }
     res.on('close', () => {
-      if (!res.writableEnded) ac.abort()
+      if (!res.writableEnded) {
+        clientGone = true
+        ac.abort()
+      }
       clearTimer()
     })
+
+    /** fetch ke sumber dengan timeout per percobaan + 1x ulang. Batal dari klien tidak diulang. */
+    const fetchSource = async (url, headers) => {
+      for (let attempt = 0; ; attempt++) {
+        if (clientGone) throw new Error('client closed')
+        ac = new AbortController()
+        timedOut = false
+        arm(HEADER_TIMEOUT_MS)
+        try {
+          return await fetch(url, { headers, signal: ac.signal, redirect: 'manual' })
+        } catch (err) {
+          clearTimer()
+          if (clientGone || attempt >= FETCH_RETRIES) {
+            if (timedOut && !clientGone) throw new HttpError(504, 'SOURCE_TIMEOUT', `Sumber gambar terlalu lama merespons (${url.hostname})`)
+            throw err
+          }
+        }
+      }
+    }
 
     let target
     let provider
@@ -91,7 +128,7 @@ export function imageProxy(registry, { cacheMb = 48 } = {}) {
         }
 
         const baseHeaders = (known || provider).imageHeaders
-        upstream = await fetch(target, { headers: hop === 0 && prep ? { ...baseHeaders, ...prep.headers } : baseHeaders, signal: ac.signal, redirect: 'manual' })
+        upstream = await fetchSource(target, hop === 0 && prep ? { ...baseHeaders, ...prep.headers } : baseHeaders)
         if (upstream.status >= 300 && upstream.status < 400 && upstream.headers.get('location')) {
           if (hop >= MAX_REDIRECTS) throw new HttpError(502, 'SOURCE_ERROR', 'Terlalu banyak redirect')
           target = parse(new URL(upstream.headers.get('location'), target).href)
@@ -102,6 +139,7 @@ export function imageProxy(registry, { cacheMb = 48 } = {}) {
       }
     } catch (error) {
       clearTimer()
+      if (clientGone) return res.destroy() // klien sudah pergi: jangan dicatat sebagai error
       throw error
     }
 
@@ -123,6 +161,7 @@ export function imageProxy(registry, { cacheMb = 48 } = {}) {
       throw new HttpError(413, 'TOO_LARGE', 'Gambar terlalu besar')
     }
 
+    arm(BODY_IDLE_MS) // header sudah diterima: sekarang batasi waktu unduh body
     if (prep?.decode) {
       try {
         if (req.method === 'HEAD') {
@@ -138,6 +177,10 @@ export function imageProxy(registry, { cacheMb = 48 } = {}) {
         cache.set(firstHref, { type, buf })
         res.writeHead(200, { 'content-type': type, 'cache-control': 'public, max-age=604800, immutable', 'x-content-type-options': 'nosniff', 'content-length': buf.length })
         return res.end(buf)
+      } catch (error) {
+        if (clientGone) return res.destroy()
+        if (timedOut) throw new HttpError(504, 'SOURCE_TIMEOUT', `Unduhan gambar terlalu lama (${target.hostname})`)
+        throw error
       } finally {
         clearTimer()
       }
@@ -164,6 +207,7 @@ export function imageProxy(registry, { cacheMb = 48 } = {}) {
     let keep = cache.enabled && length <= CACHE_ITEM_MAX ? [] : null
     const sizeGuard = new Transform({
       transform(chunk, _encoding, callback) {
+        arm(BODY_IDLE_MS)
         received += chunk.length
         if (received > MAX_BYTES) {
           ac.abort()

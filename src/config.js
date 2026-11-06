@@ -29,6 +29,10 @@ export function loadConfig(env = process.env) {
     cacheMax: int(env.CACHE_MAX, 1000),
     // cache gambar proxy di memori (MB). 0 = mati. Item > 1,5 MB tidak disimpan
     imageCacheMb: int(env.IMAGE_CACHE_MB, 48),
+    // proxy gambar: tunggu sumber mulai merespons (ms), batas diam saat unduh (ms), jumlah ulang kalau timeout
+    imageHeaderTimeoutMs: int(env.IMAGE_HEADER_TIMEOUT_MS, 12_000),
+    imageBodyIdleMs: int(env.IMAGE_BODY_IDLE_MS, 15_000),
+    imageFetchRetries: int(env.IMAGE_FETCH_RETRIES, 1),
     // pemanas cache: daftar utama + detail/chapter teratas dijaga hangat di server (0 detik interval = mati lewat WARM_ENABLED=false)
     warmEnabled: env.WARM_ENABLED !== 'false',
     warmIntervalSec: int(env.WARM_INTERVAL_SEC, 30),

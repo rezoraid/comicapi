@@ -91,6 +91,19 @@ Redis stores only public scraper GET responses with the route's existing TTL. Co
 
 Env baru: `IMAGE_CACHE_MB` (48).
 
+### Perbaikan log merah `[SOURCE_TIMEOUT] /api/image?...` (v11)
+
+Penyebab: proxy gambar memakai satu timer 20 detik untuk seluruh proses, dan request yang dibatalkan APK (pindah chapter / scroll cepat) ikut dicatat sebagai `SOURCE_TIMEOUT` ("This operation was aborted"), padahal bukan error server.
+
+| Perubahan | Efek |
+|---|---|
+| Batal dari klien dibedakan dari timeout sumber | Klien pergi → diam, tidak dicatat sebagai error |
+| Timeout per tahap: tunggu respons sumber 12 dtk, lalu batas diam 15 dtk saat unduh (reset tiap ada data) | Gambar besar di koneksi lambat tidak terpotong; sumber yang mati tidak menahan koneksi |
+| Ulang otomatis 1x kalau sumber timeout / koneksi putus | Gangguan sesaat di `lms.imgsvr.my.id` tidak sampai ke APK |
+| Pesan error menyebut host sumber | Mudah tahu sumber mana yang bermasalah |
+
+Env baru: `IMAGE_HEADER_TIMEOUT_MS` (12000), `IMAGE_BODY_IDLE_MS` (15000), `IMAGE_FETCH_RETRIES` (1).
+
 **Untuk sisi klien (tidak ada di zip ini):** kirim `clientId` unik (UUID) tiap komentar; gunakan `picture` apa adanya (sudah berversi); pakai `If-None-Match`/ETag pada GET; panggil `reading-progress` tanpa menunggu respons.
 
 **Preload chapter berikutnya (server).** Saat sebuah chapter baru diambil dari sumber, chapter `next`-nya dimuat diam-diam ke cache (maks 3 sekaligus, error diabaikan, memakai cache L1/Redis yang sama). Tombol "Next" jadi `x-cache: HIT`.
@@ -102,3 +115,16 @@ Env baru: `IMAGE_CACHE_MB` (48).
 Server menjaga daftar Home (`latest?page=1`, `popular`), detail komik teratas, dan chapter terbarunya selalu hangat di cache (L1 + Redis), sehingga request pertama pengguna pun `x-cache: HIT` tanpa menunggu scrape ke situs sumber. Berjalan di background tiap 30 detik, berurutan dengan jeda kecil agar sumber tidak dibanjiri; satu sumber gagal tidak mengganggu yang lain.
 
 Env (semua opsional): `WARM_ENABLED` (default true; `false` untuk mematikan), `WARM_INTERVAL_SEC` (30), `WARM_DETAILS` (6 komik per sumber), `WARM_CHAPTERS` (3 chapter terbaru per sumber), `WARM_SOURCES` (daftar id dipisah koma; kosong = semua sumber).
+
+### MANGA Plus: bahasa benar-benar sesuai pilihan (v12)
+
+Penyebab bug "pilih Indonesia tapi isinya bahasa lain": server MANGA Plus mengelompokkan daftar judul per serial, dan satu grup berisi **varian bahasa** (judul + ID berbeda per bahasa, chapter-nya pun terpisah). Scraper lama hanya membaca varian pertama tiap grup, jadi `?lang=ind` tetap menghasilkan ID/chapter bahasa lain.
+
+| Perubahan | Efek |
+|---|---|
+| Baca semua varian tiap grup + bahasa tiap judul (enum Language protobuf: 0 eng, 1 esp, 2 fra, 3 ind, 4 ptb, 5 rus, 6 tha, 7 deu, 8 vie) | ID judul = ID bahasa yang dipilih |
+| Satu serial = satu judul di search/browse/latest/popular: bahasa terpilih, kalau tidak ada → English | Tidak ada data ganda antar bahasa |
+| `detail` mengembalikan `language` dan `languages: [{code, slug}]` (hanya bahasa yang tersedia) | APK menampilkan pilihan bahasa yang benar-benar ada |
+| Chapter di `detail` disaring: hanya milik ID judul itu | Chapter bahasa lain tidak bisa tercampur |
+
+Tes: `test/mangaplus-lang.test.mjs` (fixture multi-bahasa).

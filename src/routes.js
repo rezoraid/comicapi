@@ -146,5 +146,5 @@ export function registerRoutes(router, { registry, config, community = null }) {
   )
 
   /* ───── image proxy (streaming, bukan JSON) ───── */
-  router.get('/api/image', imageProxy(registry, { cacheMb: config.imageCacheMb }), { raw: true, limiter: 'image' })
+  router.get('/api/image', imageProxy(registry, { cacheMb: config.imageCacheMb, headerTimeoutMs: config.imageHeaderTimeoutMs, bodyIdleMs: config.imageBodyIdleMs, retries: config.imageFetchRetries }), { raw: true, limiter: 'image' })
 }
