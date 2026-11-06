@@ -1,7 +1,6 @@
 import { badRequest, notFound, HttpError } from './lib/errors.js'
 import { imageProxy } from './image-proxy.js'
 import { playground } from './playground.js'
-import { requestScope } from './scrapers/utils.js'
 import { legalHandler, privacyPage, termsPage } from './legal.js'
 import { normalizeBrowse, normalizeDetail, normalizeList } from './normalize.js'
 
@@ -31,9 +30,6 @@ const slugParam = (v, name, re = SLUG) => {
 }
 
 export function registerRoutes(router, { registry, config, community = null }) {
-  const langOf = q => (q.get('lang') ?? '').trim().toLowerCase().slice(0, 5)
-  const withLang = h => ctx => requestScope.run({ lang: langOf(ctx.query) }, () => h(ctx))
-  const get = (path, handler, opts) => router.get(path, withLang(handler), opts)
   // community boleh berupa objek atau fungsi getter (komunitas bisa baru tersambung setelah server jalan)
   const cm = () => (typeof community === 'function' ? community() : community)
   const source = params => {
@@ -60,7 +56,7 @@ export function registerRoutes(router, { registry, config, community = null }) {
   router.get('/api/sources', () => ({ items: registry.list() }), { ttl: 3600 })
 
   /* ───── cari ke semua sumber ───── */
-  get(
+  router.get(
     '/api/search',
     async ({ query }) => {
       const q = str(query, 'q')
@@ -72,7 +68,7 @@ export function registerRoutes(router, { registry, config, community = null }) {
   )
 
   /* ───── per sumber ───── */
-  get(
+  router.get(
     '/api/:source/search',
     async ({ params, query }) => {
       const q = str(query, 'q')
@@ -84,7 +80,7 @@ export function registerRoutes(router, { registry, config, community = null }) {
     { ttl: 60 }
   )
 
-  get(
+  router.get(
     '/api/:source/latest',
     async ({ params, query }) => {
       const page = int(query, 'page', 1, 1, 500)
@@ -94,7 +90,7 @@ export function registerRoutes(router, { registry, config, community = null }) {
     { ttl: 60 }
   )
 
-  get(
+  router.get(
     '/api/:source/popular',
     async ({ params, query }) => {
       const p = source(params)
@@ -107,7 +103,7 @@ export function registerRoutes(router, { registry, config, community = null }) {
     { ttl: 300 }
   )
 
-  get(
+  router.get(
     '/api/:source/browse',
     async ({ params, query }) => {
       const p = source(params)
@@ -125,9 +121,9 @@ export function registerRoutes(router, { registry, config, community = null }) {
     { ttl: 120 }
   )
 
-  get('/api/:source/genres', async ({ params }) => ({ items: await call(source(params), 'genres') }), { ttl: 3600 })
+  router.get('/api/:source/genres', async ({ params }) => ({ items: await call(source(params), 'genres') }), { ttl: 3600 })
 
-  get(
+  router.get(
     '/api/:source/comic/:slug',
     async ({ params }) => {
       const p = source(params)
@@ -136,15 +132,14 @@ export function registerRoutes(router, { registry, config, community = null }) {
     { ttl: 300 }
   )
 
-  get(
+  router.get(
     '/api/:source/chapter/:slug/:chapter',
-    async ({ params, query, warm }) => {
+    async ({ params, warm }) => {
       const p = source(params)
       const data = await call(p, 'chapter', slugParam(params.slug, 'slug'), slugParam(params.chapter, 'chapter', CHAPTER))
       // preload chapter berikutnya di background (hanya saat chapter ini baru diambil dari sumber)
       if (warm && typeof data.next === 'string' && CHAPTER.test(data.next)) {
-        const lang = langOf(query)
-        warm(`/api/${p.id}/chapter/${encodeURIComponent(params.slug)}/${encodeURIComponent(data.next)}${lang ? `?lang=${encodeURIComponent(lang)}` : ''}`)
+        warm(`/api/${p.id}/chapter/${encodeURIComponent(params.slug)}/${encodeURIComponent(data.next)}`)
       }
       // path relatif: klien (APK) tinggal prefix dengan base URL server
       return { ...data, proxy: data.images.map(u => `/api/image?url=${encodeURIComponent(u)}`) }
@@ -153,5 +148,5 @@ export function registerRoutes(router, { registry, config, community = null }) {
   )
 
   /* ───── image proxy (streaming, bukan JSON) ───── */
-  router.get('/api/image', imageProxy(registry, { cacheMb: config.imageCacheMb, headerTimeoutMs: config.imageHeaderTimeoutMs, bodyIdleMs: config.imageBodyIdleMs, retries: config.imageFetchRetries }), { raw: true, limiter: 'image' })
+  router.get('/api/image', imageProxy(registry, { cacheMb: config.imageCacheMb, headerTimeoutMs: config.imageHeaderTimeoutMs, bodyIdleMs: config.imageBodyIdleMs, retries: config.imageFetchRetries, concurrency: config.imageConcurrency, maxQueue: config.imageMaxQueue }), { raw: true, limiter: 'image' })
 }

@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { gzipSync } from 'node:zlib'
 import { RedisRestCache } from '../src/lib/redis-rest-cache.js'
 import { createHybridRateLimiter } from '../src/http/middleware.js'
 
@@ -22,7 +23,8 @@ test('Redis REST cache round-trips encoded HTTP response and uses namespaced has
   t.after(() => { globalThis.fetch = originalFetch })
 
   const cache = new RedisRestCache({ url: 'https://redis.example', token: 'secret', prefix: 'test:', timeoutMs: 100 })
-  const entry = { body: Buffer.from('{"ok":true}'), gzipped: Buffer.from('gzip-data'), etag: '"abc"' }
+  const raw = Buffer.from('{"ok":true}')
+  const entry = { body: raw, gzipped: gzipSync(raw), etag: '"abc"' }
   assert.equal(await cache.set('/api/demo?a=1', entry, 45), true)
   const restored = await cache.get('/api/demo?a=1')
   assert.equal(restored.body.toString(), entry.body.toString())
@@ -31,6 +33,7 @@ test('Redis REST cache round-trips encoded HTTP response and uses namespaced has
   assert.equal(commands[0][0], 'SET')
   assert.equal(commands[0][3], 'EX')
   assert.equal(commands[0][4], 45)
+  assert.equal(JSON.parse(commands[0][2]).body, undefined)
   assert.match(commands[0][1], /^test:[a-f0-9]{64}$/)
 })
 
@@ -100,4 +103,36 @@ test('hybrid limiter uses shared Redis counts and bounded local fallback on Redi
   assert.equal((await a.check('fallback-user')).ok, true)
   assert.equal((await a.check('fallback-user')).ok, false)
   a.close(); b.close()
+})
+
+
+test('Redis REST cache opens a circuit breaker after repeated failures and recovers after cooldown', async t => {
+  const originalFetch = globalThis.fetch
+  let calls = 0
+  globalThis.fetch = async () => {
+    calls++
+    throw new Error('offline')
+  }
+  t.after(() => { globalThis.fetch = originalFetch })
+
+  const cache = new RedisRestCache({ url: 'https://redis.example', token: 'secret' })
+  for (let i = 0; i < 6; i++) await cache.get('/api/down')
+  assert.equal(calls, 3)
+
+  cache.downUntil = Date.now() - 1
+  await cache.get('/api/down')
+  assert.equal(calls, 4)
+})
+
+test('Redis REST cache still reads legacy entries that stored both body and gzipped', async t => {
+  const originalFetch = globalThis.fetch
+  const raw = Buffer.from('{"ok":true}')
+  const legacy = JSON.stringify({ body: raw.toString('base64'), gzipped: gzipSync(raw).toString('base64'), etag: '"old"' })
+  globalThis.fetch = async () => new Response(JSON.stringify({ result: legacy }), { status: 200 })
+  t.after(() => { globalThis.fetch = originalFetch })
+
+  const cache = new RedisRestCache({ url: 'https://redis.example', token: 'secret' })
+  const restored = await cache.get('/api/legacy')
+  assert.equal(restored.body.toString(), raw.toString())
+  assert.equal(restored.etag, '"old"')
 })

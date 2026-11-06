@@ -1,19 +1,18 @@
 # comic-api
 
-Server scraper komik untuk aplikasi (APK). Sumber scraper aktif: **Lumos**, **Manta**, **MANGA Plus**, **Shinigami**.
+Server scraper komik untuk aplikasi (APK). Sumber scraper aktif: **Manta**, **Shinigami**, **Lumos**.
 Satu pintu API, semua sumber punya bentuk data yang sama — cepat, ringan, cache agresif.
 
 ## Jalankan
 
 ```bash
 npm install
-cp .env.example .env     # isi API_KEY
-npm start                # http://localhost:3000
+API_KEY=rahasia npm start   # http://localhost:3000 (API_KEY opsional)
 npm test                 # tes server + playground (offline, pakai mock)
 npm run smoke            # tes scraper ke situs asli (butuh internet)
 ```
 
-Butuh Node 20+. Dependensi cuma `cheerio`.
+Butuh Node 20+. Dependensi: `cheerio` (scraper) dan `mongodb` (fitur komunitas).
 
 ## Playground (halaman tes)
 
@@ -107,8 +106,8 @@ src/
   scrapers/
     index.js         registry — daftar sumber
     manta.js         Manta Comics
-    mangaplus.js     MANGA Plus (Shueisha, API protobuf resmi)
     shinigami.js     Shinigami
+    lumos.js         Lumos
     utils.js         HTTP client (retry, cache, dedupe) + trackHost
 test/                tes server
 scripts/smoke-test.mjs   tes scraper ke situs asli

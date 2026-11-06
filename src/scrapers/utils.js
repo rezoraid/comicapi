@@ -1,10 +1,13 @@
 import net from 'node:net'
-import { AsyncLocalStorage } from 'node:async_hooks'
-
-export const requestScope = new AsyncLocalStorage()
+import { createLimiter } from '../lib/limiter.js'
 
 export const UA =
   'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36'
+
+const envInt = (name, fallback) => {
+  const n = parseInt(process.env[name], 10)
+  return Number.isFinite(n) && n > 0 ? n : fallback
+}
 
 export const sleep = ms => new Promise(r => setTimeout(r, ms))
 export const clean = s => String(s ?? '').replace(/\s+/g, ' ').trim()
@@ -22,7 +25,7 @@ export function trackHost(hosts, url) {
   return url
 }
 
-export const PUBLIC_RELAYS = [
+const PUBLIC_RELAYS = [
   'https://api.allorigins.win/raw?url={url}',
   'https://api.codetabs.com/v1/proxy/?quest={url}'
 ]
@@ -41,8 +44,11 @@ export function createHttp({
   retries = 2,
   fatal = [404],
   relay = [],
-  relayTimeout = 8000
+  relayTimeout = 8000,
+  concurrency = envInt('UPSTREAM_CONCURRENCY', 10),
+  maxQueue = envInt('UPSTREAM_MAX_QUEUE', 200)
 } = {}) {
+  const limiter = createLimiter({ max: concurrency, maxQueue, waitMs: timeout * 2 })
   const cache = new Map()
   const inflight = new Map()
   const relays = [].concat(relay).filter(Boolean)
@@ -135,7 +141,8 @@ export function createHttp({
     if (hit && hit.exp > Date.now()) return Promise.resolve(hit.val)
     if (inflight.has(key)) return inflight.get(key)
 
-    const p = fetchRetry(url, json)
+    const p = limiter
+      .run(() => fetchRetry(url, json))
       .then(val => {
         if (ttl) {
           cache.set(key, { val, exp: Date.now() + ttl })
@@ -177,7 +184,6 @@ export function createMirrorHttp({ bases, ...options }) {
   return {
     get,
     base: () => clients[active].base,
-    bases: () => clients.map(c => c.base),
     clear: () => clients.forEach(c => c.http.clear())
   }
 }
