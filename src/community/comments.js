@@ -90,6 +90,15 @@ export async function createComment(ctx, user, input, hasSource) {
   await hit(ctx.limits.commentBurst, user._id, 'Terlalu cepat mengirim komentar')
   await hit(ctx.limits.commentHour, user._id, 'Batas komentar per jam tercapai')
   const body = bodyText(input.body, 'body', { max: 1000 })
+  // clientId (opsional, dibuat klien untuk optimistic UI): kiriman ulang karena timeout/jaringan putus tidak menggandakan komentar
+  const clientId = typeof input.clientId === 'string' && /^[\w.-]{8,64}$/.test(input.clientId) ? input.clientId : null
+  if (clientId) {
+    const prior = await ctx.c.comments.findOne({ userId: user._id, clientId })
+    if (prior) {
+      const [comment] = await hydrate(ctx, user, [prior])
+      return { comment, xpGained: 0, xpReason: null, user: publicUser(user, true) }
+    }
+  }
   const now = ctx.now()
   let parent = null
   let root = null
@@ -118,13 +127,15 @@ export async function createComment(ctx, user, input, hasSource) {
     edited: false,
     deleted: false,
     listed: true,
-    createdAt: now
+    createdAt: now,
+    ...(clientId ? { clientId } : {})
   }
   await ctx.c.comments.insertOne(doc)
   touchTarget(ctx, doc)
-  if (root) await ctx.c.comments.updateOne({ _id: root._id }, { $inc: { replyCount: 1 }, $set: { listed: true } })
   let xpGained = 0
   let xpReason = null
+  // menaikkan replyCount induk dan menghitung XP saling lepas → paralel (sebelumnya berurutan)
+  const bumpRoot = root ? ctx.c.comments.updateOne({ _id: root._id }, { $inc: { replyCount: 1 }, $set: { listed: true } }) : null
   if (!isQuality(body)) xpReason = 'LOW_QUALITY'
   else {
     xpGained = await awardXp(ctx, {
@@ -137,6 +148,7 @@ export async function createComment(ctx, user, input, hasSource) {
     })
     if (xpGained <= 0) xpReason = 'DAILY_CAP'
   }
+  await bumpRoot
   const fresh = await ctx.c.users.findOne({ _id: user._id }, NO_BLOB)
   const [comment] = await hydrate(ctx, fresh, [doc])
   return { comment, xpGained, xpReason, user: publicUser(fresh, true) }
@@ -189,10 +201,13 @@ export async function likeComment(ctx, user, id, on) {
   await hit(ctx.limits.like, user._id, 'Terlalu banyak like')
   const c = await ctx.c.comments.findOne({ _id: idParam(id), deleted: false })
   if (!c) throw notFound('Komentar tidak ditemukan')
+  // $inc sekaligus mengembalikan hitungan terbaru → tidak perlu findOne tambahan
+  const bump = delta => ctx.c.comments.findOneAndUpdate({ _id: c._id }, { $inc: { likeCount: delta } }, { returnDocument: 'after', projection: { likeCount: 1 } })
+  let count = null
   if (on) {
     try {
       await ctx.c.commentLikes.insertOne({ _id: newId(), commentId: c._id, userId: user._id, createdAt: ctx.now() })
-      await ctx.c.comments.updateOne({ _id: c._id }, { $inc: { likeCount: 1 } })
+      count = (await bump(1))?.likeCount ?? null
       if (c.userId !== user._id && ctx.now() - user.createdAt >= LIKER_MIN_AGE_MS) {
         await awardXp(ctx, {
           userId: c.userId,
@@ -209,10 +224,10 @@ export async function likeComment(ctx, user, id, on) {
     }
   } else {
     const r = await ctx.c.commentLikes.deleteOne({ commentId: c._id, userId: user._id })
-    if (r.deletedCount === 1) await ctx.c.comments.updateOne({ _id: c._id }, { $inc: { likeCount: -1 } })
+    if (r.deletedCount === 1) count = (await bump(-1))?.likeCount ?? null
   }
-  const fresh = await ctx.c.comments.findOne({ _id: c._id }, { projection: { likeCount: 1 } })
-  return { liked: on, likeCount: Math.max(0, fresh.likeCount) }
+  if (count === null) count = (await ctx.c.comments.findOne({ _id: c._id }, { projection: { likeCount: 1 } }))?.likeCount ?? 0
+  return { liked: on, likeCount: Math.max(0, count) }
 }
 
 export async function reportComment(ctx, user, id, input) {

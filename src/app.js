@@ -40,6 +40,34 @@ export function createApp({ registry, config, logger = console, community = null
     image: createRateLimiter(config.imageRateLimit)
   }
 
+  // di-cache: dikompres sekali (level tinggi) lalu dipakai ulang oleh semua request berikutnya
+  function cachedEntry(url, route, ctx) {
+    const key = cacheKey(url)
+    return cache.remember(key, route.ttl * 1000, async () => {
+      // Redis is L2: only consulted after local memory misses. Redis outage never blocks correctness.
+      const shared = await sharedCache.get(key)
+      if (shared) return shared
+      const fresh = await encode({ ok: true, data: await withTimeout(Promise.resolve(route.handler(ctx)), config.requestTimeoutMs) })
+      // Do not add Redis write latency to the first response.
+      void sharedCache.set(key, fresh, route.ttl).catch(() => {})
+      return fresh
+    })
+  }
+
+  // Preload di server: chapter berikutnya dimuat diam-diam begitu chapter ini diambil dari sumber,
+  // sehingga ketika pembaca menekan "Next" datanya sudah ada di cache. Maks 3 sekaligus, error diabaikan.
+  let warming = 0
+  function warm(pathname) {
+    if (warming >= 3 || !pathname.startsWith('/api/')) return
+    const found = router.match(pathname, 'GET')
+    if (!found?.route || !(found.route.ttl > 0)) return
+    const url = new URL(pathname, 'http://localhost')
+    warming++
+    cachedEntry(url, found.route, { params: found.params, query: url.searchParams, warm: null })
+      .catch(() => {})
+      .finally(() => warming--)
+  }
+
   async function handler(req, res) {
     const started = Date.now()
     const path = req.url
@@ -79,28 +107,17 @@ export function createApp({ registry, config, logger = console, community = null
         }
       }
 
-      const ctx = { req, res, params, query: url.searchParams, ip: clientIp(req, config.trustProxy) }
+      const ctx = { req, res, params, query: url.searchParams, ip: clientIp(req, config.trustProxy), warm }
       if (route.body) ctx.body = await readJson(req, url.pathname.endsWith('/me/avatar') ? 512 * 1024 : 16_384)
       if (route.raw) return await route.handler(ctx)
 
-      const data = () => withTimeout(Promise.resolve(route.handler(ctx)), config.requestTimeoutMs)
-
       if (route.ttl > 0) {
-        // di-cache: dikompres sekali (level tinggi) lalu dipakai ulang oleh semua request berikutnya
-        const key = cacheKey(url)
-        const { value, state } = await cache.remember(key, route.ttl * 1000, async () => {
-          // Redis is L2: only consulted after local memory misses. Redis outage never blocks correctness.
-          const shared = await sharedCache.get(key)
-          if (shared) return shared
-          const fresh = await encode({ ok: true, data: await data() })
-          // Do not add Redis write latency to the first response.
-          void sharedCache.set(key, fresh, route.ttl).catch(() => {})
-          return fresh
-        })
+        const { value, state } = await cachedEntry(url, route, ctx)
         return send(req, res, value, { cacheSeconds: route.ttl, cacheState: state })
       }
       // dinamis: kompres hanya kalau klien meminta, level ringan
-      return send(req, res, await encode({ ok: true, data: await data() }, { gzip: acceptsGzip(req), level: 4 }))
+      // GET dinamis (profil, komentar, riwayat): boleh disimpan klien tapi wajib divalidasi ETag; tulis (POST/PUT/DELETE) tetap no-store
+      return send(req, res, await encode({ ok: true, data: await withTimeout(Promise.resolve(route.handler(ctx)), config.requestTimeoutMs) }, { gzip: acceptsGzip(req), level: 4 }), { revalidate: req.method === 'GET' || req.method === 'HEAD' })
     } catch (err) {
       const e = toHttpError(err)
       if (e.status >= 500) logger.error(`[${e.code}] ${path} → ${err?.message || err}`)

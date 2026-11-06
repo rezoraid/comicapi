@@ -1,4 +1,6 @@
+import { createHash } from 'node:crypto'
 import { HttpError, badRequest } from '../lib/errors.js'
+import { etagMatches } from '../http/respond.js'
 import { qint, qstr, hit } from './util.js'
 import { loginWithGoogle, authenticate, me, updateProfile, updateAvatar, getUser } from './users.js'
 import { setLike, likeStatus } from './likes.js'
@@ -31,16 +33,35 @@ export function registerCommunityRoutes(router, { registry, community }) {
   router.patch(`${P}/me`, authed((cm, { body }, user) => updateProfile(cm, user, body)))
   router.put(`${P}/me/avatar`, authed((cm, { body }, user) => updateAvatar(cm, user, body)))
   router.delete(`${P}/me`, authed((cm, ctx, user) => deleteAccount(cm, user)))
-  router.get(`${P}/users/:id/avatar`, async ({ params, res }) => {
+  router.get(`${P}/users/:id/avatar`, async ({ req, res, params, query }) => {
     const cm = current()
     if (!cm) throw new HttpError(503, 'COMMUNITY_DISABLED', 'Fitur komunitas belum diaktifkan di server')
-    const user = await cm.c.users.findOne({ _id: params.id }, { projection: { customPicture: 1 } })
-    if (!user?.customPicture) throw new HttpError(404, 'AVATAR_NOT_FOUND', 'Foto profil tidak ditemukan')
-    const match = /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/]+=*)$/.exec(user.customPicture)
-    if (!match) throw new HttpError(404, 'AVATAR_NOT_FOUND', 'Foto profil tidak valid')
-    const bytes = Buffer.from(match[2], 'base64')
-    res.writeHead(200, { 'content-type': `image/${match[1]}`, 'content-length': bytes.length, 'cache-control': 'public, max-age=3600', 'x-content-type-options': 'nosniff' })
-    res.end(bytes)
+    const asked = /^\d{1,15}$/.test(query.get('v') || '') ? query.get('v') : '0'
+    let e = cm.avatars.get(params.id)
+    // URL bertanda versi (?v=) tidak berubah isinya → cache aman; URL lama tanpa ?v= dicek ulang tiap 30 dtk
+    if (!e || e.v !== asked || (asked === '0' && cm.now() - e.at > 30_000)) {
+      const user = await cm.c.users.findOne({ _id: params.id }, { projection: { customPicture: 1, avatarAt: 1 } })
+      if (!user?.customPicture) throw new HttpError(404, 'AVATAR_NOT_FOUND', 'Foto profil tidak ditemukan')
+      const match = /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/]+=*)$/.exec(user.customPicture)
+      if (!match) throw new HttpError(404, 'AVATAR_NOT_FOUND', 'Foto profil tidak valid')
+      const bytes = Buffer.from(match[2], 'base64')
+      e = { v: String(user.avatarAt || 0), at: cm.now(), mime: `image/${match[1]}`, bytes, etag: `"${createHash('sha1').update(bytes).digest('base64url').slice(0, 20)}"` }
+      cm.avatars.set(params.id, e)
+    }
+    const immutable = asked !== '0' && asked === e.v // URL versi terbaru → boleh disimpan klien selamanya
+    const headers = {
+      'content-type': e.mime,
+      etag: e.etag,
+      'cache-control': immutable ? 'public, max-age=31536000, immutable' : 'public, max-age=300, stale-while-revalidate=3600',
+      'x-content-type-options': 'nosniff'
+    }
+    if (etagMatches(req.headers['if-none-match'], e.etag)) {
+      res.writeHead(304, headers)
+      return res.end()
+    }
+    headers['content-length'] = e.bytes.length
+    res.writeHead(200, headers)
+    res.end(req.method === 'HEAD' ? undefined : e.bytes)
   }, { public: true, raw: true })
   router.get(`${P}/users/:id/profile`, maybe((cm, { params }, viewer) => getProfile(cm, viewer, params.id)))
   router.get(`${P}/users/:id/activity`, maybe((cm, { params, query }, viewer) =>

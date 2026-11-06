@@ -147,9 +147,10 @@ export async function resetMedia(ctx, actor, id, input) {
   if (!target) throw notFound('Pengguna tidak ditemukan')
   if (uid !== actor._id && rank(actor) < 3 && rank(target) >= rank(actor)) throw forbidden('Kamu tidak boleh mengubah akun dengan role ini')
   const set = {}
-  if (input?.avatar === true) Object.assign(set, { customPicture: '', hasAvatar: false })
+  if (input?.avatar === true) Object.assign(set, { customPicture: '', hasAvatar: false, avatarAt: 0 })
   if (!Object.keys(set).length) throw badRequest('Pilih "avatar"')
   await ctx.c.users.updateOne({ _id: uid }, { $set: set })
+  ctx.avatars?.delete(uid)
   return { ok: true }
 }
 

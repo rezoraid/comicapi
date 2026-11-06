@@ -42,6 +42,8 @@ export async function createCommunity(cfg, opts = {}) {
     now,
     progress,
     // cache angka murah-dibuang (per proses); kunci diinvalidasi saat data berubah di instance ini
+    // cache foto profil (id → bytes siap kirim); foto base64 besar tidak perlu dibaca ulang dari MongoDB tiap tampil
+    avatars: createTtlMap({ ttlMs: 300_000, max: 120, now }),
     stats: {
       chaptersRead: createTtlMap({ ttlMs: 10_000, now }),
       likeCount: createTtlMap({ ttlMs: 5_000, now }),

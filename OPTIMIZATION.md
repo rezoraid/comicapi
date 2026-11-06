@@ -75,3 +75,22 @@ When both Redis variables are configured, public scraper GET response cache uses
 - `REDIS_TIMEOUT_MS`: optional timeout; default `250`
 
 Redis stores only public scraper GET responses with the route's existing TTL. Community/account/comment/profile response bodies remain uncached by this layer to avoid cross-user data leakage and stale writes. Community rate-limit counters use atomic Lua fixed-window counters across replicas. If Redis is unset or unavailable, rate limiting falls back to bounded local counters; availability is preserved, but a global abuse-control boundary cannot be guaranteed during Redis outage.
+
+## v6 — perbaikan error Railway + optimasi lanjutan
+
+**Error `indeks gagal dibuat {"banned":1}` (log Railway).** Di database produksi sudah ada indeks polos `banned_1`, sedangkan v5 meminta indeks *partial* dengan nama yang sama → MongoDB menolak (IndexOptionsConflict). Perbaikan: (1) indeks `banned` kini polos sehingga cocok dengan yang sudah ada; (2) `ensureIndexes` menganggap konflik opsi AMAN bila indeks dengan kunci sama sudah ada, jadi tidak ada lagi error serupa di deploy berikutnya. Komunitas memang tetap hidup ("komunitas aktif") — error ini hanya mencatat satu indeks yang gagal, bukan crash.
+
+| Area | Perubahan |
+|---|---|
+| Foto profil | URL kini `/avatar?v=<waktu ganti>` → foto baru tampil seketika, URL lama aman di-cache `immutable` 1 tahun. Server menyimpan foto di memori (120 entri, 5 mnt) + ETag/304, jadi MongoDB tidak membaca dokumen base64 besar tiap foto tampil. Bentuk respons tidak berubah (`picture` tetap string URL). |
+| Komentar | `clientId` opsional pada `POST /comments`: kirim ulang karena timeout/jaringan putus mengembalikan komentar yang sama (tanpa ganda, tanpa XP ganda). Dasar untuk optimistic UI. Indeks `{userId, clientId}` sparse. |
+| Like komentar | satu round-trip lebih sedikit (`findOneAndUpdate` mengembalikan hitungan). |
+| Balasan | kenaikan `replyCount` induk dan penghitungan XP berjalan paralel. |
+| Header cache | Data publik: `stale-while-revalidate`. GET personal (profil, komentar, riwayat): `private, no-cache` + `Vary: Authorization` → klien memakai ETag dan menerima 304 tanpa body, data tetap akurat. Tulis tetap `no-store`. |
+| Image proxy | Cache LRU di memori untuk gambar ≤ 1,5 MB (`IMAGE_CACHE_MB`, default 48; 0 = mati). Chapter yang sama dibuka banyak orang tidak lagi memukul sumber. Aturan anti-SSRF tetap dicek sebelum cache. |
+
+Env baru: `IMAGE_CACHE_MB` (48).
+
+**Untuk sisi klien (tidak ada di zip ini):** kirim `clientId` unik (UUID) tiap komentar; gunakan `picture` apa adanya (sudah berversi); pakai `If-None-Match`/ETag pada GET; panggil `reading-progress` tanpa menunggu respons.
+
+**Preload chapter berikutnya (server).** Saat sebuah chapter baru diambil dari sumber, chapter `next`-nya dimuat diam-diam ke cache (maks 3 sekaligus, error diabaikan, memakai cache L1/Redis yang sama). Tombol "Next" jadi `x-cache: HIT`.

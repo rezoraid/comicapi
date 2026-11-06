@@ -42,7 +42,9 @@ const INDEXES = c => [
   [c.users, { createdAt: -1 }], // daftar pengguna admin + statistik 7 hari
   [c.users, { lastLoginAt: -1 }], // statistik aktif 24 jam
   [c.users, { publicNo: 1 }, { sparse: true }], // claimOwnerNo mencari pemegang nomor 1
-  [c.users, { banned: 1 }, { partialFilterExpression: { banned: true } }],
+  // Tanpa opsi (bukan partial): database produksi yang sudah punya indeks `banned_1` polos otomatis cocok,
+  // sehingga createIndex tidak bentrok (error IndexOptionsConflict yang muncul di log Railway).
+  [c.users, { banned: 1 }],
   [c.readingProgress, { userId: 1, updatedAt: -1 }],
   [c.readingProgress, { userId: 1, source: 1, slug: 1 }, { unique: true }],
   [c.readingProgress, { source: 1, slug: 1 }],
@@ -56,6 +58,7 @@ const INDEXES = c => [
   [c.comments, { parentId: 1, deleted: 1, _id: 1 }],
   [c.comments, { targetKey: 1, deleted: 1 }],
   [c.comments, { userId: 1, bodyHash: 1, createdAt: -1 }],
+  [c.comments, { userId: 1, clientId: 1 }, { sparse: true }], // idempotensi kiriman komentar (optimistic UI + retry)
   [c.comments, { type: 1, source: 1, slug: 1, deleted: 1 }],
   [c.comments, { deleted: 1, createdAt: -1 }], // komentar 24 jam terakhir (statistik admin)
   [c.comments, { reportCount: 1 }, { partialFilterExpression: { reportCount: { $gt: 0 } } }], // filter "dilaporkan"
@@ -69,10 +72,31 @@ const INDEXES = c => [
   [c.xpEvents, { commentId: 1 }]
 ]
 
-/** Satu indeks gagal (mis. data lama melanggar unique) tidak boleh mematikan seluruh komunitas. */
+const sameKey = (a, b) => JSON.stringify(Object.entries(a || {})) === JSON.stringify(Object.entries(b || {}))
+
+// 85 = IndexOptionsConflict, 86 = IndexKeySpecsConflict (indeks sama sudah ada dengan opsi/nama berbeda)
+const isIndexConflict = err => err?.code === 85 || err?.code === 86 || err?.codeName === 'IndexOptionsConflict' || err?.codeName === 'IndexKeySpecsConflict'
+
+/**
+ * Satu indeks gagal (mis. data lama melanggar unique, atau indeks setara sudah ada dengan opsi lain)
+ * tidak boleh mematikan komunitas, dan tidak boleh membuat log berisik di setiap deploy.
+ * Konflik opsi dianggap AMAN selama sudah ada indeks dengan kunci yang sama: query tetap terlayani indeks itu.
+ */
+const createOne = async (col, spec, opts, logger) => {
+  try {
+    await col.createIndex(spec, opts)
+  } catch (err) {
+    if (isIndexConflict(err)) {
+      const existing = typeof col.indexes === 'function' ? await col.indexes().catch(() => null) : null
+      if (existing?.some(i => sameKey(i.key, spec))) return // indeks setara sudah ada
+    }
+    throw err
+  }
+}
+
 export const ensureIndexes = async (c, logger = console) => {
   const jobs = INDEXES(c)
-  const results = await Promise.allSettled(jobs.map(([col, spec, opts]) => col.createIndex(spec, opts)))
+  const results = await Promise.allSettled(jobs.map(([col, spec, opts]) => createOne(col, spec, opts, logger)))
   results.forEach((r, i) => {
     if (r.status === 'rejected') logger.error(`indeks gagal dibuat ${JSON.stringify(jobs[i][1])}: ${r.reason?.message || r.reason}`)
   })

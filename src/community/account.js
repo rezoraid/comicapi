@@ -28,5 +28,6 @@ export async function deleteAccount(ctx, user) {
   ])
   ctx.stats?.chaptersRead.delete(user._id)
   await ctx.c.users.deleteOne({ _id: user._id })
+  ctx.avatars?.delete(user._id)
   return { ok: true }
 }

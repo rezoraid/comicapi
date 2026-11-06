@@ -127,9 +127,11 @@ export function registerRoutes(router, { registry, config, community = null }) {
 
   router.get(
     '/api/:source/chapter/:slug/:chapter',
-    async ({ params }) => {
+    async ({ params, warm }) => {
       const p = source(params)
       const data = await call(p, 'chapter', slugParam(params.slug, 'slug'), slugParam(params.chapter, 'chapter', CHAPTER))
+      // preload chapter berikutnya di background (hanya saat chapter ini baru diambil dari sumber)
+      if (warm && typeof data.next === 'string' && CHAPTER.test(data.next)) warm(`/api/${p.id}/chapter/${encodeURIComponent(params.slug)}/${encodeURIComponent(data.next)}`)
       // path relatif: klien (APK) tinggal prefix dengan base URL server
       return { ...data, proxy: data.images.map(u => `/api/image?url=${encodeURIComponent(u)}`) }
     },
@@ -137,5 +139,5 @@ export function registerRoutes(router, { registry, config, community = null }) {
   )
 
   /* ───── image proxy (streaming, bukan JSON) ───── */
-  router.get('/api/image', imageProxy(registry), { raw: true, limiter: 'image' })
+  router.get('/api/image', imageProxy(registry, { cacheMb: config.imageCacheMb }), { raw: true, limiter: 'image' })
 }

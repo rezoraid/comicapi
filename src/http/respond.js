@@ -25,12 +25,14 @@ export function etagMatches(header, etag) {
   return header.split(',').some(t => t.trim().replace(/^W\//, '') === etag)
 }
 
-export function send(req, res, entry, { status = 200, cacheSeconds = 0, cacheState } = {}) {
+export function send(req, res, entry, { status = 200, cacheSeconds = 0, cacheState, revalidate = false } = {}) {
   const headers = {
     'content-type': 'application/json; charset=utf-8',
     etag: entry.etag,
-    vary: 'Accept-Encoding',
-    'cache-control': cacheSeconds ? `public, max-age=${cacheSeconds}` : 'no-store'
+    vary: revalidate ? 'Accept-Encoding, Authorization' : 'Accept-Encoding',
+    // publik: klien/CDN boleh memakai data lama sambil memperbarui diam-diam (stale-while-revalidate)
+    // revalidate: data per-pengguna → hanya cache privat, selalu cek ETag (304 = tanpa body, tetap akurat)
+    'cache-control': cacheSeconds ? `public, max-age=${cacheSeconds}, stale-while-revalidate=${cacheSeconds}` : revalidate ? 'private, no-cache' : 'no-store'
   }
   if (cacheState) headers['x-cache'] = cacheState
 

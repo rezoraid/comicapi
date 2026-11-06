@@ -32,7 +32,8 @@ export const publicUser = (u, self = false) => {
     id: u._id,
     username: u.username,
     name: u.name,
-    picture: hasAvatar(u) ? `/api/community/users/${u._id}/avatar` : u.picture,
+    // ?v= (waktu ganti foto) membuat URL baru tiap foto diganti → klien/CDN boleh cache lama (immutable) tapi foto baru tampil seketika
+    picture: hasAvatar(u) ? `/api/community/users/${u._id}/avatar${u.avatarAt ? `?v=${u.avatarAt}` : ''}` : u.picture,
     role: u.role,
     // OWNER selalu terverifikasi; akun lain diberi centang oleh OWNER lewat panel admin.
     verified: owner || !!u.verified,
@@ -214,8 +215,10 @@ function parseImage(data, { maxData, maxRaw, tooBig }) {
 
 export async function updateAvatar(ctx, user, body) {
   const data = parseImage(body?.image, { maxData: 400_000, maxRaw: 280_000, tooBig: 'Foto harus berupa JPG, PNG, atau WebP dan berukuran kecil (maksimal sekitar 280 KB)' })
-  await ctx.c.users.updateOne({ _id: user._id }, { $set: { customPicture: data, hasAvatar: true } })
-  return { user: publicUser({ ...user, hasAvatar: true }, true) }
+  const avatarAt = ctx.now()
+  await ctx.c.users.updateOne({ _id: user._id }, { $set: { customPicture: data, hasAvatar: true, avatarAt } })
+  ctx.avatars?.delete(user._id)
+  return { user: publicUser({ ...user, hasAvatar: true, avatarAt }, true) }
 }
 
 export async function getUser(ctx, id) {
