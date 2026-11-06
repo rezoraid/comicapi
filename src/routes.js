@@ -1,6 +1,7 @@
 import { badRequest, notFound, HttpError } from './lib/errors.js'
 import { imageProxy } from './image-proxy.js'
 import { playground } from './playground.js'
+import { requestScope } from './scrapers/utils.js'
 import { legalHandler, privacyPage, termsPage } from './legal.js'
 
 const SLUG = /^[\w.~%-]{1,200}$/
@@ -29,6 +30,9 @@ const slugParam = (v, name, re = SLUG) => {
 }
 
 export function registerRoutes(router, { registry, config, community = null }) {
+  const langOf = q => (q.get('lang') ?? '').trim().toLowerCase().slice(0, 5)
+  const withLang = h => ctx => requestScope.run({ lang: langOf(ctx.query) }, () => h(ctx))
+  const get = (path, handler, opts) => router.get(path, withLang(handler), opts)
   // community boleh berupa objek atau fungsi getter (komunitas bisa baru tersambung setelah server jalan)
   const cm = () => (typeof community === 'function' ? community() : community)
   const source = params => {
@@ -55,7 +59,7 @@ export function registerRoutes(router, { registry, config, community = null }) {
   router.get('/api/sources', () => ({ items: registry.list() }), { ttl: 3600 })
 
   /* ───── cari ke semua sumber ───── */
-  router.get(
+  get(
     '/api/search',
     async ({ query }) => {
       const q = str(query, 'q')
@@ -67,7 +71,7 @@ export function registerRoutes(router, { registry, config, community = null }) {
   )
 
   /* ───── per sumber ───── */
-  router.get(
+  get(
     '/api/:source/search',
     async ({ params, query }) => {
       const q = str(query, 'q')
@@ -78,7 +82,7 @@ export function registerRoutes(router, { registry, config, community = null }) {
     { ttl: 60 }
   )
 
-  router.get(
+  get(
     '/api/:source/latest',
     async ({ params, query }) => {
       const page = int(query, 'page', 1, 1, 500)
@@ -87,7 +91,7 @@ export function registerRoutes(router, { registry, config, community = null }) {
     { ttl: 60 }
   )
 
-  router.get(
+  get(
     '/api/:source/popular',
     async ({ params, query }) => {
       const items = await call(source(params), 'popular', {
@@ -99,7 +103,7 @@ export function registerRoutes(router, { registry, config, community = null }) {
     { ttl: 300 }
   )
 
-  router.get(
+  get(
     '/api/:source/browse',
     ({ params, query }) => {
       const p = source(params)
@@ -117,21 +121,24 @@ export function registerRoutes(router, { registry, config, community = null }) {
     { ttl: 120 }
   )
 
-  router.get('/api/:source/genres', async ({ params }) => ({ items: await call(source(params), 'genres') }), { ttl: 3600 })
+  get('/api/:source/genres', async ({ params }) => ({ items: await call(source(params), 'genres') }), { ttl: 3600 })
 
-  router.get(
+  get(
     '/api/:source/comic/:slug',
     ({ params }) => call(source(params), 'detail', slugParam(params.slug, 'slug')),
     { ttl: 300 }
   )
 
-  router.get(
+  get(
     '/api/:source/chapter/:slug/:chapter',
-    async ({ params, warm }) => {
+    async ({ params, query, warm }) => {
       const p = source(params)
       const data = await call(p, 'chapter', slugParam(params.slug, 'slug'), slugParam(params.chapter, 'chapter', CHAPTER))
       // preload chapter berikutnya di background (hanya saat chapter ini baru diambil dari sumber)
-      if (warm && typeof data.next === 'string' && CHAPTER.test(data.next)) warm(`/api/${p.id}/chapter/${encodeURIComponent(params.slug)}/${encodeURIComponent(data.next)}`)
+      if (warm && typeof data.next === 'string' && CHAPTER.test(data.next)) {
+        const lang = langOf(query)
+        warm(`/api/${p.id}/chapter/${encodeURIComponent(params.slug)}/${encodeURIComponent(data.next)}${lang ? `?lang=${encodeURIComponent(lang)}` : ''}`)
+      }
       // path relatif: klien (APK) tinggal prefix dengan base URL server
       return { ...data, proxy: data.images.map(u => `/api/image?url=${encodeURIComponent(u)}`) }
     },

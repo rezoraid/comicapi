@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import mangaplus, { decode } from '../src/scrapers/mangaplus.js'
 import { createApp } from '../src/app.js'
 import { loadConfig } from '../src/config.js'
+import { requestScope } from '../src/scrapers/utils.js'
 import { PNG, quiet, listen, makeRegistry } from './helpers.mjs'
 
 const vi = n => {
@@ -131,5 +132,33 @@ test('image proxy: dekripsi XOR + header token, via provider.imagePrep', async (
     api.server.close()
     img.server.close()
     app.close?.()
+  }
+})
+
+test('bahasa per-request lewat requestScope, tidak tercampur di cache', async () => {
+  const lastLang = () => calls[calls.length - 1].params.get('lang')
+  await requestScope.run({ lang: 'ind' }, () => mangaplus.popular({ limit: 3 }))
+  assert.equal(lastLang(), 'ind')
+  await requestScope.run({ lang: 'esp' }, () => mangaplus.popular({ limit: 3 }))
+  assert.equal(lastLang(), 'esp')
+  const n = calls.length
+  await requestScope.run({ lang: 'ind' }, () => mangaplus.popular({ limit: 3 }))
+  assert.equal(calls.length, n)
+  await requestScope.run({ lang: 'xx' }, () => mangaplus.popular({ period: 'trending' }))
+  assert.equal(lastLang(), 'eng')
+  assert.deepEqual(mangaplus.filters.languages.slice(0, 3), ['eng', 'fra', 'ind'])
+})
+
+test('route: ?lang= diteruskan ke provider', async () => {
+  const registry = makeRegistry(1)
+  let seen
+  registry.provider.latest = async () => ((seen = requestScope.getStore()?.lang), [])
+  const app = createApp({ registry, config: loadConfig({ LOG_REQUESTS: 'false' }), logger: quiet })
+  const api = await listen(app.handler)
+  try {
+    await realFetch(`${api.url}/api/mock/latest?lang=IND`)
+    assert.equal(seen, 'ind')
+  } finally {
+    api.server.close()
   }
 })

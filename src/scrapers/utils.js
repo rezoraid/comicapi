@@ -1,4 +1,7 @@
 import net from 'node:net'
+import { AsyncLocalStorage } from 'node:async_hooks'
+
+export const requestScope = new AsyncLocalStorage()
 
 export const UA =
   'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36'

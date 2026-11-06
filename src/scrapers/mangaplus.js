@@ -1,11 +1,15 @@
 import crypto from 'node:crypto'
-import { sleep, trackHost } from './utils.js'
+import { requestScope, sleep, trackHost } from './utils.js'
 
 const API = 'https://jumpg-webapi.tokyo-cdn.com/api'
 const SITE = 'https://mangaplus.shueisha.co.jp'
 const UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
 const LANGS = ['eng', 'fra', 'ind', 'ptb', 'rus', 'esp', 'tha', 'vie', 'deu']
-const LANG = LANGS.includes(process.env.MANGAPLUS_LANG) ? process.env.MANGAPLUS_LANG : 'eng'
+const DEFAULT_LANG = LANGS.includes(process.env.MANGAPLUS_LANG) ? process.env.MANGAPLUS_LANG : 'eng'
+const currentLang = () => {
+  const l = requestScope.getStore()?.lang
+  return LANGS.includes(l) ? l : DEFAULT_LANG
+}
 const QUALITY = ['low', 'high', 'super_high'].includes(process.env.MANGAPLUS_QUALITY) ? process.env.MANGAPLUS_QUALITY : 'low'
 const TYPES = ['serializing', 'completed', 'one-shot']
 const RANKINGS = ['hottest', 'trending', 'completed']
@@ -174,7 +178,10 @@ async function request(path, params) {
   throw last
 }
 
-const call = (path, params = {}, ttl = 5 * MIN) => cached(path + JSON.stringify(params), ttl, () => request(path, { lang: LANG, ...params }))
+const call = (path, params = {}, ttl = 5 * MIN) => {
+  const lang = currentLang()
+  return cached(path + lang + JSON.stringify(params), ttl, () => request(path, { lang, ...params }))
+}
 
 const paginate = (list, page) => ({
   items: list.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
@@ -356,7 +363,7 @@ export default {
   base: SITE,
   imageHeaders: { 'user-agent': UA, referer: SITE + '/', origin: SITE },
   imageHosts,
-  filters: { types: TYPES },
+  filters: { types: TYPES, languages: LANGS },
   imagePrep,
   search,
   latest,
