@@ -68,6 +68,63 @@ export function createApp({ registry, config, logger = console, community = null
       .finally(() => warming--)
   }
 
+  // Pemanas cache: daftar Home (latest/popular), detail komik teratas, dan chapter terbarunya dijaga selalu hangat,
+  // sehingga request PERTAMA pengguna pun langsung HIT (bukan menunggu scrape ke situs sumber).
+  async function warmPath(pathAndQuery) {
+    const url = new URL(pathAndQuery, 'http://localhost')
+    const found = router.match(url.pathname, 'GET')
+    if (!found?.route || !(found.route.ttl > 0)) return null
+    const { value } = await cachedEntry(url, found.route, { params: found.params, query: url.searchParams, warm: null })
+    try {
+      return JSON.parse(value.body.toString('utf8')).data
+    } catch {
+      return null
+    }
+  }
+
+  let warmRunning = false
+  async function warmOnce() {
+    if (warmRunning) return
+    warmRunning = true
+    try {
+      const only = config.warmSources?.length ? new Set(config.warmSources) : null
+      for (const s of registry.list()) {
+        if (only && !only.has(s.id)) continue
+        const id = encodeURIComponent(s.id)
+        try {
+          const latest = await warmPath(`/api/${id}/latest?page=1`)
+          const popular = await warmPath(`/api/${id}/popular`)
+          const slugs = [...new Set([...(latest?.items || []), ...(popular?.items || [])].map(i => i?.slug).filter(x => typeof x === 'string' && x))].slice(0, config.warmDetails ?? 6)
+          let chapters = 0
+          for (const slug of slugs) {
+            const detail = await warmPath(`/api/${id}/comic/${encodeURIComponent(slug)}`)
+            const first = detail?.chapters?.[0]?.slug
+            if (typeof first === 'string' && first && chapters < (config.warmChapters ?? 3)) {
+              chapters++
+              await warmPath(`/api/${id}/chapter/${encodeURIComponent(slug)}/${encodeURIComponent(first)}`)
+            }
+            await new Promise(r => setTimeout(r, 100)) // jeda kecil agar situs sumber tidak dibanjiri
+          }
+        } catch (err) {
+          logger.error(`[warm] ${s.id} gagal → ${err?.message || err}`)
+        }
+      }
+    } finally {
+      warmRunning = false
+    }
+  }
+
+  let warmTimer = null
+  let warmStart = null
+  function startWarmer() {
+    if (warmTimer || config.warmEnabled === false) return
+    const tick = () => void warmOnce().catch(() => {})
+    warmStart = setTimeout(tick, 1500)
+    warmStart.unref?.()
+    warmTimer = setInterval(tick, Math.max(5, config.warmIntervalSec ?? 30) * 1000)
+    warmTimer.unref?.()
+  }
+
   async function handler(req, res) {
     const started = Date.now()
     const path = req.url
@@ -129,7 +186,11 @@ export function createApp({ registry, config, logger = console, community = null
   return {
     handler,
     cache,
+    startWarmer,
+    warmOnce,
     close() {
+      if (warmTimer) clearInterval(warmTimer)
+      if (warmStart) clearTimeout(warmStart)
       limiters.default.close()
       limiters.image.close()
     }

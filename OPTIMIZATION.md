@@ -94,3 +94,11 @@ Env baru: `IMAGE_CACHE_MB` (48).
 **Untuk sisi klien (tidak ada di zip ini):** kirim `clientId` unik (UUID) tiap komentar; gunakan `picture` apa adanya (sudah berversi); pakai `If-None-Match`/ETag pada GET; panggil `reading-progress` tanpa menunggu respons.
 
 **Preload chapter berikutnya (server).** Saat sebuah chapter baru diambil dari sumber, chapter `next`-nya dimuat diam-diam ke cache (maks 3 sekaligus, error diabaikan, memakai cache L1/Redis yang sama). Tombol "Next" jadi `x-cache: HIT`.
+
+**Balasan komentar:** `GET /comments/:id/replies` memeriksa komentar induk dan mengambil balasan secara paralel (satu round-trip database lebih sedikit).
+
+## Pemanas cache server (instant untuk pengguna pertama)
+
+Server menjaga daftar Home (`latest?page=1`, `popular`), detail komik teratas, dan chapter terbarunya selalu hangat di cache (L1 + Redis), sehingga request pertama pengguna pun `x-cache: HIT` tanpa menunggu scrape ke situs sumber. Berjalan di background tiap 30 detik, berurutan dengan jeda kecil agar sumber tidak dibanjiri; satu sumber gagal tidak mengganggu yang lain.
+
+Env (semua opsional): `WARM_ENABLED` (default true; `false` untuk mematikan), `WARM_INTERVAL_SEC` (30), `WARM_DETAILS` (6 komik per sumber), `WARM_CHAPTERS` (3 chapter terbaru per sumber), `WARM_SOURCES` (daftar id dipisah koma; kosong = semua sumber).

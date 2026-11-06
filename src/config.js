@@ -29,6 +29,12 @@ export function loadConfig(env = process.env) {
     cacheMax: int(env.CACHE_MAX, 1000),
     // cache gambar proxy di memori (MB). 0 = mati. Item > 1,5 MB tidak disimpan
     imageCacheMb: int(env.IMAGE_CACHE_MB, 48),
+    // pemanas cache: daftar utama + detail/chapter teratas dijaga hangat di server (0 detik interval = mati lewat WARM_ENABLED=false)
+    warmEnabled: env.WARM_ENABLED !== 'false',
+    warmIntervalSec: int(env.WARM_INTERVAL_SEC, 30),
+    warmDetails: int(env.WARM_DETAILS, 6),
+    warmChapters: int(env.WARM_CHAPTERS, 3),
+    warmSources: (env.WARM_SOURCES || '').split(',').map(s => s.trim()).filter(Boolean),
     // batas total memori cache respons (MB). 0 = tanpa batas byte
     cacheMaxMb: int(env.CACHE_MAX_MB, 96),
     // Optional Upstash Redis REST shared L2 cache. Keep local L1 cache active if unset/unavailable.

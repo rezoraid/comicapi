@@ -81,9 +81,14 @@ export async function listComments(ctx, viewer, target, { sort = 'newest', page:
 }
 
 export async function listReplies(ctx, viewer, rootId, { page: pageNo = 1, limit = 15 }) {
-  const root = await ctx.c.comments.findOne({ _id: idParam(rootId), parentId: null })
+  const id = idParam(rootId)
+  // cek komentar induk dan ambil balasan berjalan paralel (satu round-trip database lebih sedikit)
+  const [root, res] = await Promise.all([
+    ctx.c.comments.findOne({ _id: id, parentId: null }, { projection: { _id: 1 } }),
+    page(ctx, viewer, { parentId: id, deleted: false }, { _id: 1 }, pageNo, limit)
+  ])
   if (!root) throw notFound('Komentar tidak ditemukan')
-  return page(ctx, viewer, { parentId: root._id, deleted: false }, { _id: 1 }, pageNo, limit)
+  return res
 }
 
 export async function createComment(ctx, user, input, hasSource) {

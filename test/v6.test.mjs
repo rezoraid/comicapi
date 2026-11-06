@@ -154,3 +154,28 @@ test('preload: chapter berikutnya dimuat di background saat chapter ini diambil'
     a2.close()
   }
 })
+
+test('pemanas: daftar, detail, dan chapter teratas sudah hangat sebelum pengguna meminta', async () => {
+  const reg = makeRegistry(img.port)
+  let detailCalls = 0
+  const origDetail = reg.provider.detail.bind(reg.provider)
+  reg.provider.detail = async slug => (detailCalls++, origDetail(slug))
+  const a3 = createApp({ registry: reg, config: loadConfig({ LOG_REQUESTS: 'false', WARM_DETAILS: '2', WARM_CHAPTERS: '1' }), logger: quiet })
+  const s3 = await listen(a3.handler)
+  try {
+    await a3.warmOnce()
+    const latest = await fetch(`${s3.url}/api/mock/latest?page=1`)
+    assert.equal(latest.headers.get('x-cache'), 'HIT')
+    const pop = await fetch(`${s3.url}/api/mock/popular`)
+    assert.equal(pop.headers.get('x-cache'), 'HIT')
+    const before = detailCalls
+    const d = await fetch(`${s3.url}/api/mock/comic/komik-0`)
+    assert.equal(d.headers.get('x-cache'), 'HIT')
+    assert.equal(detailCalls, before, 'detail tidak di-scrape ulang')
+    const ch = await fetch(`${s3.url}/api/mock/chapter/komik-0/1`)
+    assert.equal(ch.headers.get('x-cache'), 'HIT')
+  } finally {
+    s3.server.close()
+    a3.close()
+  }
+})

@@ -25,6 +25,7 @@ server.requestTimeout = 30_000
 server.listen(config.port, config.host, () => {
   console.log(`comic-api jalan di http://${config.host}:${config.port}  (sumber: ${registry.list().map(s => s.id).join(', ')})`)
   if (!config.apiKey) console.log('⚠️  API_KEY kosong — endpoint terbuka untuk umum')
+  app.startWarmer() // jaga daftar Home + detail/chapter teratas selalu hangat di cache
 })
 
 function shutdown(signal) {
