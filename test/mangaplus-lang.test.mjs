@@ -142,3 +142,15 @@ test('detail: bahasa lain ditemukan lewat daftar tiap bahasa saat server hanya k
     responses['title_list/all_v3'] = saved
   }
 })
+
+test('katalog seragam: latest/popular/detail MANGA Plus punya genre + status seperti sumber lain', async () => {
+  const lat = await as('ind', () => mangaplus.latest({ page: 1 }))
+  assert.deepEqual([lat[0].genres, lat[0].status], [['Action'], 'ongoing'])
+  const pop = await as('eng', () => mangaplus.popular({ limit: 5 }))
+  assert.equal(pop[0].slug, '100021') // tanpa genre di daftar sumber: tetap array kosong, bukan hilang
+  assert.deepEqual(pop[0].genres, [])
+  const d = await mangaplus.detail(String(OP.ind))
+  assert.deepEqual([d.genres, d.status], [['Action'], 'ongoing'])
+  const s = await as('ind', () => mangaplus.search('one piece'))
+  assert.deepEqual([s[0].genres, s[0].status], [['Action'], 'ongoing'])
+})

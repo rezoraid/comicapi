@@ -128,3 +128,20 @@ Penyebab bug "pilih Indonesia tapi isinya bahasa lain": server MANGA Plus mengel
 | Chapter di `detail` disaring: hanya milik ID judul itu | Chapter bahasa lain tidak bisa tercampur |
 
 Tes: `test/mangaplus-lang.test.mjs` (fixture multi-bahasa).
+
+### Katalog seragam semua sumber (v12)
+
+Semua respons komik (`search`, `latest`, `popular`, `browse`, `comic`, `/api/search`) kini melewati `src/normalize.js` sebelum dikirim, jadi APK menerima bentuk data yang sama dari sumber mana pun.
+
+| Kolom | Bentuk baku |
+|---|---|
+| `type` | `manga` · `manhwa` · `manhua` · `webtoon` · `novel` · `''` |
+| `status` | `ongoing` · `completed` · `hiatus` · `cancelled` · `''` |
+| `genres` | `["Action", "Slice of Life"]` — huruf judul, tanpa duplikat |
+| `rating` | 0–10 satu desimal, atau `null` |
+| `views` | angka, atau `null` |
+| `author` / `artist` / `year` | teks bersih; placeholder seperti "N/A", "Updating" → `''` |
+| `chapters[]` | `{ slug, number, title, timeAgo, releaseDate, isNew }` |
+| `source` | selalu ada |
+
+MANGA Plus dilengkapi: status (dari daftar Serializing/Completed/One-shot), nama genre, dan views, juga untuk `latest`, `popular`, dan `detail`. Tes: `test/normalize.test.mjs`.

@@ -3,6 +3,7 @@ import { imageProxy } from './image-proxy.js'
 import { playground } from './playground.js'
 import { requestScope } from './scrapers/utils.js'
 import { legalHandler, privacyPage, termsPage } from './legal.js'
+import { normalizeBrowse, normalizeDetail, normalizeList } from './normalize.js'
 
 const SLUG = /^[\w.~%-]{1,200}$/
 const CHAPTER = /^[\w.~%-]{1,50}$/
@@ -65,7 +66,7 @@ export function registerRoutes(router, { registry, config, community = null }) {
       const q = str(query, 'q')
       if (!q) throw badRequest('Parameter "q" wajib diisi')
       const { items, failed } = await registry.searchAll(q, { limit: int(query, 'limit', 10, 1, 30) })
-      return { items, failed }
+      return { items: normalizeList(items), failed }
     },
     { ttl: 60 }
   )
@@ -76,8 +77,9 @@ export function registerRoutes(router, { registry, config, community = null }) {
     async ({ params, query }) => {
       const q = str(query, 'q')
       if (!q) throw badRequest('Parameter "q" wajib diisi')
-      const items = await call(source(params), 'search', q, { limit: int(query, 'limit', 10, 1, 30) })
-      return { items }
+      const p = source(params)
+      const items = await call(p, 'search', q, { limit: int(query, 'limit', 10, 1, 30) })
+      return { items: normalizeList(items, p.id) }
     },
     { ttl: 60 }
   )
@@ -86,7 +88,8 @@ export function registerRoutes(router, { registry, config, community = null }) {
     '/api/:source/latest',
     async ({ params, query }) => {
       const page = int(query, 'page', 1, 1, 500)
-      return { page, items: await call(source(params), 'latest', { page }) }
+      const p = source(params)
+      return { page, items: normalizeList(await call(p, 'latest', { page }), p.id) }
     },
     { ttl: 60 }
   )
@@ -94,21 +97,22 @@ export function registerRoutes(router, { registry, config, community = null }) {
   get(
     '/api/:source/popular',
     async ({ params, query }) => {
-      const items = await call(source(params), 'popular', {
+      const p = source(params)
+      const items = await call(p, 'popular', {
         period: str(query, 'period', 20).toLowerCase(),
         limit: int(query, 'limit', 10, 1, 50)
       })
-      return { items }
+      return { items: normalizeList(items, p.id) }
     },
     { ttl: 300 }
   )
 
   get(
     '/api/:source/browse',
-    ({ params, query }) => {
+    async ({ params, query }) => {
       const p = source(params)
       const f = p.filters || {}
-      return call(p, 'browse', {
+      return normalizeBrowse(await call(p, 'browse', {
         q: str(query, 'q'),
         genre: str(query, 'genre', 200).split(',').map(s => s.trim().toLowerCase()).filter(Boolean),
         type: oneOf(str(query, 'type', 20).toLowerCase(), f.types, 'type'),
@@ -116,7 +120,7 @@ export function registerRoutes(router, { registry, config, community = null }) {
         sort: oneOf(str(query, 'sort', 20).toLowerCase(), f.sorts, 'sort'),
         minChapters: int(query, 'min', 0, 0, 10000) || '',
         page: int(query, 'page', 1, 1, 500)
-      })
+      }), p.id)
     },
     { ttl: 120 }
   )
@@ -125,7 +129,10 @@ export function registerRoutes(router, { registry, config, community = null }) {
 
   get(
     '/api/:source/comic/:slug',
-    ({ params }) => call(source(params), 'detail', slugParam(params.slug, 'slug')),
+    async ({ params }) => {
+      const p = source(params)
+      return normalizeDetail(await call(p, 'detail', slugParam(params.slug, 'slug')), p.id)
+    },
     { ttl: 300 }
   )
 

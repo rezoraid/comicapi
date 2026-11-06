@@ -115,7 +115,10 @@ const item = (o = {}) => ({
 // Tiap bahasa adalah judul sendiri dengan ID sendiri (chapter-nya pun terpisah per bahasa).
 const titleLang = n => LANG_BY_ID[int(n, 7) ?? 0] ?? 'eng'
 
-const mapTitle = n => item({ slug: String(int(n, 1)), title: str(n, 2).trim(), author: str(n, 3).trim(), cover: img(str(n, 4)), lang: titleLang(n) })
+const mapTitle = n => item({ slug: String(int(n, 1)), title: str(n, 2).trim(), author: str(n, 3).trim(), cover: img(str(n, 4)), lang: titleLang(n), views: int(n, 6) ?? null })
+
+// MANGA Plus tidak mengirim status per judul; status diambil dari daftar tempat judul itu berada.
+const STATUS_BY_LIST = { serializing: 'ongoing', completed: 'completed', 'one-shot': 'completed' }
 
 const chapterNumber = name => {
   const m = String(name ?? '').match(/^#?\s*(\d+(?:\.\d+)?)/)
@@ -214,10 +217,13 @@ async function listType(type) {
   const view = msg(d, 35)
   const genres = nodes(view, 2).map(g => ({ name: str(g, 1), slug: str(g, 2) })).filter(g => g.name)
   const groups = []
+  const genreName = new Map(genres.map(x => [x.slug, x.name]))
   for (const g of nodes(view, 3)) {
-    const gg = nodes(g, 3).map(x => str(x, 2)).filter(Boolean)
-    const variants = nodes(g, 2).filter(isTitle).map(t => ({ ...mapTitle(t), genres: gg }))
-    if (variants.length) groups.push(Object.assign(variants, { type }))
+    const slugs = nodes(g, 3).map(x => str(x, 2)).filter(Boolean)
+    const names = slugs.map(sl => genreName.get(sl) || sl)
+    const status = STATUS_BY_LIST[type] || ''
+    const variants = nodes(g, 2).filter(isTitle).map(t => ({ ...mapTitle(t), genres: names, status }))
+    if (variants.length) groups.push(Object.assign(variants, { type, genreSlugs: slugs }))
   }
   if (!groups.length) {
     // struktur tak dikenal: kelompokkan sendiri berdasarkan judul + penulis agar bahasa tidak jadi duplikat
@@ -225,9 +231,9 @@ async function listType(type) {
     for (const t of grab(d, isTitle, mapTitle)) {
       const k = `${t.title}|${t.author}`.toLowerCase()
       if (!byName.has(k)) byName.set(k, [])
-      byName.get(k).push({ ...t, genres: [] })
+      byName.get(k).push({ ...t, genres: [], status: STATUS_BY_LIST[type] || '' })
     }
-    groups.push(...[...byName.values()].map(g => Object.assign(g, { type })))
+    groups.push(...[...byName.values()].map(g => Object.assign(g, { type, genreSlugs: [] })))
   }
   return { genres, groups }
 }
@@ -280,10 +286,13 @@ async function probeOtherLanguages(group, slug, found) {
   }
 }
 
-/** Bahasa yang tersedia untuk serial ini: [{ code, slug }], slug = ID judul pada bahasa itu. */
-const variantsOf = (slug, language) =>
-  cached(`variants|${slug}|${language}`, 30 * MIN, async () => {
-    const self = [{ code: language, slug }]
+/**
+ * Data katalog untuk satu judul: bahasa yang tersedia ([{ code, slug }], slug = ID judul pada bahasa itu)
+ * plus genre dan status dari daftar (halaman detail MANGA Plus sendiri tidak memuatnya).
+ */
+const locate = (slug, language) =>
+  cached(`locate|${slug}|${language}`, 30 * MIN, async () => {
+    const self = { variants: [{ code: language, slug }], genres: [], status: '' }
     try {
       const { groups } = await requestScope.run({ lang: language }, () => everything(TYPES))
       const g = groups.find(x => x.some(t => t.slug === slug))
@@ -291,11 +300,30 @@ const variantsOf = (slug, language) =>
       const found = new Map(g.map(t => [t.lang, t.slug]))
       if (!found.has(language)) found.set(language, slug)
       if (found.size < 2) await probeOtherLanguages(g, slug, found)
-      return LANGS.filter(c => found.has(c)).map(c => ({ code: c, slug: found.get(c) }))
+      const me = g.find(t => t.slug === slug) || g[0]
+      return {
+        variants: LANGS.filter(c => found.has(c)).map(c => ({ code: c, slug: found.get(c) })),
+        genres: me.genres || [],
+        status: me.status || ''
+      }
     } catch {
       return self
     }
   })
+
+/** Lengkapi daftar latest/popular dengan genre, status, dan views dari katalog (daftar mentahnya tidak memuatnya). */
+async function withCatalog(items) {
+  try {
+    const { groups } = await everything(TYPES)
+    const bySlug = new Map(groups.flatMap(g => g.map(t => [t.slug, t])))
+    return items.map(it => {
+      const t = bySlug.get(it.slug)
+      return t ? { ...it, genres: t.genres, status: t.status, views: it.views ?? t.views } : it
+    })
+  } catch {
+    return items
+  }
+}
 
 /** Daftar ranking/terbaru: hanya judul bahasa terpilih (kalau server mengirim campuran). */
 const inLang = items => {
@@ -318,7 +346,7 @@ export async function latest({ page = 1 } = {}) {
     if (t && isTitle(t)) out.push({ ...mapTitle(t), updatedAt: iso(int(g, 2)) })
   }
   const items = out.length ? out : grab(d, isTitle, mapTitle)
-  return paginate(inLang(items), page).items
+  return withCatalog(paginate(inLang(items), page).items)
 }
 
 export async function popular({ period = '', limit = 10 } = {}) {
@@ -330,14 +358,14 @@ export async function popular({ period = '', limit = 10 } = {}) {
     if (n && isTitle(n)) out.push(mapTitle(n))
   }
   const items = out.length ? out : grab(d, isTitle, mapTitle)
-  return inLang(items).slice(0, limit)
+  return withCatalog(inLang(items).slice(0, limit))
 }
 
 export async function browse({ q = '', type = '', genre = [], page = 1 } = {}) {
   const { genres, groups } = await everything(type ? [type] : q ? TYPES : ['serializing'])
   const wanted = [].concat(genre).filter(Boolean).map(g => genres.find(x => x.name.toLowerCase() === g || x.slug === g)?.slug ?? g)
   const tokens = tokensOf(q)
-  const list = groups.filter(g => groupMatches(g, tokens) && wanted.every(w => g[0].genres.includes(w))).map(g => pick(g))
+  const list = groups.filter(g => groupMatches(g, tokens) && wanted.every(w => (g.genreSlugs || []).includes(w))).map(g => pick(g))
   return paginate(list, page)
 }
 
@@ -386,7 +414,8 @@ async function detailCore(slug) {
 
 export async function detail(slug) {
   const d = await detailCore(slug)
-  return { ...d, languages: await variantsOf(slug, d.language) }
+  const info = await locate(slug, d.language)
+  return { ...d, genres: info.genres, status: info.status, languages: info.variants }
 }
 
 export async function chapter(slug, chapterSlug) {
