@@ -39,7 +39,9 @@ export const collections = db => ({
   viewDedupe: db.collection('view_dedupe'),
   comicOverrides: db.collection('comic_overrides'),
   chapterOverrides: db.collection('chapter_overrides'),
-  media: db.collection('media')
+  media: db.collection('media'),
+  // katalog internal: satu rekaman lengkap per komik hasil sinkronisasi (lihat catalog-sync.js)
+  catalog: db.collection('comic_catalog')
 })
 
 // Indeks yang sudah ada TIDAK diubah (mengubah opsi indeks yang sama membuat createIndex error).
@@ -85,7 +87,8 @@ const INDEXES = c => [
   [c.pushTokens, { updatedAt: 1 }],
   // kunci dedupe views kedaluwarsa otomatis (jendela 6 jam; lihat VIEW_WINDOW_MS di catalog.js)
   [c.viewDedupe, { at: 1 }, { expireAfterSeconds: 21_600 }],
-  [c.comicOverrides, { type: 1 }, { sparse: true }]
+  [c.comicOverrides, { type: 1 }, { sparse: true }],
+  [c.catalog, { nt: 1 }, { sparse: true }] // komik yang sama di sumber lain (judul identik)
 ]
 
 const sameKey = (a, b) => JSON.stringify(Object.entries(a || {})) === JSON.stringify(Object.entries(b || {}))

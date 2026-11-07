@@ -235,3 +235,14 @@ Halaman publik `/privacy` (Kebijakan Privasi) dan `/terms` (Ketentuan) tersedia 
 ## Performa & operasional
 
 Ringkasan optimasi dan variabel env baru: lihat [`OPTIMIZATION.md`](OPTIMIZATION.md).
+
+## Katalog internal & kelengkapan data
+
+Semua daftar (latest/popular/search/browse) dan detail melewati `catalog` (koleksi Mongo `comic_catalog`):
+data yang kosong dilengkapi dari detail sumber, sumber lain (judul sama), lalu AniList (hanya judul dikirim).
+Nilai hasil turunan (status/tahun/sinopsis) ditandai di `derived[]`. Crawler latar belakang mengisi seluruh katalog bertahap (butuh MongoDB).
+
+Env: `CATALOG` (true), `META_ENRICH` (true; `false` menonaktifkan AniList), `CATALOG_CRAWL` (true),
+`CATALOG_CRAWL_PAGES` (8), `CATALOG_CRAWL_INTERVAL_MIN` (20), `CATALOG_CRAWL_DELAY_MS` (400), `CATALOG_INLINE_MAX` (12).
+
+Admin (OWNER): `GET {prefix}/admin/catalog/status`, `POST {prefix}/admin/catalog/sync` body `{source?, slug?, pages?}`.

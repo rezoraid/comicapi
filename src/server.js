@@ -9,12 +9,18 @@ import { createApp } from './app.js'
 import { RedisRestCache } from './lib/redis-rest-cache.js'
 import registry from './scrapers/index.js'
 import { startCommunity } from './community/lifecycle.js'
+import { createCatalog } from './catalog-sync.js'
+import { createExternalMeta } from './external-meta.js'
 
 const config = loadConfig()
 // MongoDB disambung di background (dengan retry) → server siap menerima request seketika, tanpa menunggu database
 const sharedCache = new RedisRestCache({ url: config.redisRestUrl, token: config.redisRestToken, prefix: config.redisKeyPrefix, timeoutMs: config.redisTimeoutMs })
 const community = startCommunity(config.community, { sharedCache })
-const app = createApp({ registry, config, community: community.get, sharedCache })
+const { enabled: catalogEnabled, metaEnrich, ...catalogOpts } = config.catalog
+const catalog = catalogEnabled
+  ? createCatalog({ registry, collection: () => community.get()?.c?.catalog ?? null, external: createExternalMeta({ enabled: metaEnrich }), ...catalogOpts })
+  : null
+const app = createApp({ registry, config, community: community.get, sharedCache, catalog })
 
 const server = createServer(app.handler)
 // lebih panjang dari idle timeout load balancer (biasanya 60s) → hindari 502 acak
@@ -26,12 +32,14 @@ server.listen(config.port, config.host, () => {
   console.log(`comic-api jalan di http://${config.host}:${config.port}  (sumber: ${registry.list().map(s => s.id).join(', ')})`)
   if (!config.apiKey) console.log('⚠️  API_KEY kosong — endpoint terbuka untuk umum')
   app.startWarmer() // jaga daftar Home + detail/chapter teratas selalu hangat di cache
+  catalog?.startCrawler() // telusuri seluruh komik tiap sumber pelan-pelan (butuh MongoDB)
 })
 
 function shutdown(signal) {
   console.log(`${signal} diterima, mematikan server...`)
   server.close(() => {
     app.close()
+    catalog?.close()
     // stop() juga menguras antrean progres baca sebelum koneksi MongoDB ditutup
     community.stop().catch(() => {}).finally(() => process.exit(0))
   })

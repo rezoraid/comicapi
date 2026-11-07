@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { HttpError, badRequest } from '../lib/errors.js'
+import { HttpError, badRequest, forbidden, notFound } from '../lib/errors.js'
 import { etagMatches } from '../http/respond.js'
 import { qint, qstr, hit } from './util.js'
 import { loginWithGoogle, authenticate, me, updateProfile, updateAvatar, getUser } from './users.js'
@@ -11,11 +11,12 @@ import { saveProgress, trackReadingTime } from './reading.js'
 import { createBroadcast, feed, listBroadcasts, removeBroadcast } from './broadcasts.js'
 import { trackComicView, trackChapterView, viewerKey, getComicAdmin, saveComic, resetComic, getPages, savePages, resetPages, uploadMedia, serveMedia } from './catalog.js'
 import { normalizeDetail } from '../normalize.js'
+import { rank } from './util.js'
 import { listReports, resolveReport, findUser, userDetail, grantXp, resetMedia, setRole, setVerified, setBan, adminStats, listUsers, listAdminComments } from './admin.js'
 
 const P = '/api/community'
 
-export function registerCommunityRoutes(router, { registry, community }) {
+export function registerCommunityRoutes(router, { registry, community, catalog = null }) {
   const hasSource = id => registry.has(id)
   // community boleh berupa objek atau fungsi getter (koneksi MongoDB bisa tersambung belakangan, dengan retry)
   const current = () => (typeof community === 'function' ? community() : community)
@@ -131,6 +132,33 @@ export function registerCommunityRoutes(router, { registry, community }) {
     return cm.push.unregister(body)
   }))
   router.get(`${P}/admin/push-status`, authed((cm, ctx, user) => cm.push.status(user)))
+
+  // Katalog internal (OWNER): status kelengkapan, sinkron ulang satu komik, atau mulai crawl seluruh sumber.
+  const needOwner = u => {
+    if (rank(u) < 3) throw forbidden('Fitur ini khusus OWNER')
+  }
+  const needCatalog = () => {
+    if (!catalog) throw new HttpError(503, 'CATALOG_DISABLED', 'Katalog internal dimatikan (CATALOG=false)')
+    return catalog
+  }
+  router.get(`${P}/admin/catalog/status`, authed((cm, ctx, user) => {
+    needOwner(user)
+    return needCatalog().status()
+  }))
+  router.post(`${P}/admin/catalog/sync`, authed(async (cm, { body }, user) => {
+    needOwner(user)
+    const cat = needCatalog()
+    const source = typeof body?.source === 'string' ? body.source : ''
+    if (source && !hasSource(source)) throw notFound(`Sumber "${source}" tidak ada`)
+    if (typeof body?.slug === 'string' && body.slug) {
+      if (!source) throw badRequest('"source" wajib diisi bersama "slug"')
+      const rec = await cat.refresh(source, body.slug)
+      if (!rec) throw new HttpError(502, 'SYNC_FAILED', 'Komik gagal disinkronkan dari sumbernya')
+      return { synced: rec }
+    }
+    void cat.crawlOnce({ source, pages: Math.min(200, Math.max(1, parseInt(body?.pages, 10) || 8)) }).catch(() => {})
+    return { started: true, source: source || 'semua' }
+  }))
 
   router.get(`${P}/admin/reports`, authed((cm, { query }, user) => listReports(cm, user, { status: qstr(query, 'status', 10) || 'open', page: qint(query, 'page', 1, 1, 200), limit: 20 })))
   router.post(`${P}/admin/reports/:id/resolve`, authed((cm, { params, body }, user) => resolveReport(cm, user, params.id, body.action)))

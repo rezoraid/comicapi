@@ -53,18 +53,47 @@ const item = (o = {}) => ({
   ...o
 })
 
+/** Ambil nilai pertama yang ada dari beberapa kemungkinan nama field (Manta tidak mendokumentasikan API-nya). */
+const first = (obj, keys) => {
+  for (const k of keys) if (obj?.[k] != null && obj[k] !== '') return obj[k]
+  return null
+}
+
+function statusOfSeries(s = {}, d = {}) {
+  const raw = first(s, ['status', 'seriesStatus', 'publishStatus', 'serialStatus']) ?? first(d, ['status', 'seriesStatus'])
+  if (typeof raw === 'string') return raw
+  if (s.completed === true || s.isCompleted === true || s.finished === true || s.isFinished === true || s.completeYn === 'Y') return 'completed'
+  return ''
+}
+
 function fromApi(raw) {
   const d = raw.data ?? {}
   const slug = String(raw.id ?? raw.seriesId ?? '')
-  const count = raw.episodeCount ?? raw.latestEpisode?.ord ?? null
+  const latest = raw.latestEpisode ?? {}
+  const count = raw.episodeCount ?? latest.ord ?? null
+  const when = latest.openAt ?? latest.releaseAt ?? latest.updatedAt ?? null
   return item({
     title: clean(loc(d.title) || raw.title),
     slug,
     cover: coverOf(raw.image) || img(raw.coverImage?.downloadUrl),
     type: typeOf(raw.type ?? raw.seriesType, d.tags),
+    status: statusOfSeries(raw, d),
     genres: tagNames(d.tags ?? []),
-    chapterCount: count != null ? Number(count) : null
+    views: first(raw, ['viewCount', 'views', 'hits', 'readCount']),
+    chapterCount: count != null ? Number(count) : null,
+    // chapter terbaru + waktunya, bila sumber menyertakannya di daftar (nilai ISO dibaca APK jadi "3 jam lalu")
+    chapters: latest.ord != null || latest.id != null ? [{ slug: String(latest.id ?? ''), number: String(latest.ord ?? ''), timeAgo: '', releaseDate: when ?? null }] : []
   })
+}
+
+/** Pembuat karya dipisah per peran bila sumber menyebutkannya; tanpa peran, semua nama jadi author. */
+function creatorsOf(list = []) {
+  const people = (Array.isArray(list) ? list : []).map(c => ({ name: clean(c?.name), role: String(c?.role ?? c?.type ?? c?.job ?? '') })).filter(c => c.name)
+  const names = re => [...new Set(people.filter(c => re.test(c.role)).map(c => c.name))].join(', ')
+  const all = [...new Set(people.map(c => c.name))].join(', ')
+  const artist = names(/art|illust|draw|pencil|ink/i)
+  const author = names(/writ|stor|author|origin|script/i) || (artist ? '' : all)
+  return { author, artist }
 }
 
 async function homeSection(type) {
@@ -139,12 +168,12 @@ export async function detail(slug) {
     cover: coverOf(s.image) || img(head.image),
     alt: [],
     synopsis: d.description?.long ?? d.description?.short ?? head.description ?? '',
-    status: '',
+    status: statusOfSeries(s, d),
     type: typeOf(s.type, d.tags),
-    author: (d.creators ?? []).map(c => c.name).filter(Boolean).join(', '),
-    artist: '',
-    year: '',
-    views: null,
+    author: creatorsOf(d.creators).author,
+    artist: creatorsOf(d.creators).artist,
+    year: String(first(s, ['openAt', 'createdAt', 'releaseAt']) ?? '').slice(0, 4),
+    views: first(s, ['viewCount', 'views', 'hits', 'readCount']),
     rating: null,
     ratingCount: null,
     genres: tagNames(d.tags ?? []),

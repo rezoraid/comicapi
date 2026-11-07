@@ -54,6 +54,16 @@ export function loadConfig(env = process.env) {
     // halaman tes di /playground — set PLAYGROUND=false untuk mematikan
     playground: env.PLAYGROUND !== 'false',
     contactEmail: env.CONTACT_EMAIL || '',
+    // katalog internal: sinkronisasi detail komik, metadata luar (AniList), dan crawler seluruh komik
+    catalog: {
+      enabled: env.CATALOG !== 'false',
+      metaEnrich: env.META_ENRICH !== 'false', // false = tidak menghubungi AniList sama sekali
+      crawl: env.CATALOG_CRAWL !== 'false',
+      crawlPagesPerCycle: int(env.CATALOG_CRAWL_PAGES, 8),
+      crawlIntervalMs: int(env.CATALOG_CRAWL_INTERVAL_MIN, 20) * 60_000,
+      crawlDelayMs: int(env.CATALOG_CRAWL_DELAY_MS, 400),
+      inlineMax: int(env.CATALOG_INLINE_MAX, 12)
+    },
     community: {
       mongoUri: env.MONGODB_URI || '',
       dbName: env.MONGODB_DB || 'komikta',

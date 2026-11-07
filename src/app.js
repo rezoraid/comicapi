@@ -7,6 +7,7 @@ import { TtlCache } from './lib/cache.js'
 import { RedisRestCache } from './lib/redis-rest-cache.js'
 import { registerRoutes } from './routes.js'
 import { registerCommunityRoutes } from './community/routes.js'
+import { createCatalog } from './catalog-sync.js'
 
 /** Key cache: path + query yang diurutkan (?a=1&b=2 sama dengan ?b=2&a=1). */
 function cacheKey(url) {
@@ -17,7 +18,7 @@ function cacheKey(url) {
   return `${url.pathname}?${params.toString()}`
 }
 
-export function createApp({ registry, config, logger = console, community = null, sharedCache: injectedSharedCache = null }) {
+export function createApp({ registry, config, logger = console, community = null, sharedCache: injectedSharedCache = null, catalog: injectedCatalog }) {
   const cache = new TtlCache({
     max: config.cacheMax,
     maxBytes: (config.cacheMaxMb ?? 96) * 1024 * 1024,
@@ -41,9 +42,13 @@ export function createApp({ registry, config, logger = console, community = null
     }
     return d
   }
+  // Katalog internal. server.js memasang versi lengkap (metadata luar + crawler); tanpa itu katalog hanya di memori dan tanpa jaringan tambahan.
+  const catalog = injectedCatalog !== undefined
+    ? injectedCatalog
+    : createCatalog({ registry, collection: () => (typeof community === 'function' ? community() : community)?.c?.catalog ?? null, logger, crawl: false })
   const router = new Router()
-  registerCommunityRoutes(router, { registry, community })
-  registerRoutes(router, { registry, config, community })
+  registerCommunityRoutes(router, { registry, community, catalog })
+  registerRoutes(router, { registry, config, community, catalog })
 
   const limiters = {
     default: createRateLimiter(config.rateLimit),
@@ -206,6 +211,7 @@ export function createApp({ registry, config, logger = console, community = null
   return {
     handler,
     cache,
+    catalog,
     startWarmer,
     warmOnce,
     close() {
