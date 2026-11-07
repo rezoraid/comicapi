@@ -66,7 +66,8 @@ export function loadConfig(env = process.env) {
       mongoPoolMax: int(env.MONGO_POOL_MAX, 30),
       mongoPoolMin: int(env.MONGO_POOL_MIN, 2),
       // jeda tulis-belakangan untuk progres baca (ms). 0 = tulis langsung
-      progressFlushMs: int(env.PROGRESS_FLUSH_MS, 1000)
+      progressFlushMs: int(env.PROGRESS_FLUSH_MS, 1000),
+      firebase: { projectId: env.FIREBASE_PROJECT_ID || 'komikta-id', serviceAccount: env.FIREBASE_SERVICE_ACCOUNT || '' }
     }
   }
 }

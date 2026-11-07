@@ -31,6 +31,7 @@ export async function createBroadcast(ctx, actor, input, hasSource) {
   if (slug && !SLUG.test(slug)) throw badRequest('"slug" tidak valid')
   const doc = { _id: newId(), title, body, source, slug, createdBy: actor._id, createdAt: ctx.now(), deleted: false }
   await ctx.c.broadcasts.insertOne(doc)
+  ctx.push?.dispatch(doc)
   return { broadcast: view(doc) }
 }
 

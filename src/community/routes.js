@@ -106,6 +106,17 @@ export function registerCommunityRoutes(router, { registry, community }) {
   router.get(`${P}/admin/broadcasts`, authed((cm, { query }, user) => listBroadcasts(cm, user, query)))
   router.delete(`${P}/admin/broadcasts/:id`, authed((cm, { params }, user) => removeBroadcast(cm, user, params.id)))
 
+  router.put(`${P}/push-token`, guard(async (cm, { body, ip, req }) => {
+    await hit(cm.limits.write, `push:${ip}`, 'Terlalu banyak permintaan')
+    const viewer = await authenticate(cm, req, { optional: true }).catch(() => null)
+    return cm.push.register(viewer, body)
+  }))
+  router.post(`${P}/push-token/unregister`, guard(async (cm, { body, ip }) => {
+    await hit(cm.limits.write, `push:${ip}`, 'Terlalu banyak permintaan')
+    return cm.push.unregister(body)
+  }))
+  router.get(`${P}/admin/push-status`, authed((cm, ctx, user) => cm.push.status(user)))
+
   router.get(`${P}/admin/reports`, authed((cm, { query }, user) => listReports(cm, user, { status: qstr(query, 'status', 10) || 'open', page: qint(query, 'page', 1, 1, 200), limit: 20 })))
   router.post(`${P}/admin/reports/:id/resolve`, authed((cm, { params, body }, user) => resolveReport(cm, user, params.id, body.action)))
   // ?username= = cari satu akun persis (MODERATOR/OWNER). Tanpa itu = daftar pengguna untuk panel OWNER (q, role, banned, page).

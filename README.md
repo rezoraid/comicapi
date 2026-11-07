@@ -179,7 +179,26 @@ Endpoint (header `Authorization: Bearer <token>`):
 | `DELETE /api/community/admin/broadcasts/:id` | hanya OWNER: tarik pengumuman (HP yang belum mengambilnya tidak akan menerimanya) |
 | `GET /api/community/broadcasts?after=<id>` | publik (tanpa login, tanpa data pribadi), dipakai APK. Tanpa `after` → hanya `{latestId}` (posisi awal untuk HP baru). Dengan `after` → `{latestId, items}` yang lebih baru, paling lama dulu, maks 20 |
 
-Koleksi baru: `broadcasts`. APK mengambil feed ini tiap ±30 menit lewat WorkManager lalu memposting notifikasi lokal (bukan push instan).
+Koleksi: `broadcasts`. Pengumuman OWNER kini langsung didorong lewat Firebase Cloud Messaging (FCM) ke semua perangkat terdaftar. Feed di atas tetap ada sebagai cadangan: APK tetap mengambilnya tiap ±30 menit, dan pengumuman yang sudah tampil dari FCM tidak ditampilkan lagi (dedupe per ID di perangkat).
+
+### FCM
+
+| Endpoint | Keterangan |
+|---|---|
+| `PUT /api/community/push-token` | `{token, appVersion?, previous?}`. Login opsional: kalau ada sesi valid token ditautkan ke akun, kalau tidak `userId: null`. Upsert per token (satu token = satu dokumen). `previous` = token lama perangkat yang sama, langsung dihapus |
+| `POST /api/community/push-token/unregister` | `{token}`. Dipanggil APK saat notifikasi dimatikan |
+| `GET /api/community/admin/push-status` | hanya OWNER: `{enabled, devices, linkedToAccount}` untuk cek konfigurasi |
+
+Koleksi `push_tokens`: `{token (unik), userId|null, appVersion, createdAt, updatedAt}`. Token yang ditolak FCM (`registration-token-not-registered`/`invalid-registration-token`) dihapus otomatis, token yang tidak diperbarui > 60 hari dibersihkan saat pengiriman, dan token ikut terhapus saat akun dihapus. APK menyinkronkan ulang tiap 7 hari.
+
+Pesan yang dikirim berupa **data-only** (tanpa blok `notification`) dengan prioritas `high` dan TTL 3 hari, supaya `onMessageReceived` di APK selalu jalan (juga saat aplikasi ditutup) dan tidak ada notifikasi ganda dari sistem. Hasil pengiriman disimpan di dokumen pengumuman (`push: {sent, failed, at}`).
+
+Env yang dibutuhkan di server (Railway):
+
+- `FIREBASE_SERVICE_ACCOUNT`: isi file JSON service account (Firebase Console → Project settings → Service accounts → Generate new private key), boleh JSON mentah atau base64.
+- `FIREBASE_PROJECT_ID`: opsional, bawaan `komikta-id`.
+
+Tanpa `FIREBASE_SERVICE_ACCOUNT`, FCM nonaktif dan semua fitur lain (termasuk polling pengumuman) tetap berjalan.
 
 XP: komentar +5, balasan +3, like diterima +2. Hanya komentar bermutu (min. 8 karakter, 2 kata, bukan huruf berulang), batas 50 XP/hari dari posting dan 20 XP/hari dari like, like hanya dihitung dari akun berumur > 1 jam dan maks 3 per pasangan akun per hari, komentar identik 24 jam ditolak, menghapus komentar membalikkan XP-nya. Level = `floor((1+sqrt(1+4*xp/25))/2)`, maks 100. Rate limit per pengguna ada di memori proses (cukup untuk 1 instance).
 
