@@ -13,7 +13,8 @@ const defaultLimits = {
   like: { max: 60, windowMs: 60_000 },
   report: { max: 10, windowMs: 3_600_000 },
   login: { max: 20, windowMs: 60_000 },
-  readTime: { max: 12, windowMs: 60_000 }
+  readTime: { max: 12, windowMs: 60_000 },
+  view: { max: 120, windowMs: 60_000 }
 }
 
 export function missingConfig(cfg) {

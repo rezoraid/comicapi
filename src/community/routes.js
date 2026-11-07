@@ -9,6 +9,8 @@ import { resolveTarget, listComments, listReplies, createComment, chapterCounts,
 import { deleteAccount } from './account.js'
 import { saveProgress, trackReadingTime } from './reading.js'
 import { createBroadcast, feed, listBroadcasts, removeBroadcast } from './broadcasts.js'
+import { trackComicView, trackChapterView, viewerKey, getComicAdmin, saveComic, resetComic, getPages, savePages, resetPages, uploadMedia, serveMedia } from './catalog.js'
+import { normalizeDetail } from '../normalize.js'
 import { listReports, resolveReport, findUser, userDetail, grantXp, resetMedia, setRole, setVerified, setBan, adminStats, listUsers, listAdminComments } from './admin.js'
 
 const P = '/api/community'
@@ -24,6 +26,19 @@ export function registerCommunityRoutes(router, { registry, community }) {
   }
   const authed = fn => guard(async (cm, ctx) => fn(cm, ctx, await authenticate(cm, ctx.req)))
   const maybe = fn => guard(async (cm, ctx) => fn(cm, ctx, await authenticate(cm, ctx.req, { optional: true })))
+  // sumber data asli (scraper) untuk panel OWNER; error sumber (404/502/504) diterjemahkan oleh pipeline app
+  const notSupported = (p, fn) => new HttpError(501, 'NOT_SUPPORTED', `${p.id} tidak mendukung ${fn}`)
+  const fetchDetail = async (source, slug) => {
+    const p = registry.get(source)
+    if (typeof p.detail !== 'function') throw notSupported(p, 'detail')
+    return normalizeDetail(await p.detail(slug), p.id)
+  }
+  const fetchChapter = async (source, slug, chapter) => {
+    const p = registry.get(source)
+    if (typeof p.chapter !== 'function') throw notSupported(p, 'chapter')
+    return p.chapter(slug, chapter)
+  }
+  const cat = { hasSource, fetchDetail, fetchChapter }
   const pageOf = q => ({ page: qint(q, 'page', 1, 1, 200), limit: qint(q, 'limit', 15, 1, 30) })
 
   router.post(`${P}/auth/google`, guard(async (cm, { body, ip }) => {
@@ -129,4 +144,28 @@ export function registerCommunityRoutes(router, { registry, community }) {
   router.put(`${P}/admin/users/:id/role`, authed((cm, { params, body }, user) => setRole(cm, user, params.id, body.role)))
   router.put(`${P}/admin/users/:id/verified`, authed((cm, { params, body }, user) => setVerified(cm, user, params.id, body.verified)))
   router.put(`${P}/admin/users/:id/ban`, authed((cm, { params, body }, user) => setBan(cm, user, params.id, body.banned)))
+
+  // ---- Views dari database Komikta (anonim boleh; dedupe per userId/deviceId per target, jendela 6 jam) ----
+  const viewer = (cm, req, ip) => authenticate(cm, req, { optional: true }).then(u => viewerKey(u, req, ip), () => viewerKey(null, req, ip))
+  router.post(`${P}/views/comic`, guard(async (cm, { body, ip, req }) => {
+    await hit(cm.limits.view, ip, 'Terlalu banyak permintaan')
+    return trackComicView(cm, await viewer(cm, req, ip), body, hasSource)
+  }))
+  router.post(`${P}/views/chapter`, guard(async (cm, { body, ip, req }) => {
+    await hit(cm.limits.view, ip, 'Terlalu banyak permintaan')
+    return trackChapterView(cm, await viewer(cm, req, ip), body, hasSource)
+  }))
+
+  // ---- Panel OWNER: data komik, gambar chapter, unggah gambar ----
+  const writeLimit = (cm, user) => hit(cm.limits.write, user._id, 'Terlalu banyak perubahan, coba lagi sebentar')
+  router.get(`${P}/admin/comics/:source/:slug`, authed((cm, { params }, user) => getComicAdmin(cm, user, params, cat)))
+  router.put(`${P}/admin/comics/:source/:slug`, authed(async (cm, { params, body }, user) => (await writeLimit(cm, user), saveComic(cm, user, params, body, cat))), { bodyLimit: 65_536 })
+  router.delete(`${P}/admin/comics/:source/:slug/override`, authed((cm, { params }, user) => resetComic(cm, user, params, cat)))
+  router.get(`${P}/admin/comics/:source/:slug/chapters/:chapter/pages`, authed((cm, { params }, user) => getPages(cm, user, params, cat)))
+  router.put(`${P}/admin/comics/:source/:slug/chapters/:chapter/pages`, authed(async (cm, { params, body }, user) => (await writeLimit(cm, user), savePages(cm, user, params, body, cat))), { bodyLimit: 262_144 })
+  router.delete(`${P}/admin/comics/:source/:slug/chapters/:chapter/pages`, authed((cm, { params }, user) => resetPages(cm, user, params, cat)))
+  // multipart: isi body dibaca oleh handler sendiri (bukan JSON)
+  router.post(`${P}/admin/media`, authed(async (cm, { req }, user) => (await writeLimit(cm, user), uploadMedia(cm, user, req))), { body: false })
+  // file unggahan disajikan publik (id acak, isi tidak pernah berubah → cache selamanya), seperti /api/image
+  router.get('/media/:id', guard((cm, { req, res, params }) => serveMedia(cm, req, res, params.id)), { raw: true, limiter: 'image' })
 }

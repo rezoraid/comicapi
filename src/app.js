@@ -31,6 +31,16 @@ export function createApp({ registry, config, logger = console, community = null
     prefix: config.redisKeyPrefix,
     timeoutMs: config.redisTimeoutMs
   })
+  // hasil parse body ter-cache dipakai bersama semua request (overlay tidak boleh mengubahnya, hanya membuat salinan)
+  const parsed = new WeakMap()
+  const dataOf = value => {
+    let d = parsed.get(value)
+    if (d === undefined) {
+      d = JSON.parse(value.body.toString('utf8')).data
+      parsed.set(value, d)
+    }
+    return d
+  }
   const router = new Router()
   registerCommunityRoutes(router, { registry, community })
   registerRoutes(router, { registry, config, community })
@@ -165,11 +175,21 @@ export function createApp({ registry, config, logger = console, community = null
       }
 
       const ctx = { req, res, params, query: url.searchParams, ip: clientIp(req, config.trustProxy), warm }
-      if (route.body) ctx.body = await readJson(req, url.pathname.endsWith('/me/avatar') ? 512 * 1024 : 16_384)
+      if (route.body) ctx.body = await readJson(req, route.bodyLimit ?? (url.pathname.endsWith('/me/avatar') ? 512 * 1024 : 16_384))
       if (route.raw) return await route.handler(ctx)
 
       if (route.ttl > 0) {
         const { value, state } = await cachedEntry(url, route, ctx)
+        if (route.overlay) {
+          // views + data edit OWNER ditempel di atas hasil cache. Gagal (mis. MongoDB down) = sajikan hasil cache apa adanya, katalog tetap terbaca.
+          try {
+            const base = dataOf(value)
+            const data = await withTimeout(Promise.resolve(route.overlay(base, ctx)), config.requestTimeoutMs)
+            if (data !== base) return send(req, res, await encode({ ok: true, data }, { gzip: acceptsGzip(req), level: 4 }), { revalidate: true, cacheState: state })
+          } catch (err) {
+            logger.error(`[overlay] ${url.pathname} → ${err?.message || err}`)
+          }
+        }
         return send(req, res, value, { cacheSeconds: route.ttl, cacheState: state })
       }
       // dinamis: kompres hanya kalau klien meminta, level ringan

@@ -32,7 +32,14 @@ export const collections = db => ({
   chapterReads: db.collection('chapter_reads'),
   counters: db.collection('counters'),
   broadcasts: db.collection('broadcasts'),
-  pushTokens: db.collection('push_tokens')
+  pushTokens: db.collection('push_tokens'),
+  // katalog mandiri: views, edit komik, gambar chapter, file unggahan
+  comicStats: db.collection('comic_stats'),
+  chapterStats: db.collection('chapter_stats'),
+  viewDedupe: db.collection('view_dedupe'),
+  comicOverrides: db.collection('comic_overrides'),
+  chapterOverrides: db.collection('chapter_overrides'),
+  media: db.collection('media')
 })
 
 // Indeks yang sudah ada TIDAK diubah (mengubah opsi indeks yang sama membuat createIndex error).
@@ -75,7 +82,10 @@ const INDEXES = c => [
   [c.broadcasts, { deleted: 1, _id: 1 }], // pengumuman OWNER (feed HP + riwayat panel)
   [c.pushTokens, { token: 1 }, { unique: true }],
   [c.pushTokens, { userId: 1 }],
-  [c.pushTokens, { updatedAt: 1 }]
+  [c.pushTokens, { updatedAt: 1 }],
+  // kunci dedupe views kedaluwarsa otomatis (jendela 6 jam; lihat VIEW_WINDOW_MS di catalog.js)
+  [c.viewDedupe, { at: 1 }, { expireAfterSeconds: 21_600 }],
+  [c.comicOverrides, { type: 1 }, { sparse: true }]
 ]
 
 const sameKey = (a, b) => JSON.stringify(Object.entries(a || {})) === JSON.stringify(Object.entries(b || {}))

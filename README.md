@@ -67,6 +67,26 @@ Kalau `API_KEY` diisi, kirim header `x-api-key`.
 
 Koleksi baru: `likes`, `counters` (ID publik berurutan, diberikan sekali per pengguna saat pertama dibutuhkan). Menit membaca = akumulasi `users.readSeconds`; per komik tersimpan di `reading_progress.readSeconds`. Pengguna lama mulai dari 0 menit karena durasi sebelumnya memang tidak pernah dicatat.
 
+### Katalog mandiri: views, edit komik, gambar chapter (untuk APK)
+
+Kontrak lengkap: `BACKEND_KATALOG.md` di proyek APK. Kode: `src/community/catalog.js`.
+
+| Endpoint | Fungsi |
+|---|---|
+| `POST /api/community/views/comic` `{source, slug}` | catat 1 view komik (login atau anonim, header `X-Device-Id`); dedupe per userId/deviceId/IP per komik, jendela 6 jam; balas `{viewCount}` |
+| `POST /api/community/views/chapter` `{source, comic, chapter}` | sama untuk chapter |
+| `GET\|PUT /api/community/admin/comics/:source/:slug` | OWNER: data gabungan / simpan override (`title, cover, synopsis, genres[], type, status, author, artist`) |
+| `DELETE /api/community/admin/comics/:source/:slug/override` | OWNER: kembali ke data scraper |
+| `GET\|PUT\|DELETE /api/community/admin/comics/:source/:slug/chapters/:chapter/pages` | OWNER: daftar gambar chapter (PUT = daftar lengkap berurutan, 1–500 item) |
+| `POST /api/community/admin/media` | OWNER: unggah gambar (multipart, field `file`, JPEG/PNG/WebP/GIF, maks 10 MB, dicek byte-nya) → `{url: "/media/<id>"}` |
+| `GET /media/:id` | sajikan gambar unggahan (`Cache-Control: immutable`, ETag) |
+
+- `viewCount` ditambahkan ke item daftar (`latest`, `popular`, `search`, `browse`, `/api/search`) dan detail komik (+ tiap `chapters[]`). Field `views` dari scraper dibiarkan apa adanya (APK mengabaikannya).
+- Override menggantikan field scraper di semua respons; field kosong = pakai scraper. Override `type`/`status`/`genres` ikut dihitung di `browse` (komik yang dipindahkan keluar disaring, yang dipindahkan masuk muncul di halaman 1).
+- Cache scraper (memori + Redis) tidak diubah dan tidak perlu dibuang: views dan override ditempel di atas hasil cache tiap request (`overlay` di `app.js`). Kalau MongoDB bermasalah, respons cache disajikan apa adanya.
+- Koleksi baru: `comic_stats`, `chapter_stats`, `view_dedupe` (indeks TTL 6 jam), `comic_overrides`, `chapter_overrides`, `media`. File di `media` tidak dihapus otomatis kalau tidak lagi dipakai.
+- Header `X-Device-Id` kini diizinkan CORS.
+
 Filter per sumber ada di `/api/sources` → `filters` (mis. manta: `types`).
 
 ### Menampilkan gambar di APK

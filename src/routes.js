@@ -2,6 +2,7 @@ import { badRequest, notFound, HttpError } from './lib/errors.js'
 import { imageProxy } from './image-proxy.js'
 import { playground } from './playground.js'
 import { legalHandler, privacyPage, termsPage } from './legal.js'
+import { overlayList, overlayDetail, overlayChapter, browseWant } from './community/catalog.js'
 import { normalizeBrowse, normalizeDetail, normalizeList } from './normalize.js'
 
 const SLUG = /^[\w.~%-]{1,200}$/
@@ -41,6 +42,12 @@ export function registerRoutes(router, { registry, config, community = null }) {
     return p[fn](...args)
   }
 
+  // Views + data hasil edit OWNER ditempel di atas hasil cache scraper (data cache tidak pernah diubah). Komunitas mati = data apa adanya.
+  const overlaid = fn => async (data, ctx) => {
+    const c = cm()
+    return c ? fn(c, data, ctx) : data
+  }
+
   /* ───── info ───── */
   router.get(
     '/',
@@ -64,7 +71,7 @@ export function registerRoutes(router, { registry, config, community = null }) {
       const { items, failed } = await registry.searchAll(q, { limit: int(query, 'limit', 10, 1, 30) })
       return { items: normalizeList(items), failed }
     },
-    { ttl: 60 }
+    { ttl: 60, overlay: overlaid((c, d) => overlayList(c, d, '')) }
   )
 
   /* ───── per sumber ───── */
@@ -77,7 +84,7 @@ export function registerRoutes(router, { registry, config, community = null }) {
       const items = await call(p, 'search', q, { limit: int(query, 'limit', 10, 1, 30) })
       return { items: normalizeList(items, p.id) }
     },
-    { ttl: 60 }
+    { ttl: 60, overlay: overlaid((c, d, { params }) => overlayList(c, d, params.source)) }
   )
 
   router.get(
@@ -87,7 +94,7 @@ export function registerRoutes(router, { registry, config, community = null }) {
       const p = source(params)
       return { page, items: normalizeList(await call(p, 'latest', { page }), p.id) }
     },
-    { ttl: 60 }
+    { ttl: 60, overlay: overlaid((c, d, { params }) => overlayList(c, d, params.source)) }
   )
 
   router.get(
@@ -100,7 +107,7 @@ export function registerRoutes(router, { registry, config, community = null }) {
       })
       return { items: normalizeList(items, p.id) }
     },
-    { ttl: 300 }
+    { ttl: 300, overlay: overlaid((c, d, { params }) => overlayList(c, d, params.source)) }
   )
 
   router.get(
@@ -118,7 +125,7 @@ export function registerRoutes(router, { registry, config, community = null }) {
         page: int(query, 'page', 1, 1, 500)
       }), p.id)
     },
-    { ttl: 120 }
+    { ttl: 120, overlay: overlaid((c, d, { params, query }) => overlayList(c, d, params.source, browseWant(query))) }
   )
 
   router.get('/api/:source/genres', async ({ params }) => ({ items: await call(source(params), 'genres') }), { ttl: 3600 })
@@ -129,7 +136,7 @@ export function registerRoutes(router, { registry, config, community = null }) {
       const p = source(params)
       return normalizeDetail(await call(p, 'detail', slugParam(params.slug, 'slug')), p.id)
     },
-    { ttl: 300 }
+    { ttl: 300, overlay: overlaid((c, d, { params }) => overlayDetail(c, d, params.source, params.slug)) }
   )
 
   router.get(
@@ -144,7 +151,7 @@ export function registerRoutes(router, { registry, config, community = null }) {
       // path relatif: klien (APK) tinggal prefix dengan base URL server
       return { ...data, proxy: data.images.map(u => `/api/image?url=${encodeURIComponent(u)}`) }
     },
-    { ttl: 600 }
+    { ttl: 600, overlay: overlaid((c, d, { params }) => overlayChapter(c, d, params.source, params.slug, params.chapter)) }
   )
 
   /* ───── image proxy (streaming, bukan JSON) ───── */
