@@ -170,6 +170,17 @@ Endpoint (header `Authorization: Bearer <token>`):
 | `GET /api/community/admin/users?q=&role=&banned=1&page=` | hanya OWNER: daftar pengguna terbaru dulu, 20 per halaman. `q` mencari username/nama/email, `role` = OWNER\|MODERATOR\|PREMIUM\|USER, `verified=1` hanya akun terverifikasi. Tanpa `username` ini yang dipakai; dengan `?username=` tetap pencarian persis (MODERATOR/OWNER) |
 | `GET /api/community/admin/comments?q=&reported=1&page=` | hanya OWNER: semua komentar termasuk yang sudah dihapus, terbaru dulu. `q` mencari isi atau username/nama pembuat, `reported=1` hanya yang dilaporkan |
 
+### Pengumuman OWNER → notifikasi di semua HP
+
+| Endpoint | Keterangan |
+|---|---|
+| `POST /api/community/admin/broadcasts` | hanya OWNER: `{title (maks 60), body (maks 200), source?, slug?}`. `source`+`slug` berpasangan = komik yang dibuka saat notifikasi diketuk |
+| `GET /api/community/admin/broadcasts?page=` | hanya OWNER: riwayat, terbaru dulu |
+| `DELETE /api/community/admin/broadcasts/:id` | hanya OWNER: tarik pengumuman (HP yang belum mengambilnya tidak akan menerimanya) |
+| `GET /api/community/broadcasts?after=<id>` | publik (tanpa login, tanpa data pribadi), dipakai APK. Tanpa `after` → hanya `{latestId}` (posisi awal untuk HP baru). Dengan `after` → `{latestId, items}` yang lebih baru, paling lama dulu, maks 20 |
+
+Koleksi baru: `broadcasts`. APK mengambil feed ini tiap ±30 menit lewat WorkManager lalu memposting notifikasi lokal (bukan push instan).
+
 XP: komentar +5, balasan +3, like diterima +2. Hanya komentar bermutu (min. 8 karakter, 2 kata, bukan huruf berulang), batas 50 XP/hari dari posting dan 20 XP/hari dari like, like hanya dihitung dari akun berumur > 1 jam dan maks 3 per pasangan akun per hari, komentar identik 24 jam ditolak, menghapus komentar membalikkan XP-nya. Level = `floor((1+sqrt(1+4*xp/25))/2)`, maks 100. Rate limit per pengguna ada di memori proses (cukup untuk 1 instance).
 
 Halaman publik `/privacy` (Kebijakan Privasi) dan `/terms` (Ketentuan) tersedia untuk diisi di Google OAuth consent screen dan Play Console. Isi `CONTACT_EMAIL` supaya email kontak tampil. `/health` menampilkan `community: true|false`.
