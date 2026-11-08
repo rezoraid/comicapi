@@ -15,7 +15,7 @@ let session = null
 let sessionPromise = null
 let genreCache = null
 
-const img = url => (url ? trackHost(imageHosts, url) : '')
+const img = url => (url ? trackHost(imageHosts, /^https?:\/\//i.test(url) ? url : BASE + (url.startsWith('/') ? url : '/' + url)) : '')
 const names = list => (Array.isArray(list) ? list.map(g => g?.data?.name).filter(Boolean) : [])
 const badRequest = msg => Object.assign(new Error(msg), { status: 400 })
 const notFound = msg => Object.assign(new Error(msg), { status: 404 })
@@ -208,7 +208,9 @@ export default {
   id: 'voratoon',
   name: 'VoraToon',
   base: BASE,
-  imageHeaders: { 'user-agent': UA, referer: BASE + '/' },
+  get imageHeaders() {
+    return { 'user-agent': UA, referer: BASE + '/', ...(session?.cookie ? { cookie: session.cookie } : {}) }
+  },
   imageHosts,
   filters: { types: TYPES, sorts: SORTS },
   search,
