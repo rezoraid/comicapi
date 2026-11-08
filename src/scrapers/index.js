@@ -11,8 +11,9 @@
 import lumos from './lumos.js'
 import manta from './manta.js'
 import shinigami from './shinigami.js'
+import voratoon from './voratoon.js'
 
-const PROVIDERS = [lumos, manta, shinigami]
+const PROVIDERS = [lumos, manta, shinigami, voratoon]
 const METHODS = ['search', 'latest', 'popular', 'browse', 'genres', 'detail', 'chapter']
 
 const providers = new Map()
