@@ -2,6 +2,7 @@ import { createLimiter } from '../lib/limiter.js'
 import { sleep, clean, trackHost } from './utils.js'
 
 const BASE = 'https://voratoon.co'
+const IMG_REFERER = 'https://voratoon.com/'
 const UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36'
 const MIN = 60 * 1000
 const SESSION_TTL = 20 * 60 * MIN
@@ -208,9 +209,8 @@ export default {
   id: 'voratoon',
   name: 'VoraToon',
   base: BASE,
-  get imageHeaders() {
-    return { 'user-agent': UA, referer: BASE + '/', ...(session?.cookie ? { cookie: session.cookie } : {}) }
-  },
+  imageHeaders: { 'user-agent': UA, accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8', referer: IMG_REFERER },
+
   imageHosts,
   filters: { types: TYPES, sorts: SORTS },
   search,
