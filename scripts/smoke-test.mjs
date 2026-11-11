@@ -1,6 +1,3 @@
-// Jalankan: node smoke-test.mjs [provider] [kata-kunci]
-// Contoh : node smoke-test.mjs            (semua provider)
-//          node smoke-test.mjs manta "solo leveling"
 import scrapers from '../src/scrapers/index.js'
 
 const only = process.argv[2]
@@ -29,7 +26,6 @@ for (const { id, name } of providers) {
   const p = scrapers.get(id)
   console.log(`\n[${id}] ${name}`)
   let first, ch
-
   await step('search', async () => {
     const r = await p.search(query, { limit: 10 })
     need(r.length, `hasil kosong untuk "${query}"`)
@@ -57,7 +53,6 @@ for (const { id, name } of providers) {
     need(r.length, 'kosong')
     return `${r.length} genre`
   })
-
   if (!first) {
     console.log('  ⏭️  detail/chapter dilewati (search gagal)')
     continue
@@ -66,7 +61,7 @@ for (const { id, name } of providers) {
     const d = await p.detail(first.slug)
     need(d.title, 'title kosong')
     need(d.chapters.length, 'daftar chapter kosong')
-    ch = d.chapters[d.chapters.length - 1] // chapter pertama
+    ch = d.chapters[d.chapters.length - 1]
     return `${d.title} | ${d.chapters.length} chapter | cover: ${d.cover ? 'ok' : 'KOSONG'}`
   })
   if (!ch) continue

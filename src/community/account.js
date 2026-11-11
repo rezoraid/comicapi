@@ -8,7 +8,6 @@ export async function deleteAccount(ctx, user) {
   const mine = await ctx.c.comments.find({ userId: user._id, deleted: false }).toArray()
   for (const c of mine) await deleteDoc(ctx, c, user._id)
   const likes = await ctx.c.commentLikes.find({ userId: user._id }, { projection: { commentId: 1 } }).toArray()
-  // tiap like menyentuh komentar berbeda → aman diparalelkan per kelompok kecil
   for (let i = 0; i < likes.length; i += 10) {
     await Promise.all(
       likes.slice(i, i + 10).map(async l => {
@@ -17,8 +16,7 @@ export async function deleteAccount(ctx, user) {
       })
     )
   }
-  await ctx.progress.drop(user._id) // buang antrean tulis-belakangan agar tidak ada progres yatim setelah akun hilang
-  // like komik/chapter milik user ikut hilang → jumlah like per target di cache harus dibuang
+  await ctx.progress.drop(user._id)
   const myLikes = await ctx.c.likes.find({ userId: user._id }, { projection: { targetKey: 1 } }).toArray()
   myLikes.forEach(l => ctx.stats?.likeCount.delete(l.targetKey))
   await Promise.all([

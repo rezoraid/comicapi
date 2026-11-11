@@ -7,7 +7,6 @@ const segmentCount = path => {
 
 export class Router {
   #buckets = new Map()
-
   add(method, path, handler, opts = {}) {
     const keys = []
     const re = new RegExp('^' + path.replace(/:([a-zA-Z]+)/g, (_, k) => (keys.push(k), '([^/]+)')) + '/?$')
@@ -16,13 +15,11 @@ export class Router {
     this.#buckets.get(bucket).push({ method, re, keys, handler, ...opts })
     return this
   }
-
   get = (path, handler, opts) => this.add('GET', path, handler, opts)
   post = (path, handler, opts) => this.add('POST', path, handler, { body: true, ...opts })
   put = (path, handler, opts) => this.add('PUT', path, handler, { body: true, ...opts })
   patch = (path, handler, opts) => this.add('PATCH', path, handler, { body: true, ...opts })
   delete = (path, handler, opts) => this.add('DELETE', path, handler, opts)
-
   match(pathname, method = 'GET') {
     const verb = method === 'HEAD' ? 'GET' : method
     const routes = this.#buckets.get(segmentCount(pathname))

@@ -4,11 +4,6 @@ import { gunzipSync } from 'node:zlib'
 const BREAKER_THRESHOLD = 3
 const BREAKER_COOLDOWN_MS = 10_000
 
-/**
- * Optional shared L2 cache for Upstash Redis REST (no native module required).
- * Local TtlCache remains L1 so hot requests never wait for Redis.
- * Redis failures are deliberately fail-open: the scraper/API remains available.
- */
 export class RedisRestCache {
   constructor({ url, token, prefix = 'komikta:api:v1:', timeoutMs = 250 }) {
     this.url = String(url || '').replace(/\/+$/, '')
@@ -19,7 +14,6 @@ export class RedisRestCache {
     this.failures = 0
     this.downUntil = 0
   }
-
   #fail() {
     if (++this.failures >= BREAKER_THRESHOLD) {
       this.failures = 0
@@ -27,12 +21,10 @@ export class RedisRestCache {
     }
     return null
   }
-
   key(input) {
     const digest = createHash('sha256').update(String(input)).digest('hex')
     return `${this.prefix}${digest}`
   }
-
   async #command(command) {
     if (!this.enabled || Date.now() < this.downUntil) return null
     try {
@@ -55,7 +47,6 @@ export class RedisRestCache {
       return this.#fail()
     }
   }
-
   async get(input) {
     const raw = await this.#command(['GET', this.key(input)])
     if (typeof raw !== 'string') return null
@@ -70,9 +61,6 @@ export class RedisRestCache {
       return null
     }
   }
-
-
-  /** Atomic shared fixed-window counter for rate limiting across backend replicas. */
   async consumeRateLimit(identifier, { max, windowMs }, namespace = 'api') {
     if (!this.enabled || !Number.isFinite(max) || max < 1 || !Number.isFinite(windowMs) || windowMs < 1) return null
     const key = `${this.prefix}rl:${namespace}:${createHash('sha256').update(String(identifier)).digest('hex')}`
@@ -88,7 +76,6 @@ export class RedisRestCache {
       retryAfter: Math.max(1, Math.ceil(Math.max(0, ttl) / 1000))
     }
   }
-
   async set(input, entry, ttlSeconds) {
     if (!this.enabled || !Number.isFinite(ttlSeconds) || ttlSeconds < 1) return false
     const value = JSON.stringify(

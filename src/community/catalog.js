@@ -3,17 +3,8 @@ import { badRequest, forbidden, notFound, HttpError } from '../lib/errors.js'
 import { etagMatches } from '../http/respond.js'
 import { rank, isDup, SLUG, CHAPTER } from './util.js'
 
-/**
- * Katalog mandiri: views dari database Komikta, data komik yang bisa diedit OWNER,
- * gambar chapter pengganti, dan file unggahan. Kontrak lengkap ada di BACKEND_KATALOG.md (APK).
- *
- * Koleksi: comic_stats, chapter_stats, view_dedupe (TTL 6 jam), comic_overrides, chapter_overrides, media.
- * Data scraper TIDAK pernah diubah dan tetap di-cache seperti biasa; override + views ditempel di atas hasil cache
- * setiap request (lihat `overlay` di app.js), jadi tidak ada cache yang perlu dibuang saat OWNER menyimpan.
- */
-
-export const VIEW_WINDOW_MS = 6 * 3_600_000
-export const MAX_MEDIA_BYTES = 10 * 1024 * 1024
+const VIEW_WINDOW_MS = 6 * 3_600_000
+const MAX_MEDIA_BYTES = 10 * 1024 * 1024
 const MAX_PAGES = 500
 const TYPES = ['manhwa', 'manhua', 'manga']
 const STATUSES = ['ongoing', 'completed', 'hiatus', 'cancelled']
@@ -30,19 +21,12 @@ const count = v => (Number.isFinite(v) && v > 0 ? Math.trunc(v) : 0)
 const filled = v => (Array.isArray(v) ? v.length > 0 : typeof v === 'string' ? v.trim() !== '' : false)
 const lower = v => String(v ?? '').trim().toLowerCase()
 
-/* ───────────── views ───────────── */
-
-/** Siapa yang menonton: userId kalau login, kalau tidak deviceId (header X-Device-Id), terakhir IP. */
 export const viewerKey = (viewer, req, ip) => {
   if (viewer?._id) return `u:${viewer._id}`
   const dev = String(req.headers['x-device-id'] || '')
   return DEVICE.test(dev) ? `d:${dev}` : `ip:${ip || 'unknown'}`
 }
 
-/**
- * true = hitungan ini sah (belum ada di jendela 6 jam). Indeks TTL MongoDB hanya menyapu tiap ±60 detik,
- * jadi kunci yang sudah lewat jendela tapi belum terhapus di-klaim ulang secara atomik (updateOne bersyarat).
- */
 async function countsOnce(ctx, id) {
   const now = ctx.now()
   try {
@@ -91,7 +75,6 @@ const byId = rows => new Map(rows.map(r => [r._id, r]))
 const statsFor = async (ctx, ids) => (ids.length ? byId(await ctx.c.comicStats.find({ _id: { $in: ids } }, { projection: { views: 1 } }).toArray()) : new Map())
 const overridesFor = async (ctx, ids) => (ids.length ? byId(await ctx.c.comicOverrides.find({ _id: { $in: ids } }).toArray()) : new Map())
 
-/** Semua views + override chapter satu komik dengan SATU query berawalan (memakai indeks _id). */
 async function chapterRows(ctx, source, slug) {
   const prefix = { $regex: `^${escapeRe(key(source, slug))}\\|` }
   const [stats, edits] = await Promise.all([
@@ -102,12 +85,9 @@ async function chapterRows(ctx, source, slug) {
   return { views: new Map(stats.map(s => [s._id.slice(cut), count(s.views)])), edited: new Set(edits.map(e => e._id.slice(cut))) }
 }
 
-/* ───────────── override data komik ───────────── */
-
 const LIST_FIELDS = ['title', 'cover', 'genres', 'type', 'status', 'author']
 const DETAIL_FIELDS = ['title', 'cover', 'synopsis', 'genres', 'type', 'status', 'author', 'artist']
 
-/** Field override yang terisi menggantikan data scraper; kosong = pakai data scraper. Tidak mengubah objek asli (data cache dipakai bersama). */
 function applyOverride(base, ov, fields) {
   if (!ov) return base
   let out = base
@@ -122,7 +102,6 @@ function applyOverride(base, ov, fields) {
 const itemsOf = data => (Array.isArray(data) ? data : Array.isArray(data?.items) ? data.items : null)
 const withItems = (data, items) => (Array.isArray(data) ? items : { ...data, items })
 
-/** Daftar komik (latest, popular, search, browse): viewCount + override. defaultSource dipakai bila item tidak membawa `source`. */
 export async function overlayList(ctx, data, defaultSource = '', browse = null) {
   const items = itemsOf(data)
   if (!items) return data
@@ -139,7 +118,7 @@ export async function overlayList(ctx, data, defaultSource = '', browse = null) 
     const id = key(it.source || defaultSource, it.slug)
     seen.add(id)
     const ov = overrides.get(id)
-    if (want && ov && !fitsFilter(ov, want)) continue // override memindahkan komik ini keluar dari filter yang diminta
+    if (want && ov && !fitsFilter(ov, want)) continue
     const merged = applyOverride(it, ov, LIST_FIELDS)
     out.push({ ...merged, viewCount: count(stats.get(id)?.views) })
   }
@@ -147,7 +126,6 @@ export async function overlayList(ctx, data, defaultSource = '', browse = null) 
   return withItems(data, out)
 }
 
-/** Override hanya dihitung untuk field yang benar-benar diisi OWNER; field lain mengikuti hasil filter scraper. */
 function fitsFilter(ov, want) {
   if (want.type && filled(ov.type) && lower(ov.type) !== want.type) return false
   if (want.status && filled(ov.status) && lower(ov.status) !== want.status) return false
@@ -158,7 +136,6 @@ function fitsFilter(ov, want) {
   return true
 }
 
-/** Komik yang OWNER pindahkan KE filter ini (mis. jadi manhwa) tapi tidak dikembalikan scraper untuk filter itu. Hanya halaman 1. */
 async function injected(ctx, source, want, seen) {
   const filter = { _id: { $regex: `^${escapeRe(source)}\\|` } }
   if (want.type) filter.type = want.type
@@ -192,7 +169,6 @@ export const browseWant = query => ({
   page: parseInt(query.get('page') || '1', 10) || 1
 })
 
-/** Detail komik: viewCount komik + tiap chapter, lalu override. */
 export async function overlayDetail(ctx, data, source, slug) {
   if (!data || typeof data !== 'object') return data
   const id = key(source, slug)
@@ -204,15 +180,12 @@ export async function overlayDetail(ctx, data, source, slug) {
 
 const proxyOf = u => (MEDIA_PATH.test(u) ? u : `/api/image?url=${encodeURIComponent(u)}`)
 
-/** Gambar chapter: kalau OWNER sudah menyimpan daftar, daftar itu (urutan sama) menggantikan hasil scraper. */
 export async function overlayChapter(ctx, data, source, comic, chapter) {
   if (!data || typeof data !== 'object') return data
   const ov = await ctx.c.chapterOverrides.findOne({ _id: key(source, comic, chapter) })
   if (!ov || !Array.isArray(ov.pages) || !ov.pages.length) return data
   return { ...data, images: ov.pages, proxy: ov.pages.map(proxyOf) }
 }
-
-/* ───────────── panel OWNER: komik ───────────── */
 
 const text = (v, name, max) => {
   if (v === undefined || v === null) return ''
@@ -228,7 +201,6 @@ const pick = (v, allowed, name) => {
   return t
 }
 
-/** Path /media/<id> hasil unggahan, atau URL http(s). */
 const imageRef = (v, name) => {
   const t = text(v, name, 2000)
   if (!t) return ''
@@ -303,8 +275,8 @@ export async function saveComic(ctx, actor, params, body, { hasSource, fetchDeta
     artist: text(body.artist, 'artist', 200)
   }
   const id = key(source, slug)
-  await fetchDetail(source, slug) // komik harus ada di sumber; gagal = tidak ada yang tersimpan
-  if (DETAIL_FIELDS.every(f => !filled(doc[f]))) await ctx.c.comicOverrides.deleteOne({ _id: id }) // semua kosong = kembali ke data scraper
+  await fetchDetail(source, slug)
+  if (DETAIL_FIELDS.every(f => !filled(doc[f]))) await ctx.c.comicOverrides.deleteOne({ _id: id })
   else await ctx.c.comicOverrides.updateOne({ _id: id }, { $set: { ...doc, updatedAt: ctx.now(), updatedBy: actor._id } }, { upsert: true })
   return comicView(ctx, source, slug, fetchDetail)
 }
@@ -315,8 +287,6 @@ export async function resetComic(ctx, actor, params, { hasSource, fetchDetail })
   await ctx.c.comicOverrides.deleteOne({ _id: key(source, slug) })
   return comicView(ctx, source, slug, fetchDetail)
 }
-
-/* ───────────── panel OWNER: gambar chapter ───────────── */
 
 const chapterKey = (hasSource, params) => {
   const { source, slug } = known(hasSource, params)
@@ -358,9 +328,6 @@ export async function resetPages(ctx, actor, params, { hasSource, fetchChapter }
   return { pages, edited: false }
 }
 
-/* ───────────── file unggahan ───────────── */
-
-/** Jenis gambar dari byte pertama (Content-Type dari klien tidak dipercaya). */
 export function sniffImage(b) {
   if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'image/jpeg'
   if (b.length >= 8 && b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png'
@@ -382,7 +349,6 @@ async function readBody(req, limit) {
   return Buffer.concat(chunks)
 }
 
-/** Ambil isi field `file` dari multipart/form-data. */
 export function filePart(buf, contentType) {
   const boundary = /boundary=(?:"([^"]+)"|([^;\s]+))/i.exec(contentType || '')
   if (!boundary) return null
@@ -396,7 +362,7 @@ export function filePart(buf, contentType) {
     const next = buf.indexOf(delim, headEnd + 4)
     if (next === -1) return null
     const head = buf.subarray(start, headEnd).toString('latin1')
-    if (/name="file"/i.test(head)) return buf.subarray(headEnd + 4, next - 2) // buang \r\n sebelum pembatas
+    if (/name="file"/i.test(head)) return buf.subarray(headEnd + 4, next - 2)
     pos = next
   }
   return null
@@ -417,7 +383,6 @@ export async function uploadMedia(ctx, actor, req) {
 
 const toBuffer = d => (d && d._bsontype === 'Binary' ? Buffer.from(d.buffer.subarray(0, d.length())) : Buffer.from(d))
 
-/** Isi file tidak pernah berubah per id, jadi boleh di-cache selamanya (immutable). */
 export async function serveMedia(ctx, req, res, id) {
   if (!MEDIA_ID.test(id)) throw notFound('File tidak ditemukan')
   const etag = `"${id}"`

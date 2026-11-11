@@ -48,7 +48,6 @@ export function clientIp(req, trustProxy) {
   return req.socket.remoteAddress || 'unknown'
 }
 
-/** Fixed-window rate limiter per IP (in-memory). */
 export function createRateLimiter({ max, windowMs, maxKeys = 100_000 }) {
   const hits = new Map()
   const prune = () => {
@@ -57,14 +56,12 @@ export function createRateLimiter({ max, windowMs, maxKeys = 100_000 }) {
   }
   const sweep = setInterval(prune, windowMs)
   sweep.unref()
-
   return {
     check(key) {
       const now = Date.now()
       let h = hits.get(key)
       if (!h || h.reset <= now) {
         h = { count: 0, reset: now + windowMs }
-        // batas memori: banjir IP/ID palsu tidak boleh membuat Map membengkak sampai OOM
         if (!hits.has(key) && hits.size >= maxKeys) {
           prune()
           if (hits.size >= maxKeys) hits.delete(hits.keys().next().value)
@@ -82,8 +79,6 @@ export function createRateLimiter({ max, windowMs, maxKeys = 100_000 }) {
   }
 }
 
-
-/** Shared Redis rate limit with bounded in-process fallback when Redis is unavailable. */
 export function createHybridRateLimiter({ max, windowMs, maxKeys = 100_000, sharedCache = null, namespace = 'api' }) {
   const local = createRateLimiter({ max, windowMs, maxKeys })
   return {

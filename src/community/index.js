@@ -17,7 +17,7 @@ const defaultLimits = {
   view: { max: 120, windowMs: 60_000 }
 }
 
-export function missingConfig(cfg) {
+function missingConfig(cfg) {
   const m = []
   if (!cfg.mongoUri) m.push('MONGODB_URI')
   if (!cfg.googleClientIds.length) m.push('GOOGLE_CLIENT_ID')
@@ -45,8 +45,6 @@ export async function createCommunity(cfg, opts = {}) {
     now,
     progress,
     push: createPush({ c, messaging, now, logger }),
-    // cache angka murah-dibuang (per proses); kunci diinvalidasi saat data berubah di instance ini
-    // cache foto profil (id → bytes siap kirim); foto base64 besar tidak perlu dibaca ulang dari MongoDB tiap tampil
     avatars: createTtlMap({ ttlMs: 300_000, max: 120, now }),
     stats: {
       chaptersRead: createTtlMap({ ttlMs: 10_000, now }),
@@ -60,7 +58,7 @@ export async function createCommunity(cfg, opts = {}) {
     close: async () => {
       Object.values(cfgLimits).forEach(l => l.close())
       await ctx.push.flush()
-      await progress.close() // tulis sisa progres baca yang masih antre sebelum koneksi ditutup
+      await progress.close()
       await conn.close()
     }
   }

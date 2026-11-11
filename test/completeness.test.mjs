@@ -12,8 +12,6 @@ import { fakeDb } from './fake-mongo.mjs'
 const NOW = Date.parse('2026-11-07T06:00:00Z')
 const iso = ms => new Date(ms).toISOString()
 
-/* ───────────── fungsi murni ───────────── */
-
 test('normTitle: aksen, huruf besar, tanda baca diabaikan', () => {
   assert.equal(normTitle('Solo  Leveling!'), normTitle('solo-leveling'))
   assert.equal(normTitle('Café Épique'), 'cafeepique')
@@ -30,11 +28,11 @@ test('parseWhen: relatif Indonesia/Inggris, ISO, epoch', () => {
 
 test('normalisasi: Manta "comic" = webtoon; chapter yang hanya punya tanggal rilis tetap punya waktu update', () => {
   assert.equal(canonType('comic'), 'webtoon')
-  assert.equal(canonType('', ['Romance', 'Manhwa']), 'manhwa') // petunjuk dari genre tetap didahulukan
+  assert.equal(canonType('', ['Romance', 'Manhwa']), 'manhwa')
   const c = normChapter({ slug: '1', number: '1', releaseDate: '2026-11-06T06:00:00.000Z' })
   assert.equal(c.timeAgo, '2026-11-06T06:00:00.000Z')
   assert.equal(normChapter({ slug: '1', number: '1', releaseDate: 1762495200000 }).timeAgo, '2025-11-07T06:00:00.000Z')
-  assert.equal(normChapter({ slug: '1', timeAgo: '3 jam lalu', releaseDate: '2026-11-06' }).timeAgo, '3 jam lalu') // yang dikirim sumber tidak ditimpa
+  assert.equal(normChapter({ slug: '1', timeAgo: '3 jam lalu', releaseDate: '2026-11-06' }).timeAgo, '3 jam lalu')
   assert.equal(normChapter({ slug: '1' }).timeAgo, '')
 })
 
@@ -63,7 +61,7 @@ const detail = {
 test('recordFromDetail: hanya data asli sumber + chapter terbaru + tahun chapter pertama', () => {
   const r = recordFromDetail({ ...detail, year: '' }, 'beta', NOW)
   assert.equal(r._id, 'beta|solo')
-  assert.equal(r.year, '') // tahun turunan TIDAK disimpan sebagai data asli
+  assert.equal(r.year, '')
   assert.equal(r.firstYear, '2018')
   assert.equal(r.latest.number, '3')
   assert.equal(r.latest.releaseDate, '2026-11-06T06:00:00.000Z')
@@ -75,7 +73,7 @@ test('fillItem: hanya mengisi yang kosong, tidak menimpa, dan tidak mengubah obj
   const item = Object.freeze({ title: 'Solo Leveling', slug: 'solo', cover: '', type: '', status: '', rating: 7.7, genres: [], author: '', chapters: [], chapterCount: null, source: 'beta' })
   const out = fillItem(item, rec)
   assert.notEqual(out, item)
-  assert.equal(out.rating, 7.7) // data daftar menang
+  assert.equal(out.rating, 7.7)
   assert.equal(out.cover, 'https://img/c.jpg')
   assert.deepEqual(out.genres, ['Action', 'Fantasy'])
   assert.equal(out.author, 'Chugong')
@@ -84,7 +82,7 @@ test('fillItem: hanya mengisi yang kosong, tidak menimpa, dan tidak mengubah obj
   assert.equal(out.chapters[0].number, '3')
   assert.equal(out.chapters[0].timeAgo, '2026-11-06T06:00:00.000Z')
   const full = { ...out }
-  assert.equal(fillItem(full, rec), full) // tidak ada yang kosong: objek yang sama dikembalikan
+  assert.equal(fillItem(full, rec), full)
 })
 
 test('fillItem: chapter terbaru dari daftar tanpa waktu dilengkapi dari rekaman', () => {
@@ -92,7 +90,7 @@ test('fillItem: chapter terbaru dari daftar tanpa waktu dilengkapi dari rekaman'
   const out = fillItem({ slug: 'solo', chapters: [{ slug: 'c3', number: '3', timeAgo: '' }] }, rec)
   assert.equal(out.chapters[0].timeAgo, '2026-11-06T06:00:00.000Z')
   const other = fillItem({ slug: 'solo', chapters: [{ slug: 'x', number: '99', timeAgo: '' }] }, rec)
-  assert.equal(other.chapters[0].timeAgo, '') // nomor berbeda: jangan meminjam waktu chapter lain
+  assert.equal(other.chapters[0].timeAgo, '')
 })
 
 test('sameWork: judul identik, jenis tidak boleh bertentangan', () => {
@@ -101,7 +99,7 @@ test('sameWork: judul identik, jenis tidak boleh bertentangan', () => {
   assert.equal(sameWork(a, { ...a, _id: 'alpha|x', type: 'manga' }), false)
   assert.equal(sameWork(a, a), false)
   const short = { ...a, nt: 'abc' }
-  assert.equal(sameWork(short, { ...short, _id: 'z' }), false) // judul terlalu pendek untuk dicocokkan
+  assert.equal(sameWork(short, { ...short, _id: 'z' }), false)
 })
 
 test('finalizeItem: nilai turunan dicatat di `derived`, views = sumber + Komikta', () => {
@@ -114,7 +112,7 @@ test('finalizeItem: nilai turunan dicatat di `derived`, views = sumber + Komikta
   const old = finalizeItem({ title: 'A', slug: 'a', status: '', chapters: [{ number: '1', timeAgo: iso(NOW - 200 * DAY_MS) }] }, 'lumos', NOW)
   assert.equal(old.status, 'hiatus')
   const real = finalizeItem({ title: 'A', slug: 'a', type: 'manga', status: 'completed', author: 'X', artist: 'Y', chapters: [] }, 'lumos', NOW)
-  assert.equal(real.derived, undefined) // data asli: tidak ada yang ditandai turunan
+  assert.equal(real.derived, undefined)
   assert.equal(real.viewCount, 0)
 })
 
@@ -127,11 +125,9 @@ test('finalizeDetail: sinopsis dibuat dari metadata bila kosong, tahun dari chap
   assert.match(out.synopsis, /Karya Chugong, ilustrasi oleh DUBU\./)
   assert.match(out.synopsis, /Tersedia 3 chapter di beta, diperbarui terakhir 6 November 2026\./i)
   assert.ok(out.derived.includes('synopsis') && out.derived.includes('year'))
-  assert.equal(finalizeDetail({ ...detail }, 'beta', NOW).synopsis, 'Hunter terlemah.') // sinopsis asli tidak diganti
+  assert.equal(finalizeDetail({ ...detail }, 'beta', NOW).synopsis, 'Hunter terlemah.')
   assert.ok(describe({ title: 'X', chapters: [] }, 'manta', NOW).startsWith('X adalah komik'))
 })
-
-/* ───────────── metadata luar (AniList) ───────────── */
 
 const media = (over = {}) => ({
   id: 1, format: 'MANGA', status: 'RELEASING', countryOfOrigin: 'KR', averageScore: 87, popularity: 100, startDate: { year: 2019 },
@@ -143,9 +139,9 @@ const media = (over = {}) => ({
 
 test('AniList: kecocokan harus yakin (judul sama persis, asal negara tidak bertentangan)', () => {
   assert.equal(pickMatch([media()], { title: 'Solo-Leveling' }).id, 1)
-  assert.equal(pickMatch([media()], { title: 'Only I Level Up' }).id, 1) // lewat sinonim
-  assert.equal(pickMatch([media()], { title: 'Solo Leveling Ragnarok' }), null) // mirip saja tidak cukup
-  assert.equal(pickMatch([media()], { title: 'Solo Leveling', type: 'manga' }), null) // sumber bilang manga, AniList KR
+  assert.equal(pickMatch([media()], { title: 'Only I Level Up' }).id, 1)
+  assert.equal(pickMatch([media()], { title: 'Solo Leveling Ragnarok' }), null)
+  assert.equal(pickMatch([media()], { title: 'Solo Leveling', type: 'manga' }), null)
   assert.equal(pickMatch([media()], { title: 'Solo Leveling', type: 'webtoon' }).id, 1)
   assert.equal(pickMatch([media({ format: 'NOVEL' })], { title: 'Solo Leveling' }), null)
   assert.equal(pickMatch([media({ id: 2, popularity: 5 }), media({ id: 3, popularity: 50 })], { title: 'Solo Leveling' }).id, 3)
@@ -185,18 +181,15 @@ test('AniList lookup: cocok, tidak cocok, dan 429 menjeda permintaan berikutnya'
   assert.equal(hit.data.rating, 8.7)
   const none = await meta.lookup({ title: 'Tidak Ada' })
   assert.deepEqual([none.ok, none.data], [true, null])
-  assert.equal((await meta.lookup({ title: 'Kena Limit' })).ok, false) // 429
-  assert.equal((await meta.lookup({ title: 'Setelah Limit' })).ok, false) // dijeda, tidak menembak lagi
+  assert.equal((await meta.lookup({ title: 'Kena Limit' })).ok, false)
+  assert.equal((await meta.lookup({ title: 'Setelah Limit' })).ok, false)
   assert.equal(f.calls.length, 3)
   t += 31_000
-  assert.equal((await meta.lookup({ title: 'Solo Leveling' })).ok, true) // jeda selesai
+  assert.equal((await meta.lookup({ title: 'Solo Leveling' })).ok, true)
   const off = createExternalMeta({ enabled: false, fetchImpl: f, logger: quiet })
   assert.equal((await off.lookup({ title: 'Solo Leveling' })).ok, false)
 })
 
-/* ───────────── katalog internal + pipeline respons ───────────── */
-
-/** `alpha`: daftar bolong (hanya judul + slug), detail kaya. `beta`: komik yang sama dengan metadata lengkap. */
 function makeProviders(log = { detail: [], fail: new Set() }) {
   const base = { imageHeaders: {}, imageHosts: ['x.local'], base: 'http://x.local' }
   const alpha = {
@@ -254,20 +247,18 @@ test('daftar yang bolong dilengkapi dari detail yang disinkronkan; yang rusak ti
     const { data } = await t.get('/api/alpha/latest')
     const by = Object.fromEntries(data.items.map(i => [i.slug, i]))
     assert.equal(by.solo.cover, 'https://x.local/a.jpg')
-    assert.equal(by.solo.type, 'webtoon') // "comic" Manta-style → webtoon
+    assert.equal(by.solo.type, 'webtoon')
     assert.equal(by.solo.chapters[0].number, '9')
     assert.equal(by.solo.chapters[0].timeAgo, '2026-11-06T06:00:00.000Z')
-    assert.equal(by.solo.status, 'ongoing') // ... chapter terbaru: dihitung dari umur chapter (tahun 2026)
+    assert.equal(by.solo.status, 'ongoing')
     assert.ok(by.solo.derived.includes('status'))
     assert.deepEqual(by.misteri.genres, ['Mystery'])
     assert.equal(by.misteri.author, 'Ani')
     assert.equal(by.misteri.rating, 6.5)
-    assert.equal(by.misteri.viewCount, 120) // views sumber ikut dihitung
-    // waktu relatif dari sumber disimpan sebagai tanggal absolut agar tidak basi
+    assert.equal(by.misteri.viewCount, 120)
     assert.ok(Math.abs(Date.now() - 3 * 3_600_000 - Date.parse(by.misteri.chapters[0].timeAgo)) < 60_000)
-    assert.equal(by.rusak.title, 'Rusak') // gagal sinkron: tetap muncul, tidak 5xx
+    assert.equal(by.rusak.title, 'Rusak')
     assert.equal(by.rusak.status, 'ongoing')
-    // sudah tersimpan: permintaan kedua tidak scrape lagi
     const before = t.registry.log.detail.length
     await t.get('/api/alpha/latest')
     assert.equal(t.registry.log.detail.length, before)
@@ -279,7 +270,7 @@ test('daftar yang bolong dilengkapi dari detail yang disinkronkan; yang rusak ti
 test('komik yang sama di sumber lain melengkapi rating, author, artist, tahun, status', async () => {
   const t = await boot()
   try {
-    await t.catalog.ensure('beta', 'solo-b', 'inline') // sumber lengkap sudah pernah disinkronkan
+    await t.catalog.ensure('beta', 'solo-b', 'inline')
     const { data } = await t.get('/api/alpha/latest')
     const solo = data.items.find(i => i.slug === 'solo')
     assert.equal(solo.rating, 9.1)
@@ -288,7 +279,7 @@ test('komik yang sama di sumber lain melengkapi rating, author, artist, tahun, s
     assert.equal(solo.year, '2018')
     assert.equal(solo.status, 'completed')
     assert.deepEqual(solo.genres, ['Action', 'Fantasy'])
-    assert.equal(solo.derived, undefined) // semuanya data asli (dari sumber lain), bukan tebakan
+    assert.equal(solo.derived, undefined)
     const d = (await t.get('/api/alpha/comic/solo')).data
     assert.equal(d.synopsis, 'Hunter terlemah.')
     assert.equal(d.rating, 9.1)
@@ -312,15 +303,15 @@ test('detail: kolom kosong dilengkapi metadata luar sekali, lalu tersimpan; matc
     const d = (await t.get('/api/alpha/comic/solo')).data
     assert.equal(d.rating, 8.7)
     assert.equal(d.author, 'Chugong')
-    assert.equal(d.type, 'manhwa') // "webtoon" digantikan asal negara yang lebih tepat
+    assert.equal(d.type, 'manhwa')
     assert.equal(d.status, 'ongoing')
     assert.equal(d.synopsis, 'Dari AniList.')
-    assert.equal(d.cover, 'https://x.local/a.jpg') // data sumber tidak ditimpa
+    assert.equal(d.cover, 'https://x.local/a.jpg')
     await t.get('/api/alpha/comic/solo')
     assert.equal(n, 1)
-    await t.get('/api/alpha/comic/misteri') // detail yang tidak ketemu di AniList
     await t.get('/api/alpha/comic/misteri')
-    assert.equal(n, 2) // ketemu/tidak ketemu sama-sama diingat
+    await t.get('/api/alpha/comic/misteri')
+    assert.equal(n, 2)
   } finally {
     t.close()
   }
@@ -336,7 +327,7 @@ test('rekaman disimpan ke MongoDB dan dibaca lagi setelah restart (memori kosong
   try {
     const before = b.registry.log.detail.length
     const { data } = await b.get('/api/alpha/latest')
-    assert.equal(b.registry.log.detail.length, before) // tidak scrape: data datang dari database
+    assert.equal(b.registry.log.detail.length, before)
     assert.equal(data.items.find(i => i.slug === 'misteri').author, 'Ani')
   } finally {
     b.close()
@@ -346,7 +337,7 @@ test('rekaman disimpan ke MongoDB dan dibaca lagi setelah restart (memori kosong
 test('item di luar batas inline diselesaikan di latar belakang', async () => {
   const t = await boot({ inlineMax: 1, inlineBudgetMs: 1000 })
   try {
-    await t.get('/api/alpha/latest') // 1 komik inline, 2 sisanya dijadwalkan
+    await t.get('/api/alpha/latest')
     for (let i = 0; i < 100 && t.catalog.status().records < 3; i++) await new Promise(r => setTimeout(r, 20))
     assert.equal(t.catalog.status().records, 3)
     const { data } = await t.get('/api/alpha/latest')
@@ -366,7 +357,7 @@ test('crawler menelusuri browse tiap sumber dan menyimpan kursor', async () => {
     assert.ok(keys.includes('alpha|solo') && keys.includes('beta|solo-b'))
     assert.ok(db.docs.some(d => d._id === '__cursor__'))
     const again = await t.catalog.crawlOnce()
-    assert.equal(again.synced, 0) // semuanya masih segar
+    assert.equal(again.synced, 0)
     assert.ok(again.skipped >= 3)
     const status = t.catalog.status()
     assert.equal(status.bySource.beta.records, 1)

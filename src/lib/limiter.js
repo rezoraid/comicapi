@@ -3,9 +3,7 @@ import { HttpError } from './errors.js'
 export function createLimiter({ max, maxQueue = 500, waitMs = 15_000 }) {
   let active = 0
   const queue = []
-
   const busy = () => new HttpError(503, 'BUSY', 'Server sedang sibuk, coba lagi sebentar')
-
   const releaseSlot = () => {
     const next = queue.shift()
     if (!next) {
@@ -15,7 +13,6 @@ export function createLimiter({ max, maxQueue = 500, waitMs = 15_000 }) {
     clearTimeout(next.timer)
     next.resolve()
   }
-
   const makeRelease = () => {
     let done = false
     return () => {
@@ -24,7 +21,6 @@ export function createLimiter({ max, maxQueue = 500, waitMs = 15_000 }) {
       releaseSlot()
     }
   }
-
   return {
     get active() {
       return active

@@ -18,7 +18,6 @@ const P = '/api/community'
 
 export function registerCommunityRoutes(router, { registry, community, catalog = null }) {
   const hasSource = id => registry.has(id)
-  // community boleh berupa objek atau fungsi getter (koneksi MongoDB bisa tersambung belakangan, dengan retry)
   const current = () => (typeof community === 'function' ? community() : community)
   const guard = fn => ctx => {
     const cm = current()
@@ -27,7 +26,6 @@ export function registerCommunityRoutes(router, { registry, community, catalog =
   }
   const authed = fn => guard(async (cm, ctx) => fn(cm, ctx, await authenticate(cm, ctx.req)))
   const maybe = fn => guard(async (cm, ctx) => fn(cm, ctx, await authenticate(cm, ctx.req, { optional: true })))
-  // sumber data asli (scraper) untuk panel OWNER; error sumber (404/502/504) diterjemahkan oleh pipeline app
   const notSupported = (p, fn) => new HttpError(501, 'NOT_SUPPORTED', `${p.id} tidak mendukung ${fn}`)
   const fetchDetail = async (source, slug) => {
     const p = registry.get(source)
@@ -41,7 +39,6 @@ export function registerCommunityRoutes(router, { registry, community, catalog =
   }
   const cat = { hasSource, fetchDetail, fetchChapter }
   const pageOf = q => ({ page: qint(q, 'page', 1, 1, 200), limit: qint(q, 'limit', 15, 1, 30) })
-
   router.post(`${P}/auth/google`, guard(async (cm, { body, ip }) => {
     await hit(cm.limits.login, ip, 'Terlalu banyak percobaan login')
     return loginWithGoogle(cm, body.idToken)
@@ -55,7 +52,6 @@ export function registerCommunityRoutes(router, { registry, community, catalog =
     if (!cm) throw new HttpError(503, 'COMMUNITY_DISABLED', 'Fitur komunitas belum diaktifkan di server')
     const asked = /^\d{1,15}$/.test(query.get('v') || '') ? query.get('v') : '0'
     let e = cm.avatars.get(params.id)
-    // URL bertanda versi (?v=) tidak berubah isinya → cache aman; URL lama tanpa ?v= dicek ulang tiap 30 dtk
     if (!e || e.v !== asked || (asked === '0' && cm.now() - e.at > 30_000)) {
       const user = await cm.c.users.findOne({ _id: params.id }, { projection: { customPicture: 1, avatarAt: 1 } })
       if (!user?.customPicture) throw new HttpError(404, 'AVATAR_NOT_FOUND', 'Foto profil tidak ditemukan')
@@ -65,7 +61,7 @@ export function registerCommunityRoutes(router, { registry, community, catalog =
       e = { v: String(user.avatarAt || 0), at: cm.now(), mime: `image/${match[1]}`, bytes, etag: `"${createHash('sha1').update(bytes).digest('base64url').slice(0, 20)}"` }
       cm.avatars.set(params.id, e)
     }
-    const immutable = asked !== '0' && asked === e.v // URL versi terbaru → boleh disimpan klien selamanya
+    const immutable = asked !== '0' && asked === e.v
     const headers = {
       'content-type': e.mime,
       etag: e.etag,
@@ -91,7 +87,6 @@ export function registerCommunityRoutes(router, { registry, community, catalog =
   router.put(`${P}/likes`, authed((cm, { body }, user) => setLike(cm, user, body, hasSource, true)))
   router.delete(`${P}/likes`, authed((cm, { query }, user) => setLike(cm, user, likeTarget(query), hasSource, false)))
   router.put(`${P}/me/reading-progress`, authed((cm, { body }, user) => saveProgress(cm, user, body, hasSource)))
-
   router.get(`${P}/comments`, maybe((cm, { query }, viewer) => {
     const target = resolveTarget(
       { type: qstr(query, 'type', 10), source: qstr(query, 'source', 40), slug: qstr(query, 'slug', 200), chapter: qstr(query, 'chapter', 50) },
@@ -112,8 +107,6 @@ export function registerCommunityRoutes(router, { registry, community, catalog =
   router.put(`${P}/comments/:id/like`, authed((cm, { params }, user) => likeComment(cm, user, params.id, true)))
   router.delete(`${P}/comments/:id/like`, authed((cm, { params }, user) => likeComment(cm, user, params.id, false)))
   router.post(`${P}/comments/:id/report`, authed((cm, { params, body }, user) => reportComment(cm, user, params.id, body)))
-
-  // Pengumuman → notifikasi di semua HP. Feed publik (tanpa login, tanpa data pribadi); kirim/riwayat/tarik khusus OWNER.
   router.get(`${P}/broadcasts`, guard((cm, { query }) => feed(cm, query)))
   router.post(`${P}/admin/broadcasts`, authed(async (cm, { body }, user) => {
     await hit(cm.limits.write, user._id, 'Terlalu banyak pengumuman')
@@ -121,7 +114,6 @@ export function registerCommunityRoutes(router, { registry, community, catalog =
   }))
   router.get(`${P}/admin/broadcasts`, authed((cm, { query }, user) => listBroadcasts(cm, user, query)))
   router.delete(`${P}/admin/broadcasts/:id`, authed((cm, { params }, user) => removeBroadcast(cm, user, params.id)))
-
   router.put(`${P}/push-token`, guard(async (cm, { body, ip, req }) => {
     await hit(cm.limits.write, `push:${ip}`, 'Terlalu banyak permintaan')
     const viewer = await authenticate(cm, req, { optional: true }).catch(() => null)
@@ -132,8 +124,6 @@ export function registerCommunityRoutes(router, { registry, community, catalog =
     return cm.push.unregister(body)
   }))
   router.get(`${P}/admin/push-status`, authed((cm, ctx, user) => cm.push.status(user)))
-
-  // Katalog internal (OWNER): status kelengkapan, sinkron ulang satu komik, atau mulai crawl seluruh sumber.
   const needOwner = u => {
     if (rank(u) < 3) throw forbidden('Fitur ini khusus OWNER')
   }
@@ -159,10 +149,8 @@ export function registerCommunityRoutes(router, { registry, community, catalog =
     void cat.crawlOnce({ source, pages: Math.min(200, Math.max(1, parseInt(body?.pages, 10) || 8)) }).catch(() => {})
     return { started: true, source: source || 'semua' }
   }))
-
   router.get(`${P}/admin/reports`, authed((cm, { query }, user) => listReports(cm, user, { status: qstr(query, 'status', 10) || 'open', page: qint(query, 'page', 1, 1, 200), limit: 20 })))
   router.post(`${P}/admin/reports/:id/resolve`, authed((cm, { params, body }, user) => resolveReport(cm, user, params.id, body.action)))
-  // ?username= = cari satu akun persis (MODERATOR/OWNER). Tanpa itu = daftar pengguna untuk panel OWNER (q, role, banned, page).
   router.get(`${P}/admin/users`, authed((cm, { query }, user) => (query.has('username') ? findUser(cm, user, query) : listUsers(cm, user, query))))
   router.get(`${P}/admin/stats`, authed((cm, ctx, user) => adminStats(cm, user)))
   router.get(`${P}/admin/comments`, authed((cm, { query }, user) => listAdminComments(cm, user, query)))
@@ -172,8 +160,6 @@ export function registerCommunityRoutes(router, { registry, community, catalog =
   router.put(`${P}/admin/users/:id/role`, authed((cm, { params, body }, user) => setRole(cm, user, params.id, body.role)))
   router.put(`${P}/admin/users/:id/verified`, authed((cm, { params, body }, user) => setVerified(cm, user, params.id, body.verified)))
   router.put(`${P}/admin/users/:id/ban`, authed((cm, { params, body }, user) => setBan(cm, user, params.id, body.banned)))
-
-  // ---- Views dari database Komikta (anonim boleh; dedupe per userId/deviceId per target, jendela 6 jam) ----
   const viewer = (cm, req, ip) => authenticate(cm, req, { optional: true }).then(u => viewerKey(u, req, ip), () => viewerKey(null, req, ip))
   router.post(`${P}/views/comic`, guard(async (cm, { body, ip, req }) => {
     await hit(cm.limits.view, ip, 'Terlalu banyak permintaan')
@@ -183,8 +169,6 @@ export function registerCommunityRoutes(router, { registry, community, catalog =
     await hit(cm.limits.view, ip, 'Terlalu banyak permintaan')
     return trackChapterView(cm, await viewer(cm, req, ip), body, hasSource)
   }))
-
-  // ---- Panel OWNER: data komik, gambar chapter, unggah gambar ----
   const writeLimit = (cm, user) => hit(cm.limits.write, user._id, 'Terlalu banyak perubahan, coba lagi sebentar')
   router.get(`${P}/admin/comics/:source/:slug`, authed((cm, { params }, user) => getComicAdmin(cm, user, params, cat)))
   router.put(`${P}/admin/comics/:source/:slug`, authed(async (cm, { params, body }, user) => (await writeLimit(cm, user), saveComic(cm, user, params, body, cat))), { bodyLimit: 65_536 })
@@ -192,8 +176,6 @@ export function registerCommunityRoutes(router, { registry, community, catalog =
   router.get(`${P}/admin/comics/:source/:slug/chapters/:chapter/pages`, authed((cm, { params }, user) => getPages(cm, user, params, cat)))
   router.put(`${P}/admin/comics/:source/:slug/chapters/:chapter/pages`, authed(async (cm, { params, body }, user) => (await writeLimit(cm, user), savePages(cm, user, params, body, cat))), { bodyLimit: 262_144 })
   router.delete(`${P}/admin/comics/:source/:slug/chapters/:chapter/pages`, authed((cm, { params }, user) => resetPages(cm, user, params, cat)))
-  // multipart: isi body dibaca oleh handler sendiri (bukan JSON)
   router.post(`${P}/admin/media`, authed(async (cm, { req }, user) => (await writeLimit(cm, user), uploadMedia(cm, user, req))), { body: false })
-  // file unggahan disajikan publik (id acak, isi tidak pernah berubah → cache selamanya), seperti /api/image
   router.get('/media/:id', guard((cm, { req, res, params }) => serveMedia(cm, req, res, params.id)), { raw: true, limiter: 'image' })
 }

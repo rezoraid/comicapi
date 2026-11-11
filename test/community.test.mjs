@@ -272,7 +272,6 @@ test('edit & hapus: hanya pemilik; moderator sesuai rank', async () => {
   assert.equal((await list({ ...comic, slug: 'edit-test' })).data.items.length, 0)
   assert.equal((await call('PATCH', `/api/community/comments/${c.id}`, { token: a.token, body: { body: 'edit setelah dihapus' } })).status, 404)
   assert.equal((await call('DELETE', `/api/community/comments/${c.id}`, { token: a.token })).status, 200)
-
   const oc = (await post(owner.token, { ...comic, slug: 'edit-test', body: 'Pengumuman dari owner' })).data.comment
   assert.equal((await call('DELETE', `/api/community/comments/${oc.id}`, { token: dev.token })).status, 403)
   assert.equal((await call('DELETE', `/api/community/comments/${oc.id}`, { token: b.token })).status, 403)
@@ -615,7 +614,6 @@ test('halaman /privacy, /terms, header keamanan, health', async () => {
   assert.equal((await h.json()).data.community, true)
 })
 
-// ---- profil: statistik, waktu baca, likes, aktivitas ----
 const put = (path, token, body) => call('PUT', `/api/community${path}`, { token, body })
 const getp = (path, token) => call('GET', `/api/community${path}`, { token })
 
@@ -626,17 +624,14 @@ test('waktu baca: kredit dibatasi waktu nyata, validasi input, akumulasi ke prof
   assert.equal((await put('/me/reading-time', a.token, { ...ch, seconds: 0 })).status, 400)
   assert.equal((await put('/me/reading-time', a.token, { ...ch, seconds: 99999 })).status, 400)
   assert.equal((await put('/me/reading-time', a.token, { ...ch, source: 'tidak-ada', seconds: 10 })).status, 400)
-  // ping pertama dibatasi 60 dtk walau klaim 300
   const first = await put('/me/reading-time', a.token, { ...ch, seconds: 300 })
   assert.equal(first.data.credited, 60)
-  // ping langsung berikutnya hanya dapat kredit sesuai waktu nyata (+5 dtk toleransi)
   const burst = await put('/me/reading-time', a.token, { ...ch, seconds: 300 })
   assert.ok(burst.data.credited <= 6, `burst kredit ${burst.data.credited}`)
   clock.t += 120_000
   const ok = await put('/me/reading-time', a.token, { ...ch, seconds: 120 })
   assert.equal(ok.data.credited, 120)
   const prof = await getp(`/users/${a.user.id}/profile`, a.token)
-  // 60 + ≤6 + 120 detik terkumpul di chapter yang sama: lolos ambang 60 dtk, dihitung 1 chapter
   assert.equal(prof.data.user.chaptersRead, 1)
   assert.equal(prof.data.self, true)
   const act = await getp(`/users/${a.user.id}/activity?tab=all`, a.token)
@@ -649,25 +644,20 @@ test('chapter dibaca: butuh waktu nyata, tidak dihitung dobel, XP dibatasi, tida
   const ch = n => ({ source: 'mock', slug: 'solo-leveling', chapter: String(n) })
   const chaptersOf = async () => (await getp(`/users/${a.user.id}/profile`, a.token)).data.user.chaptersRead
   assert.equal(await chaptersOf(), 0)
-  // satu ping 30 dtk belum cukup
   let r = await put('/me/reading-time', a.token, { ...ch(1), seconds: 30 })
   assert.equal(r.data.xpGained, 0)
   assert.equal(await chaptersOf(), 0)
-  // klien mengirim "jutaan chapter" lewat banyak ping instan: kredit ikut dibatasi waktu nyata
   for (let n = 2; n < 40; n++) await put('/me/reading-time', a.token, { ...ch(n), seconds: 300 })
   assert.equal(await chaptersOf(), 0)
-  // detik berikutnya berjalan nyata → chapter 1 genap 60 dtk → terhitung + XP
   clock.t += 40_000
   r = await put('/me/reading-time', a.token, { ...ch(1), seconds: 40 })
   assert.equal(r.data.xpGained, 8)
   assert.equal(await chaptersOf(), 1)
   assert.equal((await me(a.token)).chaptersRead, 1)
-  // chapter yang sama tidak dihitung dua kali
   clock.t += 60_000
   r = await put('/me/reading-time', a.token, { ...ch(1), seconds: 60 })
   assert.equal(r.data.xpGained, 0)
   assert.equal(await chaptersOf(), 1)
-  // chapter lain berikutnya dihitung dan XP harian dibatasi 80
   let total = 8
   for (let n = 100; n < 125; n++) {
     clock.t += 61_000
@@ -733,22 +723,17 @@ test('panel OWNER: statistik, daftar pengguna (cari/filter/halaman) dan daftar k
   const a = await login('ls-a', 'lsalpha@example.com')
   const b = await login('ls-b', 'lsbeta@example.com')
   const adm = (path, token) => call('GET', `/api/community/admin${path}`, { token })
-
-  // hanya OWNER: anonim 401, member dan MODERATOR 403
   for (const path of ['/stats', '/users', '/comments']) {
     assert.equal((await adm(path)).status, 401)
     assert.equal((await adm(path, a.token)).status, 403)
     assert.equal((await adm(path, mod.token)).status, 403)
   }
-
   const s1 = await adm('/stats', o.token)
   assert.equal(s1.status, 200)
   for (const k of ['users', 'newUsers7d', 'active24h', 'banned', 'owners', 'moderators', 'premiums', 'comments', 'comments24h', 'openReports', 'chaptersRead']) {
     assert.equal(typeof s1.data[k], 'number', k)
   }
   assert.ok(s1.data.users >= 4 && s1.data.owners >= 1 && s1.data.moderators >= 1)
-
-  // pengguna: cari, filter role/diblokir, validasi
   const byName = await adm('/users?q=lsalpha', o.token)
   assert.equal(byName.data.items.length, 1)
   assert.equal(byName.data.items[0].id, a.user.id)
@@ -764,10 +749,7 @@ test('panel OWNER: statistik, daftar pengguna (cari/filter/halaman) dan daftar k
   assert.ok(bannedList.data.items.every(u => u.banned))
   assert.equal((await adm('/stats', o.token)).data.banned, s1.data.banned + 1)
   assert.equal((await adm('/users?page=0', o.token)).status, 400)
-  // pencarian persis oleh MODERATOR tetap jalan
   assert.equal((await adm(`/users?username=${a.user.username}`, mod.token)).data.user.id, a.user.id)
-
-  // komentar: daftar, cari isi / pembuat, filter dilaporkan, termasuk yang sudah dihapus
   const c1 = await post(a.token, { ...comic, body: 'komentar panel admin pertama' })
   const c2 = await post(a.token, { ...comic, body: 'komentar panel admin kedua yang melanggar' })
   assert.equal(c1.status, 200, JSON.stringify(c1))
@@ -783,8 +765,6 @@ test('panel OWNER: statistik, daftar pengguna (cari/filter/halaman) dan daftar k
   assert.equal((await call('DELETE', `/api/community/comments/${c1.data.comment.id}`, { token: o.token })).status, 200)
   const withDeleted = await adm('/comments?q=lsalpha', o.token)
   assert.ok(withDeleted.data.items.some(c => c.id === c1.data.comment.id && c.deleted === true))
-
-  // paginasi
   const p1 = await adm('/users', o.token)
   assert.equal(p1.data.page, 1)
   assert.ok(p1.data.items.length <= 20 && typeof p1.data.hasMore === 'boolean')
@@ -874,7 +854,6 @@ test('riwayat: judul komik keliru (sama dengan judul chapter) tidak menimpa judu
   const list = await getp(`/users/${a.user.id}/activity?tab=all`, a.token)
   assert.equal(list.data.items[0].comicTitle, 'The Villain Of Destiny')
   assert.equal(list.data.items[0].coverUrl, 'https://img.example/v.jpg')
-  // Baris lama yang sudah terlanjur salah tersimpan tetap tampil rapi (judul dari slug), bukan "Chapter 1".
   const b = await login('rh-b', 'rhb@example.com')
   await put('/me/reading-progress', b.token, { ...base, slug: 'shepherd-wizard', comicTitle: 'Chapter 1', coverUrl: '' })
   const old = await getp(`/users/${b.user.id}/activity?tab=all`, b.token)
@@ -911,39 +890,30 @@ test('pengumuman OWNER: kirim, feed publik untuk HP, riwayat, tarik, dan hak aks
   const dev = await login('bc-dev', 'dev@example.com')
   const owner = await login('bc-owner', 'owner@example.com')
   const send = (t, body) => call('POST', '/api/community/admin/broadcasts', { token: t, body })
-
-  // hanya OWNER
   assert.equal((await send(u.token, { title: 'Halo', body: 'Tes' })).status, 403)
   assert.equal((await send(dev.token, { title: 'Halo', body: 'Tes' })).status, 403)
   assert.equal((await call('POST', '/api/community/admin/broadcasts', { body: { title: 'a', body: 'b' } })).status, 401)
   assert.equal((await call('GET', '/api/community/admin/broadcasts', { token: dev.token })).status, 403)
-
-  // validasi
   assert.equal((await send(owner.token, { title: '', body: 'isi' })).status, 400)
   assert.equal((await send(owner.token, { title: 'Judul', body: '' })).status, 400)
   assert.equal((await send(owner.token, { title: 'x'.repeat(61), body: 'isi' })).status, 400)
   assert.equal((await send(owner.token, { title: 'Judul', body: 'x'.repeat(201) })).status, 400)
-  assert.equal((await send(owner.token, { title: 'Judul', body: 'isi', source: 'mock' })).status, 400) // slug wajib ikut
+  assert.equal((await send(owner.token, { title: 'Judul', body: 'isi', source: 'mock' })).status, 400)
   assert.equal((await send(owner.token, { title: 'Judul', body: 'isi', source: 'tidak-ada', slug: 'a' })).status, 400)
   assert.equal((await send(owner.token, { title: 'Judul', body: 'isi', source: 'mock', slug: 'a b/c' })).status, 400)
-
-  // HP baru: tanpa `after` hanya dapat posisi awal, pengumuman lama tidak dikirim ulang
   const before = await call('GET', '/api/community/broadcasts')
   assert.equal(before.status, 200)
   assert.deepEqual(before.data.items, [])
   const base = before.data.latestId
   assert.match(base, /^[0-9a-f]{24}$/)
-
   const a = await send(owner.token, { title: 'Server maintenance', body: 'Besok pukul 02.00\nselama 30 menit' })
   assert.equal(a.status, 200, JSON.stringify(a))
   assert.equal(a.data.broadcast.title, 'Server maintenance')
   assert.equal(a.data.broadcast.source, '')
-  await new Promise(r => setTimeout(r, 5)) // newId() memakai jam asli; pastikan urutan ID jelas
+  await new Promise(r => setTimeout(r, 5))
   const b = await send(owner.token, { title: 'Chapter baru!', body: 'Solo Leveling sudah update', source: 'mock', slug: 'solo-leveling' })
   assert.equal(b.status, 200)
   assert.equal(b.data.broadcast.slug, 'solo-leveling')
-
-  // feed publik (tanpa login): urut lama -> baru, hanya yang lebih baru dari `after`
   const feedNow = await call('GET', `/api/community/broadcasts?after=${base}`)
   assert.equal(feedNow.data.items.length, 2)
   assert.deepEqual(feedNow.data.items.map(i => i.title), ['Server maintenance', 'Chapter baru!'])
@@ -953,12 +923,8 @@ test('pengumuman OWNER: kirim, feed publik untuk HP, riwayat, tarik, dan hak aks
   assert.equal((await call('GET', `/api/community/broadcasts?after=${b.data.broadcast.id}`)).data.items.length, 0)
   assert.equal((await call('GET', '/api/community/broadcasts?after=bukan-id')).status, 400)
   assert.equal((await call('GET', '/api/community/broadcasts')).data.latestId, b.data.broadcast.id)
-
-  // riwayat OWNER, terbaru dulu
   const hist = await call('GET', '/api/community/admin/broadcasts', { token: owner.token })
   assert.equal(hist.data.items[0].id, b.data.broadcast.id)
-
-  // tarik pengumuman
   assert.equal((await call('DELETE', `/api/community/admin/broadcasts/${a.data.broadcast.id}`, { token: dev.token })).status, 403)
   assert.equal((await call('DELETE', `/api/community/admin/broadcasts/${a.data.broadcast.id}`, { token: owner.token })).status, 200)
   assert.equal((await call('DELETE', `/api/community/admin/broadcasts/${a.data.broadcast.id}`, { token: owner.token })).status, 404)
@@ -973,7 +939,6 @@ test('FCM: token tersimpan di MongoDB, pengumuman OWNER langsung dikirim, token 
   const u = await login('fcm-user', 'fcm-user@example.com')
   const owner = await login('fcm-owner', 'owner@example.com')
   const put = (token, t) => call('PUT', '/api/community/push-token', { token: t, body: { token, appVersion: '1.2.0' } })
-
   assert.equal((await put('pendek')).status, 400)
   assert.equal((await call('PUT', '/api/community/push-token', { body: {} })).status, 400)
   assert.equal((await put(tok(1))).status, 200)
@@ -984,12 +949,10 @@ test('FCM: token tersimpan di MongoDB, pengumuman OWNER langsung dikirim, token 
   assert.equal(col.docs.find(d => d.token === tok(2)).userId, u.user.id)
   assert.equal(col.docs.find(d => d.token === tok(1)).userId, null)
   assert.equal(col.docs.find(d => d.token === tok(1)).appVersion, '1.2.0')
-
   await put(tok(2))
   assert.equal(col.docs.length, 3)
   assert.equal(col.docs.find(d => d.token === tok(2)).userId, null)
   await put(tok(2), u.token)
-
   assert.equal((await call('PUT', '/api/community/push-token', { token: 'sesi.rusak.token', body: { token: tok(1) } })).status, 200)
   assert.equal((await call('PUT', '/api/community/push-token', { body: { token: tok(4), previous: tok(1) } })).status, 200)
   assert.deepEqual(col.docs.map(d => d.token).sort(), [tok(2), tok(3), tok(4)])
@@ -997,11 +960,9 @@ test('FCM: token tersimpan di MongoDB, pengumuman OWNER langsung dikirim, token 
   assert.equal(col.docs.length, 4)
   await call('POST', '/api/community/push-token/unregister', { body: { token: tok(4) } })
   assert.equal(col.docs.length, 3)
-
   assert.equal((await call('GET', '/api/community/admin/push-status', { token: u.token })).status, 403)
   const st = await call('GET', '/api/community/admin/push-status', { token: owner.token })
   assert.deepEqual([st.data.enabled, st.data.devices, st.data.linkedToAccount], [true, 3, 2])
-
   fcm.dead.add(tok(3))
   const sent = await call('POST', '/api/community/admin/broadcasts', { token: owner.token, body: { title: 'Halo FCM', body: 'Isi pesan', source: 'mock', slug: 'solo-leveling' } })
   assert.equal(sent.status, 200)
@@ -1016,12 +977,10 @@ test('FCM: token tersimpan di MongoDB, pengumuman OWNER langsung dikirim, token 
   assert.deepEqual(col.docs.map(d => d.token).sort(), [tok(1), tok(2)])
   const stored = env.db.collection('broadcasts').docs.find(d => d._id === sent.data.broadcast.id)
   assert.deepEqual([stored.push.sent, stored.push.failed], [2, 1])
-
   const feed = await call('GET', `/api/community/broadcasts?after=${'0'.repeat(24)}`)
   assert.ok(feed.data.items.some(i => i.id === sent.data.broadcast.id))
   assert.equal(feed.data.items[0].push, undefined)
   assert.equal((await call('GET', '/api/community/admin/broadcasts', { token: owner.token })).data.items[0].id, sent.data.broadcast.id)
-
   fcm.fail = true
   const down = await call('POST', '/api/community/admin/broadcasts', { token: owner.token, body: { title: 'FCM mati', body: 'Tetap tersimpan' } })
   await community.push.flush()
@@ -1029,11 +988,9 @@ test('FCM: token tersimpan di MongoDB, pengumuman OWNER langsung dikirim, token 
   assert.equal(down.status, 200)
   assert.equal(col.docs.length, 2)
   assert.ok((await call('GET', `/api/community/broadcasts?after=${'0'.repeat(24)}`)).data.items.some(i => i.id === down.data.broadcast.id))
-
   assert.equal((await call('POST', '/api/community/push-token/unregister', { body: { token: tok(1) } })).status, 200)
   assert.deepEqual(col.docs.map(d => d.token), [tok(2)])
   assert.equal((await call('POST', '/api/community/push-token/unregister', { body: { token: 'x' } })).status, 400)
-
   assert.equal((await call('DELETE', '/api/community/me', { token: u.token })).status, 200)
   assert.equal(col.docs.length, 0)
 })

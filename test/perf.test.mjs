@@ -21,14 +21,12 @@ import { fakeDb } from './fake-mongo.mjs'
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 
-/* ───────── cache: stale-while-revalidate, backoff, batas byte ───────── */
-
 test('cache SWR: entri kedaluwarsa disajikan langsung (STALE) sementara refresh jalan di background', async () => {
   const c = new TtlCache({ staleMs: 60_000 })
   let calls = 0
   const loader = async () => ({ v: ++calls })
   assert.deepEqual((await c.remember('k', 40, loader)).value, { v: 1 })
-  await sleep(50) // lewat TTL (40ms) tapi masih di jendela SWR (80ms)
+  await sleep(50)
   let release
   const slow = () => new Promise(r => (release = () => r({ v: 2 })))
   const t0 = Date.now()
@@ -36,7 +34,6 @@ test('cache SWR: entri kedaluwarsa disajikan langsung (STALE) sementara refresh 
   assert.equal(r.state, 'STALE')
   assert.deepEqual(r.value, { v: 1 })
   assert.ok(Date.now() - t0 < 20, 'tidak menunggu loader lambat')
-  // request lain selama refresh berjalan tidak memicu loader kedua
   let extra = 0
   await c.remember('k', 40, async () => (extra++, { v: 99 }))
   assert.equal(extra, 0)
@@ -64,7 +61,7 @@ test('cache SWR: refresh background yang gagal ditahan (backoff) dan data lama t
 test('cache: di luar jendela SWR, request menunggu data baru (MISS) dan refresh yang sama dipakai bersama', async () => {
   const c = new TtlCache({ staleMs: 60_000 })
   await c.remember('k', 5, async () => 'lama')
-  await sleep(30) // jauh lewat 2×TTL
+  await sleep(30)
   let calls = 0
   const loader = async () => (await sleep(10), `baru${++calls}`)
   const [a, b] = await Promise.all([c.remember('k', 5, loader), c.remember('k', 5, loader)])
@@ -76,12 +73,12 @@ test('cache: batas total byte menyingkirkan entri tertua dan menolak satu entri 
   const c = new TtlCache({ max: 100, maxBytes: 1000, sizeOf: v => v.body.length })
   c.set('a', big(400), 1000)
   c.set('b', big(400), 1000)
-  c.set('c', big(400), 1000) // total 1200 > 1000 → 'a' (tertua) keluar
+  c.set('c', big(400), 1000)
   assert.deepEqual([...c.map.keys()], ['b', 'c'])
   assert.equal(c.bytes, 800)
   c.set('raksasa', big(5000), 1000)
   assert.equal(c.map.has('raksasa'), false)
-  c.set('b', big(100), 1000) // timpa entri yang ada → byte dihitung ulang, bukan ditambah
+  c.set('b', big(100), 1000)
   assert.equal(c.bytes, 500)
 })
 
@@ -97,8 +94,6 @@ test('ttl-map: kedaluwarsa, hapus, dan batas jumlah', () => {
   m.delete('y')
   assert.equal(m.get('y'), undefined)
 })
-
-/* ───────── HTTP: gzip lazy, ETag, rate limiter ───────── */
 
 test('encode: gzip hanya kalau diminta dan payload cukup besar', async () => {
   const big = { items: Array.from({ length: 200 }, (_, i) => ({ i, t: 'komik '.repeat(5) })) }
@@ -124,8 +119,8 @@ test('rate limiter: jumlah kunci dibatasi (anti banjir IP palsu) tanpa merusak p
   const rl = createRateLimiter({ max: 2, windowMs: 60_000, maxKeys: 3 })
   for (let i = 0; i < 50; i++) rl.check(`ip-${i}`)
   const again = rl.check('ip-49')
-  assert.equal(again.ok, true) // kunci terbaru masih tercatat
-  assert.equal(rl.check('ip-49').ok, false) // pemeriksaan ke-3 melewati max=2
+  assert.equal(again.ok, true)
+  assert.equal(rl.check('ip-49').ok, false)
   rl.close()
 })
 
@@ -138,8 +133,6 @@ test('config: LOG_REQUESTS dan batas cache', () => {
   assert.equal(loadConfig({}).redisTimeoutMs, 250)
   assert.equal(loadConfig({ REDIS_TIMEOUT_MS: '500' }).redisTimeoutMs, 500)
 })
-
-/* ───────── progress writer (tulis-belakangan) ───────── */
 
 const spyColl = () => {
   const calls = []
@@ -168,7 +161,6 @@ test('progress writer: update ke dokumen yang sama digabung jadi satu tulis', as
   assert.equal(coll.calls.length, 1)
   const { update, opts } = coll.calls[0]
   assert.deepEqual(update.$set, { chapter: '2', updatedAt: 2, comicTitle: 'Judul' })
-  // createdAt tertua menang, dan path yang ada di $set tidak boleh ikut $setOnInsert (Mongo menolak konflik)
   assert.deepEqual(update.$setOnInsert, { createdAt: 1, coverUrl: '' })
   assert.deepEqual(update.$inc, { readSeconds: 45 })
   assert.equal(opts.upsert, true)
@@ -191,20 +183,17 @@ test('progress writer: flush terjadwal, flushFor/drop per user, close menguras a
   await w.save('u1:s:a', { x: 1 })
   await sleep(60)
   assert.equal(coll.calls.length, 1, 'timer flush jalan sendiri')
-
   await w.save('u1:s:a', { x: 2 })
   await w.save('u2:s:a', { x: 3 })
-  await w.flushFor('u3') // tidak ada milik u3 → tidak menguras apa pun
+  await w.flushFor('u3')
   assert.equal(w.pending, 2)
   await w.flushFor('u1')
   assert.equal(w.pending, 0)
   assert.equal(coll.calls.length, 3)
-
   await w.save('u9:s:a', { x: 1 })
-  await w.drop('u9') // akun dihapus → antrean dibuang
+  await w.drop('u9')
   await w.flush()
   assert.equal(coll.calls.length, 3)
-
   const w2 = createProgressWriter(coll, { flushMs: 10_000, logger: quiet })
   await w2.save('u4:s:a', { x: 1 })
   await w2.close()
@@ -238,14 +227,11 @@ test('progress writer: flushMs=0 menulis langsung (perilaku lama)', async () => 
   assert.equal(w.pending, 0)
 })
 
-/* ───────── komunitas: query & cache ───────── */
-
 const cfg = () =>
   loadConfig({ LOG_REQUESTS: 'false', MONGODB_URI: 'x', GOOGLE_CLIENT_ID: 'cid', AUTH_SECRET: 'x'.repeat(40) }).community
 const hasSource = id => id === 'mock'
 const open = limits => ({ login: { max: 1e6 }, readTime: { max: 1e6 }, like: { max: 1e6 }, write: { max: 1e6 }, commentBurst: { max: 1e6 }, commentHour: { max: 1e6 }, ...limits })
 
-// Membungkus koleksi fake supaya setiap panggilan tercatat (nama koleksi → metode → jumlah).
 function instrument(db) {
   const stats = { calls: {}, opts: [] }
   const wrapped = {
@@ -287,7 +273,6 @@ test('authenticate & daftar komentar tidak menarik foto profil base64 dari datab
   await user(id)
   const read = stats.opts.find(o => o.name === 'users' && o.prop === 'findOne')
   assert.deepEqual(read.args[1], { projection: { customPicture: 0 } })
-
   const u = await user(id)
   await createComment(cm, u, { type: 'comic', source: 'mock', slug: 'x', body: 'komentar pertama yang bagus' }, hasSource)
   stats.opts.length = 0
@@ -301,9 +286,8 @@ test('authenticate & daftar komentar tidak menarik foto profil base64 dari datab
 test('foto profil: flag hasAvatar dipakai saat dokumen dibaca tanpa isi foto; dokumen lama di-backfill', async () => {
   assert.equal(publicUser({ _id: 'u1', hasAvatar: true, picture: 'g' }).picture, '/api/community/users/u1/avatar')
   assert.equal(publicUser({ _id: 'u1', hasAvatar: false, customPicture: 'data:x', picture: 'g' }).picture, 'g')
-  assert.equal(publicUser({ _id: 'u1', customPicture: 'data:x', picture: 'g' }).picture, '/api/community/users/u1/avatar') // dokumen penuh, belum ber-flag
+  assert.equal(publicUser({ _id: 'u1', customPicture: 'data:x', picture: 'g' }).picture, '/api/community/users/u1/avatar')
   assert.equal(publicUser({ _id: 'u1', picture: 'g' }).picture, 'g')
-
   const db = fakeDb()
   await db.collection('users').insertOne({ _id: 'legacy', googleSub: 's1', username: 'legacy', customPicture: 'data:image/png;base64,AAAA' })
   await db.collection('users').insertOne({ _id: 'kosong', googleSub: 's2', username: 'kosong', customPicture: '' })
@@ -348,7 +332,7 @@ test('detik baca ikut antrean, tapi chapter tetap dihitung tepat waktu (ambang 6
   await saveProgress(cm, await user(id), ch, hasSource)
   const first = await trackReadingTime(cm, await user(id), { ...ch, seconds: 60 }, hasSource)
   assert.equal(first.credited, 60)
-  assert.equal(first.xpGained, 8) // 60 dtk = ambang → chapter terhitung, tidak menunggu flush antrean
+  assert.equal(first.xpGained, 8)
   assert.equal(first.chaptersRead, 1)
   clock.t += 30_000
   const second = await trackReadingTime(cm, await user(id), { ...ch, seconds: 30 }, hasSource)
@@ -356,8 +340,7 @@ test('detik baca ikut antrean, tapi chapter tetap dihitung tepat waktu (ambang 6
   assert.equal(second.chaptersRead, 1)
   await cm.progress.flush()
   assert.equal((await db.collection('reading_progress').find({}).toArray())[0].readSeconds, 90)
-
-  await saveProgress(cm, await user(id), { ...ch, chapter: '2' }, hasSource) // masih antre
+  await saveProgress(cm, await user(id), { ...ch, chapter: '2' }, hasSource)
   await deleteAccount(cm, await user(id))
   await cm.progress.flush()
   for (const name of ['reading_progress', 'chapter_reads', 'users']) assert.equal((await db.collection(name).find({}).toArray()).length, 0, name)
@@ -415,7 +398,6 @@ test('reconcile XP via aggregate: total benar, level ikut, dan tidak menarik eve
   assert.equal(r.user.xp, 15)
   assert.equal(stats.calls['xp_events.aggregate'], 1)
   assert.equal(stats.calls['xp_events.find'], undefined)
-  // XP di dokumen user yang melenceng dipulihkan dari event
   await cm.c.users.updateOne({ _id: id }, { $set: { xp: 9999, level: 40 } })
   const healed = await me(cm, await user(id))
   assert.deepEqual([healed.user.xp, healed.user.level], [15, 1])
@@ -451,7 +433,6 @@ test('total komentar & jumlah like di-cache tapi tetap akurat setelah penulisan 
   assert.equal(stats.calls['comments.countDocuments'], 1)
   await createComment(cm, a, { type: 'comic', source: 'mock', slug: 'tot', body: 'komentar untuk uji total' }, hasSource)
   assert.equal(await total(), 1)
-
   const like = { type: 'comic', source: 'mock', slug: 'tot' }
   assert.deepEqual(await setLike(cm, a, like, hasSource, true), { liked: true, count: 1 })
   const b = await user(await (async () => (await login('tot-b')))())
@@ -476,8 +457,6 @@ test('satu indeks yang gagal dibuat tidak mematikan komunitas', async () => {
   await cm.close()
 })
 
-/* ───────── Google JWKS & lifecycle ───────── */
-
 test('JWKS: fetch bersamaan digabung, dan kunci lama tetap dipakai saat Google tidak terjangkau', async () => {
   const { generateKeyPairSync, createSign } = await import('node:crypto')
   const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
@@ -501,14 +480,12 @@ test('JWKS: fetch bersamaan digabung, dan kunci lama tetap dipakai saat Google t
   const g = createGoogleVerifier({ clientIds: ['cid'], fetchJwks, now: () => clock.t })
   await Promise.all([g.verify(mint()), g.verify(mint()), g.verify(mint())])
   assert.equal(calls, 1, 'tiga login serentak = satu fetch')
-
-  clock.t += 3601 * 1000 // kunci kedaluwarsa, Google down
+  clock.t += 3601 * 1000
   down = true
   assert.equal((await g.verify(mint())).email, 'a@b.co')
   assert.equal(calls, 2)
-  await g.verify(mint()) // dalam semenit berikutnya tidak mencoba fetch lagi
+  await g.verify(mint())
   assert.equal(calls, 2)
-  // kid asing saat Google down tetap error 503 (bukan diam-diam ditolak sebagai token palsu)
   clock.t += 61_000
   await assert.rejects(g.verify(mint('kid-baru')), e => e.status === 503)
 })
@@ -538,7 +515,6 @@ test('startCommunity: env belum lengkap (null) tidak di-retry; stop() membangunk
   await s1.ready
   assert.equal(n, 1)
   assert.equal(s1.get(), null)
-
   const s2 = startCommunity({}, { create: async () => Promise.reject(new Error('down')), baseDelayMs: 60_000, logger: quiet })
   await sleep(10)
   const t0 = Date.now()

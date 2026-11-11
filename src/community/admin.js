@@ -78,7 +78,6 @@ export async function setRole(ctx, actor, id, role) {
   return { user: publicUser({ ...target, role }) }
 }
 
-// Beri/cabut centang verified. Khusus OWNER; OWNER sendiri selalu terverifikasi dan tidak bisa diubah.
 export async function setVerified(ctx, actor, id, verified) {
   needOwner(actor)
   if (typeof verified !== 'boolean') throw badRequest('"verified" harus true atau false')
@@ -106,7 +105,6 @@ const needOwner = u => {
   if (rank(u) < 3) throw forbidden('Fitur ini khusus OWNER')
 }
 
-// Ringkasan akun untuk panel OWNER. Semua angka dihitung dari data server.
 export async function userDetail(ctx, actor, id) {
   needOwner(actor)
   const u = await ctx.c.users.findOne({ _id: idParam(id) }, NO_BLOB)
@@ -127,7 +125,6 @@ export async function userDetail(ctx, actor, id) {
 
 const MAX_GRANT = 50_000
 
-// Tambah/kurangi XP akun. Dicatat sebagai event 'admin' supaya level tetap konsisten dengan rekonsiliasi XP.
 export async function grantXp(ctx, actor, id, amount) {
   needOwner(actor)
   if (!Number.isInteger(amount) || amount === 0 || Math.abs(amount) > MAX_GRANT) throw badRequest(`"amount" harus bilangan bulat bukan nol, maksimal ±${MAX_GRANT}`)
@@ -139,7 +136,6 @@ export async function grantXp(ctx, actor, id, amount) {
   return { user: publicUser({ ...target, xp: synced.xp, level: synced.level }, true) }
 }
 
-// Hapus foto profil kustom yang melanggar aturan. MODERATOR boleh untuk akun di bawahnya, OWNER untuk semua.
 export async function resetMedia(ctx, actor, id, input) {
   needMod(actor)
   const uid = idParam(id)
@@ -154,15 +150,12 @@ export async function resetMedia(ctx, actor, id, input) {
   return { ok: true }
 }
 
-// ---- Panel OWNER: statistik, daftar pengguna, daftar komentar ----
-
 const PAGE_SIZE = 20
 const ROLES = ['OWNER', 'MODERATOR', 'PREMIUM', 'USER']
 const escapeRe = t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 const like = t => ({ $regex: escapeRe(t), $options: 'i' })
 const flag = (q, name) => ['1', 'true'].includes(qstr(q, name, 5).toLowerCase())
 
-// Ringkasan angka untuk tab "Ringkasan". Semua dihitung dari data server.
 export async function adminStats(ctx, actor) {
   needOwner(actor)
   const now = ctx.now()
@@ -182,7 +175,6 @@ export async function adminStats(ctx, actor) {
   return { users, newUsers7d, active24h, banned, owners, moderators, premiums, comments, comments24h, openReports, chaptersRead: chaptersReadTotal }
 }
 
-// Daftar pengguna: cari (username/nama/email), filter role atau diblokir, terbaru dulu.
 export async function listUsers(ctx, actor, query) {
   needOwner(actor)
   const page = qint(query, 'page', 1, 1, 500)
@@ -195,7 +187,6 @@ export async function listUsers(ctx, actor, query) {
   }
   if (flag(query, 'banned')) filter.banned = true
   const search = q ? [{ username: like(q) }, { name: like(q) }, { email: like(q) }] : [{}]
-  // verified=1: OWNER selalu dihitung terverifikasi. Satu $or saja supaya tetap sederhana.
   if (flag(query, 'verified')) filter.$or = search.flatMap(s => [{ ...s, verified: true }, { ...s, role: 'OWNER' }])
   else if (q) filter.$or = search
   const [rows, total] = await Promise.all([
@@ -210,7 +201,6 @@ export async function listUsers(ctx, actor, query) {
   }
 }
 
-// Semua komentar (termasuk yang sudah dihapus), terbaru dulu. Cari isi komentar atau pembuatnya; filter hanya yang dilaporkan.
 export async function listAdminComments(ctx, actor, query) {
   needOwner(actor)
   const page = qint(query, 'page', 1, 1, 500)

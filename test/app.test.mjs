@@ -23,7 +23,6 @@ before(async () => {
     res.writeHead(404).end()
   })
   registry = makeRegistry(img.port)
-  // katalog melengkapi semua item sekaligus di respons pertama (mock instan), jadi ETag respons kedua identik
   const catalog = createCatalog({ registry, logger: quiet, inlineMax: 100, crawl: false })
   app = createApp({ registry, config: loadConfig({ LOG_REQUESTS: 'false' }), logger: quiet, catalog })
   api = await listen(app.handler)
@@ -65,7 +64,7 @@ test('cache: request kedua HIT dan scraper tidak dipanggil lagi', async () => {
   const url = `${api.url}/api/mock/search?q=cachetest&limit=5`
   const before = registry.provider.calls
   const a = await fetch(url)
-  const b = await fetch(`${api.url}/api/mock/search?limit=5&q=cachetest`) // urutan param beda
+  const b = await fetch(`${api.url}/api/mock/search?limit=5&q=cachetest`)
   assert.equal(a.headers.get('x-cache'), 'MISS')
   assert.equal(b.headers.get('x-cache'), 'HIT')
   assert.equal(registry.provider.calls - before, 1)

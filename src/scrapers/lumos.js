@@ -107,7 +107,7 @@ function fromApi(i) {
   })
 }
 
-export async function search(query, { limit = 10 } = {}) {
+async function search(query, { limit = 10 } = {}) {
   let items = []
   try {
     const data = await http.get(`/api/search?q=${encodeURIComponent(query)}&limit=${limit}`, { json: true, ttl: MIN })
@@ -117,7 +117,7 @@ export async function search(query, { limit = 10 } = {}) {
   return (await browse({ q: query })).items.slice(0, limit)
 }
 
-export async function latest({ page = 1 } = {}) {
+async function latest({ page = 1 } = {}) {
   let data = null
   try {
     data = await http.get(`/api/home-latest?page=${page}`, { json: true, ttl: MIN })
@@ -148,12 +148,10 @@ export async function allSeries({ sort = 'popular', page = 1, type = '', status 
   const g = [].concat(genre).filter(Boolean)
   if (g.length) qs.set('genre', g.join(','))
   qs.set('page', String(page))
-
   const html = await http.get(`/all-series?${qs}`, { ttl: MIN })
   readImgCfg(html)
   const $ = cheerio.load(html)
   const root = $('#main-content').length ? $('#main-content') : $('body')
-
   const CARD = '.htg-card, article, li, [class*="card"], [class*="item"]'
   const map = new Map()
   root.find('a[href*="/comic/"]').each((_, a) => {
@@ -163,7 +161,6 @@ export async function allSeries({ sort = 'popular', page = 1, type = '', status 
     if ($a.closest('header, nav, footer').length) return
     const $card = $a.closest(CARD).length ? $a.closest(CARD).first() : $a
     const cur = map.get(slug) || { slug, title: '', cover: '', rating: null, type: '', status: '', chapterCount: null }
-
     if (!cur.title) {
       cur.title =
         clean($card.find('h1,h2,h3,h4').first().text()) ||
@@ -178,9 +175,7 @@ export async function allSeries({ sort = 'popular', page = 1, type = '', status 
     if (cur.chapterCount == null) cur.chapterCount = num(clean($card.find('span.font-medium').first().text())) || null
     map.set(slug, cur)
   })
-
   const items = [...map.values()].filter(x => x.title || x.cover).map(x => item({ ...x, title: x.title || x.slug }))
-
   let pages = 1
   $('a[href*="page="]').each((_, a) => {
     const m = String($(a).attr('href')).match(/[?&]page=(\d+)/)
@@ -189,7 +184,7 @@ export async function allSeries({ sort = 'popular', page = 1, type = '', status 
   return { items, page, pages: Math.max(pages, page), total: items.length }
 }
 
-export async function popular({ period = '', limit = 10 } = {}) {
+async function popular({ period = '', limit = 10 } = {}) {
   if (['weekly', 'monthly', 'alltime'].includes(period)) {
     const html = await http.get('/', { ttl: 5 * MIN })
     readImgCfg(html)
@@ -218,7 +213,7 @@ export async function popular({ period = '', limit = 10 } = {}) {
   return pickList(data).map(fromApi).filter(x => x.slug).slice(0, limit)
 }
 
-export async function browse({ q = '', sort = '', status = '', type = '', genre = [], minChapters = '', page = 1 } = {}) {
+async function browse({ q = '', sort = '', status = '', type = '', genre = [], minChapters = '', page = 1 } = {}) {
   const qs = new URLSearchParams()
   if (q) qs.set('q', q)
   if (sort) qs.set('sort', sort)
@@ -228,11 +223,9 @@ export async function browse({ q = '', sort = '', status = '', type = '', genre 
   if (g.length) qs.set('genre', g.join(','))
   if (minChapters) qs.set('minChapters', String(minChapters))
   if (page > 1) qs.set('page', String(page))
-
   const html = await http.get(`/browse${qs.toString() ? '?' + qs : ''}`, { ttl: MIN })
   readImgCfg(html)
   const $ = cheerio.load(html)
-
   const items = []
   $('#main-content .htg-card').each((_, el) => {
     const $el = $(el)
@@ -248,25 +241,22 @@ export async function browse({ q = '', sort = '', status = '', type = '', genre 
       })
     )
   })
-
   let pages = 1
   $('a[href*="page="]').each((_, a) => {
     const m = String($(a).attr('href')).match(/[?&]page=(\d+)/)
     if (m) pages = Math.max(pages, parseInt(m[1]))
   })
   const total = parseInt(clean($('#main-content h1').first().next('span').text())) || items.length
-
   const genres = []
   $('[data-bf-genre-name]').each((_, el) => {
     const n = $(el).attr('data-bf-genre-name')
     if (n && !genres.includes(n)) genres.push(n)
   })
   if (genres.length) genreCache = genres
-
   return { items, page, pages: Math.max(pages, page), total }
 }
 
-export async function genres() {
+async function genres() {
   if (!genreCache) await browse({})
   return genreCache || []
 }
@@ -304,13 +294,12 @@ function decodeSynopsis(raw) {
   }
 }
 
-export async function detail(slug) {
+async function detail(slug) {
   const html = await http.get(`/comic/${encodeURIComponent(slug)}`, { ttl: MIN })
   readImgCfg(html)
   const $ = cheerio.load(html)
   const ld = readLd($)
   const main = $('#main-content').length ? $('#main-content') : $('body')
-
   const stat = label => {
     let out = ''
     main.find('*').each((_, el) => {
@@ -325,14 +314,12 @@ export async function detail(slug) {
   const bodyText = clean(main.text())
   const pick = re => (bodyText.match(re) || [])[1] || ''
   const dash = v => (v === '-' ? '' : v)
-
   const genreList = []
   main.find('a[href*="genre="]').each((_, a) => {
     const g = clean($(a).text())
     if (g && !genreList.includes(g)) genreList.push(g)
   })
   if (!genreList.length && Array.isArray(ld?.genre)) genreList.push(...ld.genre)
-
   const chapters = []
   $('#tab-chapters a[href*="/read/"]').each((_, a) => {
     const m = String($(a).attr('href')).match(/\/read\/([^/?#]+)\/([^/?#]+)/)
@@ -347,7 +334,6 @@ export async function detail(slug) {
   })
   sortChapters(chapters)
   if (!chapters.length) chapters.push(...(await chapterListApi(slug).catch(() => [])))
-
   const related = []
   main.find('a[href^="/comic/"]').each((_, a) => {
     const s = slugOf($(a).attr('href'))
@@ -355,7 +341,6 @@ export async function detail(slug) {
     if (!s || !t || s === slug || related.some(r => r.slug === s)) return
     related.push(item({ title: t, slug: s, cover: resolveImage(imgSrc($(a).find('img').first())) }))
   })
-
   const artist = clean(ld?.illustrator?.name) || stat('Artist')
   return {
     title: clean($('h1').first().text()) || clean(ld?.name) || slug,
@@ -382,11 +367,10 @@ export async function detail(slug) {
   }
 }
 
-export async function chapter(slug, chapterSlug) {
+async function chapter(slug, chapterSlug) {
   const html = await http.get(`/read/${encodeURIComponent(slug)}/${encodeURIComponent(chapterSlug)}`, { ttl: 5 * MIN })
   readImgCfg(html)
   const $ = cheerio.load(html)
-
   const images = []
   const add = u => {
     if (u && !images.includes(u)) images.push(u)
@@ -401,7 +385,6 @@ export async function chapter(slug, chapterSlug) {
     const re = /https?:\/\/[^"'\s\\)]+\/file\/comic\/[^"'\s\\)]+\.(?:webp|jpe?g|png|avif)/gi
     for (const mm of html.matchAll(re)) add(mm[0])
   }
-
   let prev = null
   let next = null
   $('a[href*="/read/"]').each((_, a) => {
@@ -411,7 +394,6 @@ export async function chapter(slug, chapterSlug) {
     if (/^(Previous\s+)?Prev/i.test(t)) prev = m[2]
     else if (/^Next/i.test(t)) next = m[2]
   })
-
   return {
     title: clean($('title').text().replace(/\s*[—|-]\s*LumosKomik\s*$/i, '')) || chapterSlug,
     comic: slug,

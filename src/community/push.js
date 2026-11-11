@@ -39,7 +39,6 @@ const dataOf = b => ({ type: 'broadcast', id: b._id, title: b.title, body: b.bod
 
 export function createPush({ c, messaging = null, now = Date.now, logger = console }) {
   const pending = new Set()
-
   const upsert = async (token, set) => {
     const op = { $set: set, $setOnInsert: { _id: newId(), createdAt: now() } }
     try {
@@ -49,7 +48,6 @@ export function createPush({ c, messaging = null, now = Date.now, logger = conso
       await c.pushTokens.updateOne({ token }, { $set: set })
     }
   }
-
   const register = async (viewer, body) => {
     const token = body?.token
     if (typeof token !== 'string' || !TOKEN.test(token)) throw badRequest('"token" tidak valid')
@@ -59,22 +57,18 @@ export function createPush({ c, messaging = null, now = Date.now, logger = conso
     if (typeof previous === 'string' && previous !== token && TOKEN.test(previous)) await c.pushTokens.deleteOne({ token: previous })
     return { ok: true }
   }
-
   const unregister = async body => {
     const token = body?.token
     if (typeof token !== 'string' || !TOKEN.test(token)) throw badRequest('"token" tidak valid')
     await c.pushTokens.deleteOne({ token })
     return { ok: true }
   }
-
   const dropUser = userId => c.pushTokens.deleteMany({ userId })
-
   const status = async actor => {
     if (rank(actor) < 3) throw forbidden('Fitur ini khusus OWNER')
     const [devices, linked] = await Promise.all([c.pushTokens.countDocuments({}), c.pushTokens.countDocuments({ userId: { $ne: null } })])
     return { enabled: !!messaging, devices, linkedToAccount: linked }
   }
-
   const send = async doc => {
     if (!messaging) return { sent: 0, failed: 0, skipped: true }
     await c.pushTokens.deleteMany({ updatedAt: { $lt: now() - STALE_MS } })
@@ -106,7 +100,6 @@ export function createPush({ c, messaging = null, now = Date.now, logger = conso
     }
     return { sent, failed, skipped: false }
   }
-
   const dispatch = doc => {
     const p = send(doc)
       .then(async r => {
@@ -121,6 +114,5 @@ export function createPush({ c, messaging = null, now = Date.now, logger = conso
     pending.add(p)
     return p
   }
-
   return { enabled: !!messaging, register, unregister, dropUser, status, dispatch, flush: () => Promise.all([...pending]) }
 }

@@ -69,12 +69,12 @@ test('views: dedupe per perangkat, per akun, dan jendela 6 jam', async () => {
   const a = await viewComic('komik-1', device('device-aaaa-1'))
   assert.equal(a.status, 200)
   assert.equal(a.data.viewCount, 1)
-  assert.equal((await viewComic('komik-1', device('device-aaaa-1'))).data.viewCount, 1) // perangkat sama: tidak bertambah
-  assert.equal((await viewComic('komik-1', device('device-bbbb-2'))).data.viewCount, 2) // perangkat lain: bertambah
-  assert.equal((await viewComic('komik-1', device('device-cccc-3'), member)).data.viewCount, 3) // login: kunci = userId
-  assert.equal((await viewComic('komik-1', device('device-dddd-4'), member)).data.viewCount, 3) // akun sama, perangkat lain: tetap
+  assert.equal((await viewComic('komik-1', device('device-aaaa-1'))).data.viewCount, 1)
+  assert.equal((await viewComic('komik-1', device('device-bbbb-2'))).data.viewCount, 2)
+  assert.equal((await viewComic('komik-1', device('device-cccc-3'), member)).data.viewCount, 3)
+  assert.equal((await viewComic('komik-1', device('device-dddd-4'), member)).data.viewCount, 3)
   clock.t += 6 * 3_600_000 + 1000
-  assert.equal((await viewComic('komik-1', device('device-aaaa-1'))).data.viewCount, 4) // jendela lewat (walau TTL MongoDB belum menyapu)
+  assert.equal((await viewComic('komik-1', device('device-aaaa-1'))).data.viewCount, 4)
   assert.equal((await viewComic('komik-1', device('device-aaaa-1'))).data.viewCount, 4)
 })
 
@@ -106,14 +106,12 @@ test('admin komik: hanya OWNER, simpan override tampil di semua respons, reset m
   assert.equal((await call('GET', `${A}/comics/mock/komik-4`)).status, 401)
   assert.equal((await call('GET', `${A}/comics/mock/komik-4`, { token: member })).status, 403)
   assert.equal((await call('PUT', `${A}/comics/mock/komik-4`, { token: member, body: { title: 'X' } })).status, 403)
-
   const before = await call('GET', `${A}/comics/mock/komik-4`, { token: owner })
   assert.equal(before.status, 200)
   assert.equal(before.data.edited, false)
   assert.equal(before.data.title, 'komik-4')
   assert.deepEqual(before.data.chapters.map(c => c.slug), ['1'])
-
-  await call('GET', '/api/mock/comic/komik-4') // panaskan cache dengan data asli
+  await call('GET', '/api/mock/comic/komik-4')
   const saved = await call('PUT', `${A}/comics/mock/komik-4`, {
     token: owner,
     body: { title: 'Judul Baru', cover: '', synopsis: 'Sinopsis baru', genres: ['Action', 'Action', 'Fantasy'], type: 'Manga', status: 'completed', author: 'Penulis', artist: '' }
@@ -123,22 +121,20 @@ test('admin komik: hanya OWNER, simpan override tampil di semua respons, reset m
   assert.equal(saved.data.title, 'Judul Baru')
   assert.deepEqual(saved.data.genres, ['Action', 'Fantasy'])
   assert.equal(saved.data.type, 'manga')
-
   const detail = await call('GET', '/api/mock/comic/komik-4')
   assert.equal(detail.data.title, 'Judul Baru')
   assert.equal(detail.data.synopsis, 'Sinopsis baru')
   assert.equal(detail.data.status, 'completed')
   assert.equal(detail.data.author, 'Penulis')
-  assert.equal(detail.data.chapters.length, 1) // chapter scraper tetap
+  assert.equal(detail.data.chapters.length, 1)
   const latest = await call('GET', '/api/mock/latest')
   assert.equal(latest.data.items.find(i => i.slug === 'komik-4').title, 'Judul Baru')
   const search = await call('GET', '/api/mock/search?q=x')
   assert.equal(search.data.items.find(i => i.slug === 'komik-4').type, 'manga')
-
   const reset = await call('DELETE', `${A}/comics/mock/komik-4/override`, { token: owner })
   assert.equal(reset.status, 200)
   assert.equal(reset.data.edited, false)
-  assert.equal((await call('GET', '/api/mock/comic/komik-4')).data.title, 'komik-4') // data cache asli tidak rusak oleh override
+  assert.equal((await call('GET', '/api/mock/comic/komik-4')).data.title, 'komik-4')
   assert.equal((await call('GET', '/api/mock/latest')).data.items.find(i => i.slug === 'komik-4').title, 'Komik 4')
 })
 
@@ -166,7 +162,7 @@ test('browse: override type ikut dihitung (keluar dari / masuk ke filter)', asyn
   const after = (await q()).data.items
   assert.deepEqual(after.map(i => i.slug), ['komik-1', 'komik-2', 'komik-30'])
   assert.equal(after[2].title, 'Pindahan')
-  assert.equal((await call('GET', '/api/mock/browse?type=manhwa&page=2')).data.items.some(i => i.slug === 'komik-30'), false) // hanya halaman 1
+  assert.equal((await call('GET', '/api/mock/browse?type=manhwa&page=2')).data.items.some(i => i.slug === 'komik-30'), false)
   await call('DELETE', `${A}/comics/mock/komik-0/override`, { token: owner })
   await call('DELETE', `${A}/comics/mock/komik-30/override`, { token: owner })
   assert.deepEqual((await q()).data.items.map(i => i.slug), ['komik-0', 'komik-1', 'komik-2'])
@@ -178,20 +174,17 @@ test('gambar chapter: simpan, tampil di endpoint publik, urutan dipertahankan, r
   assert.equal(orig.data.images.length, 1)
   const adminGet = await call('GET', `${A}/comics/mock/komik-6/chapters/1/pages`, { token: owner })
   assert.deepEqual(adminGet.data, { pages: orig.data.images, edited: false })
-
   const pages = ['/media/aaaaaaaaaaaaaaaaaaaaaaaa', 'http://127.0.0.1:1/img/b.png', '/media/bbbbbbbbbbbbbbbbbbbbbbbb']
   assert.equal((await call('PUT', `${A}/comics/mock/komik-6/chapters/1/pages`, { token: member, body: { pages } })).status, 403)
   assert.equal((await call('PUT', `${A}/comics/mock/komik-6/chapters/1/pages`, { token: owner, body: { pages: [] } })).status, 400)
   assert.equal((await call('PUT', `${A}/comics/mock/komik-6/chapters/1/pages`, { token: owner, body: { pages: ['ftp://x/y.png'] } })).status, 400)
   const saved = await call('PUT', `${A}/comics/mock/komik-6/chapters/1/pages`, { token: owner, body: { pages } })
   assert.deepEqual(saved.data, { pages, edited: true })
-
   const now = await pub()
   assert.deepEqual(now.data.images, pages)
   assert.deepEqual(now.data.proxy, ['/media/aaaaaaaaaaaaaaaaaaaaaaaa', `/api/image?url=${encodeURIComponent(pages[1])}`, '/media/bbbbbbbbbbbbbbbbbbbbbbbb'])
-  assert.equal(now.data.next, '2') // field lain dari scraper tetap ada
+  assert.equal(now.data.next, '2')
   assert.equal((await call('GET', `${A}/comics/mock/komik-6`, { token: owner })).data.chapters[0].edited, true)
-
   const reset = await call('DELETE', `${A}/comics/mock/komik-6/chapters/1/pages`, { token: owner })
   assert.equal(reset.data.edited, false)
   assert.deepEqual((await pub()).data.images, orig.data.images)
@@ -211,11 +204,9 @@ test('unggah gambar: hanya OWNER, cek byte (bukan Content-Type), tersaji immutab
   assert.equal((await upload(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>'), owner, { type: 'image/svg+xml' })).status, 400)
   assert.equal((await call('POST', `${A}/media`, { token: owner, raw: true, body: Buffer.from('x'), headers: { 'content-type': 'multipart/form-data' } })).status, 400)
   assert.equal((await upload(PNG, owner, { name: 'lain' })).status, 400)
-
-  const up = await upload(PNG, owner, { type: 'text/plain' }) // Content-Type dusta, byte PNG asli
+  const up = await upload(PNG, owner, { type: 'text/plain' })
   assert.equal(up.status, 200, JSON.stringify(up))
   assert.match(up.data.url, /^\/media\/[0-9a-f]{24}$/)
-
   const res = await fetch(`${srv.url}${up.data.url}`)
   assert.equal(res.status, 200)
   assert.equal(res.headers.get('content-type'), 'image/png')

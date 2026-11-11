@@ -3,8 +3,6 @@ import { resolveTarget } from './comments.js'
 
 const clean = (v, max) => (typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, max) : '')
 
-// Like sebuah komik atau chapter. Satu dokumen per (user, target) sehingga idempotent.
-// Jumlah like per target ditahan 5 dtk di memori; langsung diperbarui oleh like/unlike yang masuk ke instance ini.
 const likeCount = async (ctx, targetKey) => {
   const hit = ctx.stats?.likeCount.get(targetKey)
   if (hit !== undefined) return hit

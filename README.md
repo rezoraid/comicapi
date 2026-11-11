@@ -1,6 +1,6 @@
 # comic-api
 
-Server scraper komik untuk aplikasi (APK). Sumber scraper aktif: **Manta**, **Shinigami**, **Lumos**, **CosmicScans**.
+Server scraper komik untuk aplikasi (APK). Sumber scraper aktif: **Manta**, **Shinigami**, **Lumos**.
 Satu pintu API, semua sumber punya bentuk data yang sama — cepat, ringan, cache agresif.
 
 ## Jalankan
@@ -128,7 +128,6 @@ src/
     manta.js         Manta Comics
     shinigami.js     Shinigami
     lumos.js         Lumos
-    cosmic.js        CosmicScans (API JSON, tanpa chapter)
     utils.js         HTTP client (retry, cache, dedupe) + trackHost
 test/                tes server
 scripts/smoke-test.mjs   tes scraper ke situs asli
@@ -232,10 +231,6 @@ Halaman publik `/privacy` (Kebijakan Privasi) dan `/terms` (Ketentuan) tersedia 
 - **Banner profil sudah dihapus total**: tidak ada endpoint maupun field `banner`. Data `customBanner` lama di database tidak dipakai lagi (boleh dibersihkan manual).
 - **Khusus OWNER**: `GET /admin/users/:id` (detail akun), `POST /admin/users/:id/xp` (`{ amount }`, ±50.000, dicatat sebagai event `admin`), `POST /admin/users/:id/reset-media` (`{ avatar }`, juga boleh MODERATOR untuk akun di bawahnya).
 - Pengguna lama mulai dari 0 chapter dibaca (riwayat lama tidak punya bukti waktu baca per chapter).
-
-## Performa & operasional
-
-Ringkasan optimasi dan variabel env baru: lihat [`OPTIMIZATION.md`](OPTIMIZATION.md).
 
 ## Katalog internal & kelengkapan data
 

@@ -1,16 +1,5 @@
-/**
- * Katalog internal Komikta: satu rekaman lengkap per komik (`comic_catalog`, kunci "sumber|slug") yang dibangun dari
- * sinkronisasi detail ke sumber (Manta, Shinigami, Lumos), dilengkapi komik yang sama di sumber lain dan metadata luar.
- * Respons daftar/detail ditambal dari rekaman ini (lihat completeness.js), jadi daftar yang dari sumbernya bolong
- * (tanpa genre, author, rating, chapter terbaru, ...) tetap tampil lengkap.
- *
- *  - Rekaman yang belum ada diambil SEKARANG (maks `inlineMax` komik per request, dibatasi `inlineBudgetMs`), sisanya di latar belakang.
- *  - Rekaman yang basi (> `staleMs`) disegarkan di latar belakang; respons tetap memakai data lama (tidak menunggu).
- *  - Crawler latar belakang menelusuri halaman browse tiap sumber secara bertahap (kursor tersimpan) sampai seluruh komik terdata.
- *  - Tanpa MongoDB, katalog tetap jalan di memori (hilang saat restart). Gagal sinkron tidak pernah menggagalkan respons.
- */
 import { normalizeDetail } from './normalize.js'
-import { recordFromDetail, normTitle, blank, hasGaps, mergeInto, fillItem, fillDetail, finalizeItem, finalizeDetail, sameWork, missingOf } from './completeness.js'
+import { recordFromDetail, normTitle, hasGaps, mergeInto, fillItem, fillDetail, finalizeItem, finalizeDetail, sameWork, missingOf } from './completeness.js'
 
 const key = (source, slug) => `${source}|${slug}`
 const sleep = ms => new Promise(r => setTimeout(r, ms))
@@ -19,7 +8,6 @@ const withItems = (data, items) => (Array.isArray(data) ? items : { ...data, ite
 const MIN = 60_000
 const HOUR = 60 * MIN
 
-/** Tunggu `promise` paling lama `ms`; tidak melempar dan tidak meninggalkan timer. */
 function within(promise, ms) {
   let t
   return Promise.race([Promise.resolve(promise).catch(() => {}), new Promise(r => (t = setTimeout(r, ms)))]).finally(() => clearTimeout(t))
@@ -45,11 +33,11 @@ function gate(max) {
 
 export function createCatalog({ registry, collection = () => null, external = null, logger = console, now = Date.now, ...opts } = {}) {
   const cfg = {
-    staleMs: 12 * HOUR, // rekaman lebih tua dari ini disegarkan di latar belakang saat dipakai
-    crawlStaleMs: 72 * HOUR, // crawler hanya menyegarkan rekaman yang lebih tua dari ini
-    retryMs: 10 * MIN, // jeda sebelum komik yang gagal disinkronkan dicoba lagi
-    missMs: 6 * HOUR, // komik yang 404 di sumber
-    extRetryMs: 14 * 24 * HOUR, // jeda sebelum judul yang tak ketemu di metadata luar dicari lagi
+    staleMs: 12 * HOUR,
+    crawlStaleMs: 72 * HOUR,
+    retryMs: 10 * MIN,
+    missMs: 6 * HOUR,
+    extRetryMs: 14 * 24 * HOUR,
     l1Max: 20_000,
     inlineMax: 12,
     inlineBudgetMs: 3000,
@@ -63,13 +51,12 @@ export function createCatalog({ registry, collection = () => null, external = nu
     crawlFirstDelayMs: 20_000,
     ...opts
   }
-
-  const mem = new Map() // key -> rekaman (LRU)
-  const byTitle = new Map() // normTitle -> Set(key)
+  const mem = new Map()
+  const byTitle = new Map()
   const inflight = new Map()
   const extInflight = new Map()
   const failedUntil = new Map()
-  const absent = new Set() // key yang sudah dipastikan tidak ada di database
+  const absent = new Set()
   const sibLoaded = new Set()
   const queued = new Set()
   const queue = []
@@ -81,12 +68,8 @@ export function createCatalog({ registry, collection = () => null, external = nu
   let timers = []
   const cursors = {}
   let cursorsLoaded = false
-
   const isFailed = k => (failedUntil.get(k) || 0) > now()
   const isFresh = (r, ms = cfg.staleMs) => !!r && now() - (r.syncedAt || 0) < ms
-
-  /* ───────────── memori + database ───────────── */
-
   function remember(rec) {
     const old = mem.get(rec._id)
     mem.delete(rec._id)
@@ -104,7 +87,6 @@ export function createCatalog({ registry, collection = () => null, external = nu
       byTitle.get(r.nt)?.delete(k)
     }
   }
-
   const peek = k => {
     const r = mem.get(k)
     if (r) {
@@ -113,7 +95,6 @@ export function createCatalog({ registry, collection = () => null, external = nu
     }
     return r
   }
-
   async function persist(rec) {
     const col = collection()
     if (!col) return
@@ -124,7 +105,6 @@ export function createCatalog({ registry, collection = () => null, external = nu
       logger.error?.(`[catalog] simpan ${_id} gagal → ${err?.message || err}`)
     }
   }
-
   async function load(keys) {
     const col = collection()
     const miss = keys.filter(k => !mem.has(k) && !absent.has(k))
@@ -138,8 +118,6 @@ export function createCatalog({ registry, collection = () => null, external = nu
       logger.error?.(`[catalog] baca gagal → ${err?.message || err}`)
     }
   }
-
-  /** Komik yang sama di sumber lain (judul identik) yang belum ada di memori diambil dari database sekali saja. */
   async function loadSiblings(nts) {
     const col = collection()
     const todo = [...new Set(nts)].filter(nt => nt && nt.length >= 4 && !sibLoaded.has(nt))
@@ -155,7 +133,6 @@ export function createCatalog({ registry, collection = () => null, external = nu
       logger.error?.(`[catalog] baca sibling gagal → ${err?.message || err}`)
     }
   }
-
   function siblingsOf(self) {
     if (!self?.nt || self.nt.length < 4) return []
     const out = []
@@ -165,22 +142,16 @@ export function createCatalog({ registry, collection = () => null, external = nu
     }
     return out
   }
-
-  /* ───────────── sinkronisasi ───────────── */
-
   function applyExt(rec) {
     const data = rec.ext?.data
     if (!data) return
     const filled = mergeInto(rec, data)
-    // "webtoon" hanya nama format; asal negara dari metadata luar lebih tepat (manhwa / manhua / manga)
     if (rec.type === 'webtoon' && data.type) {
       rec.type = data.type
       filled.push('type')
     }
     rec.extFilled = filled
   }
-
-  /** Masukkan hasil scrape detail yang baru (dipanggil handler detail dan saat rekaman belum ada). */
   function ingest(detail, source) {
     if (!detail?.slug || !detail.title) return null
     const rec = recordFromDetail(detail, source, now())
@@ -194,15 +165,12 @@ export function createCatalog({ registry, collection = () => null, external = nu
     void persist(rec)
     return rec
   }
-
   async function fetchRecord(source, slug) {
     const p = registry.get(source)
     if (typeof p?.detail !== 'function') return null
     const d = normalizeDetail(await p.detail(slug), p.id)
     return ingest({ ...d, slug }, p.id)
   }
-
-  /** Satu scrape per komik pada satu waktu; `priority` memilih antrean (inline = ada pengguna yang menunggu). */
   function sync(source, slug, priority = 'bg') {
     const k = key(source, slug)
     if (inflight.has(k)) return inflight.get(k)
@@ -219,8 +187,6 @@ export function createCatalog({ registry, collection = () => null, external = nu
     inflight.set(k, p)
     return p
   }
-
-  /** Cari metadata luar bila masih ada kolom kosong. Satu permintaan per komik; hasil (juga "tidak ada") disimpan. */
   function enrichExternal(k) {
     if (extInflight.has(k)) return extInflight.get(k)
     const rec = mem.get(k)
@@ -229,7 +195,7 @@ export function createCatalog({ registry, collection = () => null, external = nu
     const p = (async () => {
       const r = await external.lookup({ title: rec.title, alt: rec.alt, type: rec.type })
       const cur = mem.get(k) || rec
-      if (!r.ok) return cur // gagal sementara: coba lagi nanti, jangan simpan
+      if (!r.ok) return cur
       cur.ext = { at: now(), id: r.id ?? null, data: r.data || null }
       applyExt(cur)
       remember(cur)
@@ -241,8 +207,6 @@ export function createCatalog({ registry, collection = () => null, external = nu
     extInflight.set(k, p)
     return p
   }
-
-  /** Pastikan rekaman ada (sinkron kalau belum / basi) lalu lengkapi dengan metadata luar. null = tidak berhasil. */
   async function ensure(source, slug, priority = 'bg') {
     const k = key(source, slug)
     const rec = peek(k)
@@ -250,7 +214,6 @@ export function createCatalog({ registry, collection = () => null, external = nu
     await enrichExternal(k)
     return peek(k) || null
   }
-
   function schedule(source, slug) {
     const k = key(source, slug)
     if (queued.has(k) || inflight.has(k) || isFailed(k) || queue.length >= cfg.queueMax) return
@@ -258,7 +221,6 @@ export function createCatalog({ registry, collection = () => null, external = nu
     queue.push([source, slug])
     pump()
   }
-
   function pump() {
     while (pumping < cfg.bgConcurrency && queue.length) {
       const [source, slug] = queue.shift()
@@ -273,16 +235,12 @@ export function createCatalog({ registry, collection = () => null, external = nu
         })
     }
   }
-
-  /* ───────────── dipakai pipeline respons ───────────── */
-
   async function fillList(data, defaultSource = '') {
     const items = itemsOf(data)
     if (!items?.length) return data
     const pairs = items.map(it => (it?.slug ? [it.source || defaultSource, it.slug] : null))
     const keys = pairs.map(p => p && key(p[0], p[1]))
     await load(keys.filter(Boolean))
-
     const missing = []
     const stale = []
     keys.forEach((k, i) => {
@@ -298,7 +256,6 @@ export function createCatalog({ registry, collection = () => null, external = nu
       missing.slice(cfg.inlineMax).forEach(i => schedule(pairs[i][0], pairs[i][1]))
     }
     stale.forEach(i => schedule(pairs[i][0], pairs[i][1]))
-
     const nts = items.map((it, i) => (keys[i] ? mem.get(keys[i])?.nt || normTitle(it.title) : ''))
     await loadSiblings(nts)
     return withItems(
@@ -311,27 +268,22 @@ export function createCatalog({ registry, collection = () => null, external = nu
       })
     )
   }
-
   async function fillOne(data, source, slug) {
     if (!data || typeof data !== 'object') return data
     const k = key(source, slug)
     await load([k])
     let rec = mem.get(k)
-    if (!rec) rec = ingest({ ...data, slug }, source) // mis. jawaban datang dari cache bersama (Redis) milik instance lain
+    if (!rec) rec = ingest({ ...data, slug }, source)
     if (rec && hasGaps(rec) && !rec.ext) await within(enrichExternal(k), 2500)
     rec = mem.get(k) || rec
     await loadSiblings([rec?.nt])
     return fillDetail(data, rec, siblingsOf(rec))
   }
-
   const finalize = (kind, data, source = '') => {
     if (kind === 'detail') return finalizeDetail(data, source, now())
     const items = itemsOf(data)
     return items ? withItems(data, items.map(it => finalizeItem(it, source, now()))) : data
   }
-
-  /* ───────────── crawler ───────────── */
-
   async function loadCursors() {
     if (cursorsLoaded) return
     const col = collection()
@@ -342,7 +294,6 @@ export function createCatalog({ registry, collection = () => null, external = nu
       cursorsLoaded = true
     } catch {}
   }
-
   async function saveCursors() {
     const col = collection()
     if (!col) return
@@ -350,7 +301,6 @@ export function createCatalog({ registry, collection = () => null, external = nu
       await col.updateOne({ _id: '__cursor__' }, { $set: { pages: { ...cursors }, updatedAt: now() } }, { upsert: true })
     } catch {}
   }
-
   async function crawlOnce({ source = '', pages = cfg.crawlPagesPerCycle } = {}) {
     if (crawling) return lastCrawl
     crawling = true
@@ -364,7 +314,6 @@ export function createCatalog({ registry, collection = () => null, external = nu
         for (const type of ['', ...(info.filters?.types || [])]) {
           const slot = `${info.id}:${type}`
           const start = cursors[slot] || 1
-          // halaman 1-2 (komik terbaru) selalu dikunjungi, sisanya bergulir dari kursor sampai seluruh daftar tercakup
           const visit = [...new Set([1, 2, ...Array.from({ length: pages }, (_, i) => start + i)])]
           let last = start
           let wrapped = false
@@ -410,11 +359,10 @@ export function createCatalog({ registry, collection = () => null, external = nu
     }
     return lastCrawl
   }
-
   function startCrawler() {
     if (!cfg.crawl || timers.length) return
     const tick = () => {
-      if (collection()) crawlOnce().catch(() => {}) // tanpa database hasil crawl hilang saat restart: tidak dijalankan
+      if (collection()) crawlOnce().catch(() => {})
     }
     const first = setTimeout(tick, cfg.crawlFirstDelayMs)
     const every = setInterval(tick, cfg.crawlIntervalMs)
@@ -422,7 +370,6 @@ export function createCatalog({ registry, collection = () => null, external = nu
     every.unref?.()
     timers = [first, every]
   }
-
   function close() {
     timers.forEach(t => {
       clearTimeout(t)
@@ -430,23 +377,17 @@ export function createCatalog({ registry, collection = () => null, external = nu
     })
     timers = []
   }
-
-  /* ───────────── admin ───────────── */
-
-  /** Sinkron ulang satu komik sekarang (OWNER). Mengabaikan umur rekaman dan jeda gagal. */
   async function refresh(source, slug) {
     const k = key(source, slug)
     failedUntil.delete(k)
     const prev = mem.get(k)
-    if (prev?.ext && !prev.ext.data) delete prev.ext // cari metadata luar lagi
+    if (prev?.ext && !prev.ext.data) delete prev.ext
     const rec = await sync(source, slug, 'inline')
     if (!rec) return null
     await enrichExternal(k)
     return summary(mem.get(k))
   }
-
   const summary = r => (r ? { source: r.source, slug: r.slug, title: r.title, syncedAt: r.syncedAt, missing: missingOf(r), filledFromExternal: r.extFilled || [] } : null)
-
   function status() {
     const bySource = {}
     for (const r of mem.values()) {
@@ -466,6 +407,5 @@ export function createCatalog({ registry, collection = () => null, external = nu
       external: external ? { enabled: !!external.enabled, ...external.stats() } : { enabled: false }
     }
   }
-
   return { fillList, fillOne, finalize, ingest, ensure, schedule, refresh, crawlOnce, startCrawler, close, status, peek, load, _mem: mem }
 }

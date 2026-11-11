@@ -9,7 +9,7 @@ const envInt = (name, fallback) => {
   return Number.isFinite(n) && n > 0 ? n : fallback
 }
 
-export const sleep = ms => new Promise(r => setTimeout(r, ms))
+const sleep = ms => new Promise(r => setTimeout(r, ms))
 export const clean = s => String(s ?? '').replace(/\s+/g, ' ').trim()
 export const num = s => {
   const m = String(s ?? '').match(/\d+(?:\.\d+)?/)
@@ -60,10 +60,8 @@ export function createHttp({
   }
   let relayUntil = 0
   let relayIdx = 0
-
   const relayUrl = (template, url) =>
     template.includes('{url}') ? template.replace('{url}', encodeURIComponent(url)) : template + encodeURIComponent(url)
-
   async function request(url, json, ms = timeout) {
     const res = await fetch(url, {
       headers: {
@@ -79,7 +77,6 @@ export function createHttp({
     }
     return json ? await res.json() : await res.text()
   }
-
   async function withRetry(url, json) {
     let lastError
     for (let i = 0; i <= retries; i++) {
@@ -93,7 +90,6 @@ export function createHttp({
     }
     throw lastError
   }
-
   async function viaRelay(url, json) {
     let lastError
     for (let n = 0; n < relays.length; n++) {
@@ -110,7 +106,6 @@ export function createHttp({
     }
     throw lastError
   }
-
   async function fetchRetry(url, json) {
     if (!relays.length) return withRetry(url, json)
     if (Date.now() < relayUntil) {
@@ -132,15 +127,12 @@ export function createHttp({
       }
     }
   }
-
   function get(path, { json = false, ttl = 0 } = {}) {
     const url = path.startsWith('http') ? path : base + path
     const key = (json ? 'j:' : 't:') + url
-
     const hit = cache.get(key)
     if (hit && hit.exp > Date.now()) return Promise.resolve(hit.val)
     if (inflight.has(key)) return inflight.get(key)
-
     const p = limiter
       .run(() => fetchRetry(url, json))
       .then(val => {
@@ -151,18 +143,15 @@ export function createHttp({
         return val
       })
       .finally(() => inflight.delete(key))
-
     inflight.set(key, p)
     return p
   }
-
   return { get, clear: () => cache.clear() }
 }
 
 export function createMirrorHttp({ bases, ...options }) {
   const clients = bases.map(base => ({ base, http: createHttp({ ...options, base, referer: base + '/' }) }))
   let active = 0
-
   async function get(path, opts) {
     if (/^https?:\/\//i.test(path)) return clients[active].http.get(path, opts)
     let notFound = null
@@ -180,7 +169,6 @@ export function createMirrorHttp({ bases, ...options }) {
     }
     throw notFound || lastError
   }
-
   return {
     get,
     base: () => clients[active].base,

@@ -3,7 +3,7 @@ import { newId, isDup, rank, hit, idParam, bodyText, bodyHash, SLUG, CHAPTER, DA
 import { publicUser } from './users.js'
 import { XP, LIKER_MIN_AGE_MS, awardXp, reverseXp, isQuality } from './xp.js'
 
-export const REPORT_REASONS = ['spam', 'abuse', 'hate', 'spoiler', 'other']
+const REPORT_REASONS = ['spam', 'abuse', 'hate', 'spoiler', 'other']
 
 export function resolveTarget(input, hasSource) {
   const { type, source, slug, chapter } = input
@@ -20,7 +20,6 @@ const canDeleteComment = (viewer, comment, author) =>
 const hydrate = async (ctx, viewer, docs) => {
   const ids = new Set()
   docs.forEach(d => (ids.add(d.userId), d.replyToUserId && ids.add(d.replyToUserId)))
-  // pengguna & like milik viewer saling lepas → ambil paralel; user dibaca TANPA foto base64-nya
   const [users, likes] = await Promise.all([
     ids.size ? ctx.c.users.find({ _id: { $in: [...ids] } }, NO_BLOB).toArray() : [],
     viewer && docs.length ? ctx.c.commentLikes.find({ userId: viewer._id, commentId: { $in: docs.map(d => d._id) } }, { projection: { commentId: 1 } }).toArray() : []
@@ -56,7 +55,6 @@ const page = async (ctx, viewer, filter, sort, pageNo, limit) => {
   return { items: await hydrate(ctx, viewer, rows.slice(0, limit)), hasMore: rows.length > limit, page: pageNo }
 }
 
-// Total komentar per target (COUNT) ditahan 5 dtk; dibuang saat ada komentar baru/terhapus di instance ini.
 const commentTotal = async (ctx, targetKey) => {
   const hit = ctx.stats?.commentTotal.get(targetKey)
   if (hit !== undefined) return hit
@@ -82,7 +80,6 @@ export async function listComments(ctx, viewer, target, { sort = 'newest', page:
 
 export async function listReplies(ctx, viewer, rootId, { page: pageNo = 1, limit = 15 }) {
   const id = idParam(rootId)
-  // cek komentar induk dan ambil balasan berjalan paralel (satu round-trip database lebih sedikit)
   const [root, res] = await Promise.all([
     ctx.c.comments.findOne({ _id: id, parentId: null }, { projection: { _id: 1 } }),
     page(ctx, viewer, { parentId: id, deleted: false }, { _id: 1 }, pageNo, limit)
@@ -95,7 +92,6 @@ export async function createComment(ctx, user, input, hasSource) {
   await hit(ctx.limits.commentBurst, user._id, 'Terlalu cepat mengirim komentar')
   await hit(ctx.limits.commentHour, user._id, 'Batas komentar per jam tercapai')
   const body = bodyText(input.body, 'body', { max: 1000 })
-  // clientId (opsional, dibuat klien untuk optimistic UI): kiriman ulang karena timeout/jaringan putus tidak menggandakan komentar
   const clientId = typeof input.clientId === 'string' && /^[\w.-]{8,64}$/.test(input.clientId) ? input.clientId : null
   if (clientId) {
     const prior = await ctx.c.comments.findOne({ userId: user._id, clientId })
@@ -139,7 +135,6 @@ export async function createComment(ctx, user, input, hasSource) {
   touchTarget(ctx, doc)
   let xpGained = 0
   let xpReason = null
-  // menaikkan replyCount induk dan menghitung XP saling lepas → paralel (sebelumnya berurutan)
   const bumpRoot = root ? ctx.c.comments.updateOne({ _id: root._id }, { $inc: { replyCount: 1 }, $set: { listed: true } }) : null
   if (!isQuality(body)) xpReason = 'LOW_QUALITY'
   else {
@@ -206,7 +201,6 @@ export async function likeComment(ctx, user, id, on) {
   await hit(ctx.limits.like, user._id, 'Terlalu banyak like')
   const c = await ctx.c.comments.findOne({ _id: idParam(id), deleted: false })
   if (!c) throw notFound('Komentar tidak ditemukan')
-  // $inc sekaligus mengembalikan hitungan terbaru → tidak perlu findOne tambahan
   const bump = delta => ctx.c.comments.findOneAndUpdate({ _id: c._id }, { $inc: { likeCount: delta } }, { returnDocument: 'after', projection: { likeCount: 1 } })
   let count = null
   if (on) {
@@ -252,8 +246,6 @@ export async function reportComment(ctx, user, id, input) {
   return { ok: true }
 }
 
-// Jumlah komentar per chapter dihitung di database ($group) — bukan dengan menarik semua dokumen komentar ke Node.
-// Hasilnya (bahkan yang masih berjalan) di-cache 15 dtk per komik, jadi lonjakan request tidak menggandakan query.
 export function chapterCounts(ctx, source, slug) {
   const key = `${source}:${slug}`
   const cached = ctx.stats.chapterCounts.get(key)
@@ -266,6 +258,6 @@ export function chapterCounts(ctx, source, slug) {
     .toArray()
     .then(rows => ({ counts: Object.fromEntries(rows.map(r => [r._id, r.n])) }))
   ctx.stats.chapterCounts.set(key, p)
-  p.catch(() => ctx.stats.chapterCounts.delete(key)) // gagal jangan di-cache
+  p.catch(() => ctx.stats.chapterCounts.delete(key))
   return p
 }

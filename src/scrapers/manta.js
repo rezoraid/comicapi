@@ -19,8 +19,6 @@ const http = createHttp({
   headers: { 'user-agent': UA, 'accept-language': 'en-US,en;q=0.9' }
 })
 
-/* ───────────── helpers ───────────── */
-
 const loc = v => (v && typeof v === 'object' ? (v.en ?? Object.values(v)[0] ?? '') : (v ?? ''))
 const img = url => (url ? trackHost(imageHosts, url) : '')
 
@@ -53,7 +51,6 @@ const item = (o = {}) => ({
   ...o
 })
 
-/** Ambil nilai pertama yang ada dari beberapa kemungkinan nama field (Manta tidak mendokumentasikan API-nya). */
 const first = (obj, keys) => {
   for (const k of keys) if (obj?.[k] != null && obj[k] !== '') return obj[k]
   return null
@@ -81,12 +78,10 @@ function fromApi(raw) {
     genres: tagNames(d.tags ?? []),
     views: first(raw, ['viewCount', 'views', 'hits', 'readCount']),
     chapterCount: count != null ? Number(count) : null,
-    // chapter terbaru + waktunya, bila sumber menyertakannya di daftar (nilai ISO dibaca APK jadi "3 jam lalu")
     chapters: latest.ord != null || latest.id != null ? [{ slug: String(latest.id ?? ''), number: String(latest.ord ?? ''), timeAgo: '', releaseDate: when ?? null }] : []
   })
 }
 
-/** Pembuat karya dipisah per peran bila sumber menyebutkannya; tanpa peran, semua nama jadi author. */
 function creatorsOf(list = []) {
   const people = (Array.isArray(list) ? list : []).map(c => ({ name: clean(c?.name), role: String(c?.role ?? c?.type ?? c?.job ?? '') })).filter(c => c.name)
   const names = re => [...new Set(people.filter(c => re.test(c.role)).map(c => c.name))].join(', ')
@@ -116,9 +111,7 @@ async function pageProps(path, ttl) {
   return JSON.parse(raw).props?.pageProps ?? {}
 }
 
-/* ───────────── list endpoints ───────────── */
-
-export async function search(query, { limit = 10 } = {}) {
+async function search(query, { limit = 10 } = {}) {
   const res = await http.get(`${API}/search/series?lang=en&q=${encodeURIComponent(query)}`, { json: true, ttl: MIN })
   const tokens = query.toLowerCase().split(/\s+/).filter(t => t.length >= 2)
   const items = (Array.isArray(res?.data) ? res.data : []).map(fromApi).filter(x => x.slug)
@@ -126,11 +119,11 @@ export async function search(query, { limit = 10 } = {}) {
   return hit.slice(0, limit)
 }
 
-export async function latest({ page = 1 } = {}) {
+async function latest({ page = 1 } = {}) {
   return paginate(await homeSection('comic'), page).items
 }
 
-export async function browse({ q = '', type = '', page = 1 } = {}) {
+async function browse({ q = '', type = '', page = 1 } = {}) {
   if (q) {
     const items = await search(q, { limit: 1000 })
     return paginate(items, page)
@@ -138,9 +131,7 @@ export async function browse({ q = '', type = '', page = 1 } = {}) {
   return paginate(await homeSection(type), page)
 }
 
-/* ───────────── detail ───────────── */
-
-export async function detail(slug) {
+async function detail(slug) {
   const p = await pageProps(`/en/series/${encodeURIComponent(slug)}`, MIN)
   const s = p.initialSeries
   if (!s) {
@@ -150,7 +141,6 @@ export async function detail(slug) {
   }
   const d = s.data ?? {}
   const head = p.headData ?? {}
-
   const chapters = (s.episodes ?? [])
     .map(ep => ({
       slug: String(ep.id),
@@ -160,7 +150,6 @@ export async function detail(slug) {
       releaseDate: ep.openAt ?? null
     }))
     .sort((a, b) => parseFloat(b.number) - parseFloat(a.number))
-
   return {
     title: clean(loc(d.title) || head.title) || slug,
     slug,
@@ -183,18 +172,13 @@ export async function detail(slug) {
   }
 }
 
-/* ───────────── chapter (gambar) ───────────── */
-
-export async function chapter(slug, chapterSlug) {
+async function chapter(slug, chapterSlug) {
   const info = await detail(slug).catch(() => null)
   const list = info?.chapters ?? []
-
   let id = chapterSlug
   if (Number(id) < 1000) id = list.find(c => c.number === id)?.slug ?? id
-
   const p = await pageProps(`/en/episodes/${encodeURIComponent(id)}`, 5 * MIN)
   const images = (p.previewCutImages ?? []).map(i => img(i.downloadUrl)).filter(Boolean)
-
   const idx = list.findIndex(c => c.slug === id)
   return {
     title: p.previewEpisodeTitle ?? `Episode ${id}`,
@@ -208,9 +192,6 @@ export async function chapter(slug, chapterSlug) {
     next: idx > 0 ? list[idx - 1].slug : null
   }
 }
-
-/** Kosongkan cache HTTP (dipakai test). */
-export const resetCache = () => http.clear()
 
 export default {
   id: 'manta',

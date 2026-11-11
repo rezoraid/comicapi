@@ -1,4 +1,3 @@
-/** Map kecil ber-TTL (per proses) untuk angka/hasil murah-dibuang. Dipakai untuk menahan query COUNT yang berulang. */
 export function createTtlMap({ ttlMs, max = 2000, now = Date.now }) {
   const map = new Map()
   return {

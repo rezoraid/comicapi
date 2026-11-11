@@ -10,7 +10,6 @@ export class HttpError extends Error {
 export const badRequest = msg => new HttpError(400, 'BAD_REQUEST', msg)
 export const notFound = msg => new HttpError(404, 'NOT_FOUND', msg)
 
-/** Ubah error apa pun (termasuk dari scraper) jadi HttpError yang aman dikirim ke klien. */
 export function toHttpError(err) {
   if (err instanceof HttpError) return err
   if (err?.name === 'TimeoutError' || err?.name === 'AbortError') {

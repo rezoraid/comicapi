@@ -1,4 +1,3 @@
-// Isi dengan host sumber yang butuh relay, mis. 'contoh-komik.com'
 const ALLOWED = []
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
@@ -9,7 +8,6 @@ export default {
   async fetch(request, env) {
     const params = new URL(request.url).searchParams
     if (env.KEY && params.get('key') !== env.KEY) return new Response('forbidden', { status: 403 })
-
     let target
     try {
       target = new URL(params.get('url'))
@@ -19,7 +17,6 @@ export default {
     if (target.protocol !== 'https:' || !allowed(target.hostname)) {
       return new Response('host tidak diizinkan', { status: 403 })
     }
-
     const upstream = await fetch(target, {
       headers: {
         'user-agent': UA,
@@ -29,7 +26,6 @@ export default {
       },
       redirect: 'follow'
     })
-
     return new Response(upstream.body, {
       status: upstream.status,
       headers: { 'content-type': upstream.headers.get('content-type') || 'text/plain' }

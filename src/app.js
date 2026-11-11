@@ -9,10 +9,7 @@ import { registerRoutes } from './routes.js'
 import { registerCommunityRoutes } from './community/routes.js'
 import { createCatalog } from './catalog-sync.js'
 
-/** Key cache: path + query yang diurutkan (?a=1&b=2 sama dengan ?b=2&a=1). */
 function cacheKey(url) {
-  // URLSearchParams.sort() is stable and re-encodes values, avoiding collisions
-  // when a query value itself contains '&' or '=' characters.
   const params = new URLSearchParams(url.searchParams)
   params.sort()
   return `${url.pathname}?${params.toString()}`
@@ -32,7 +29,6 @@ export function createApp({ registry, config, logger = console, community = null
     prefix: config.redisKeyPrefix,
     timeoutMs: config.redisTimeoutMs
   })
-  // hasil parse body ter-cache dipakai bersama semua request (overlay tidak boleh mengubahnya, hanya membuat salinan)
   const parsed = new WeakMap()
   const dataOf = value => {
     let d = parsed.get(value)
@@ -42,35 +38,26 @@ export function createApp({ registry, config, logger = console, community = null
     }
     return d
   }
-  // Katalog internal. server.js memasang versi lengkap (metadata luar + crawler); tanpa itu katalog hanya di memori dan tanpa jaringan tambahan.
   const catalog = injectedCatalog !== undefined
     ? injectedCatalog
     : createCatalog({ registry, collection: () => (typeof community === 'function' ? community() : community)?.c?.catalog ?? null, logger, crawl: false })
   const router = new Router()
   registerCommunityRoutes(router, { registry, community, catalog })
   registerRoutes(router, { registry, config, community, catalog })
-
   const limiters = {
     default: createRateLimiter(config.rateLimit),
     image: createRateLimiter(config.imageRateLimit)
   }
-
-  // di-cache: dikompres sekali (level tinggi) lalu dipakai ulang oleh semua request berikutnya
   function cachedEntry(url, route, ctx) {
     const key = cacheKey(url)
     return cache.remember(key, route.ttl * 1000, async () => {
-      // Redis is L2: only consulted after local memory misses. Redis outage never blocks correctness.
       const shared = await sharedCache.get(key)
       if (shared) return shared
       const fresh = await encode({ ok: true, data: await withTimeout(Promise.resolve(route.handler(ctx)), config.requestTimeoutMs) })
-      // Do not add Redis write latency to the first response.
       void sharedCache.set(key, fresh, route.ttl).catch(() => {})
       return fresh
     })
   }
-
-  // Preload di server: chapter berikutnya dimuat diam-diam begitu chapter ini diambil dari sumber,
-  // sehingga ketika pembaca menekan "Next" datanya sudah ada di cache. Maks 3 sekaligus, error diabaikan.
   let warming = 0
   function warm(pathname) {
     if (warming >= 3 || !pathname.startsWith('/api/')) return
@@ -82,9 +69,6 @@ export function createApp({ registry, config, logger = console, community = null
       .catch(() => {})
       .finally(() => warming--)
   }
-
-  // Pemanas cache: daftar Home (latest/popular), detail komik teratas, dan chapter terbarunya dijaga selalu hangat,
-  // sehingga request PERTAMA pengguna pun langsung HIT (bukan menunggu scrape ke situs sumber).
   async function warmPath(pathAndQuery) {
     const url = new URL(pathAndQuery, 'http://localhost')
     const found = router.match(url.pathname, 'GET')
@@ -96,7 +80,6 @@ export function createApp({ registry, config, logger = console, community = null
       return null
     }
   }
-
   let warmRunning = false
   async function warmOnce() {
     if (warmRunning) return
@@ -118,7 +101,7 @@ export function createApp({ registry, config, logger = console, community = null
               chapters++
               await warmPath(`/api/${id}/chapter/${encodeURIComponent(slug)}/${encodeURIComponent(first)}`)
             }
-            await new Promise(r => setTimeout(r, 100)) // jeda kecil agar situs sumber tidak dibanjiri
+            await new Promise(r => setTimeout(r, 100))
           }
         } catch (err) {
           logger.error(`[warm] ${s.id} gagal → ${err?.message || err}`)
@@ -128,7 +111,6 @@ export function createApp({ registry, config, logger = console, community = null
       warmRunning = false
     }
   }
-
   let warmTimer = null
   let warmStart = null
   function startWarmer() {
@@ -139,7 +121,6 @@ export function createApp({ registry, config, logger = console, community = null
     warmTimer = setInterval(tick, Math.max(5, config.warmIntervalSec ?? 30) * 1000)
     warmTimer.unref?.()
   }
-
   async function handler(req, res) {
     const started = Date.now()
     const path = req.url
@@ -150,11 +131,9 @@ export function createApp({ registry, config, logger = console, community = null
         if (logMode === 'all' || res.statusCode >= 400 || ms >= (config.slowRequestMs ?? 1000)) logger.log(`${req.method} ${path} ${res.statusCode} ${ms}ms`)
       })
     }
-
     try {
       applyCors(res, req.headers.origin, config.corsOrigin)
       res.setHeader('x-content-type-options', 'nosniff')
-
       if (req.method === 'OPTIONS') {
         res.writeHead(204, { 'access-control-max-age': '86400' })
         return res.end()
@@ -168,7 +147,6 @@ export function createApp({ registry, config, logger = console, community = null
         throw new HttpError(405, 'METHOD_NOT_ALLOWED', 'Method tidak didukung')
       }
       const { route, params } = found
-
       if (!route.public) {
         if (!isAuthorized(req, config.apiKey)) throw new HttpError(401, 'UNAUTHORIZED', 'API key salah atau tidak ada')
         const rl = await limiters[route.limiter || 'default'].check(clientIp(req, config.trustProxy))
@@ -178,15 +156,12 @@ export function createApp({ registry, config, logger = console, community = null
           throw new HttpError(429, 'RATE_LIMITED', 'Terlalu banyak request, coba lagi sebentar')
         }
       }
-
       const ctx = { req, res, params, query: url.searchParams, ip: clientIp(req, config.trustProxy), warm }
       if (route.body) ctx.body = await readJson(req, route.bodyLimit ?? (url.pathname.endsWith('/me/avatar') ? 512 * 1024 : 16_384))
       if (route.raw) return await route.handler(ctx)
-
       if (route.ttl > 0) {
         const { value, state } = await cachedEntry(url, route, ctx)
         if (route.overlay) {
-          // views + data edit OWNER ditempel di atas hasil cache. Gagal (mis. MongoDB down) = sajikan hasil cache apa adanya, katalog tetap terbaca.
           try {
             const base = dataOf(value)
             const data = await withTimeout(Promise.resolve(route.overlay(base, ctx)), config.requestTimeoutMs)
@@ -197,8 +172,6 @@ export function createApp({ registry, config, logger = console, community = null
         }
         return send(req, res, value, { cacheSeconds: route.ttl, cacheState: state })
       }
-      // dinamis: kompres hanya kalau klien meminta, level ringan
-      // GET dinamis (profil, komentar, riwayat): boleh disimpan klien tapi wajib divalidasi ETag; tulis (POST/PUT/DELETE) tetap no-store
       return send(req, res, await encode({ ok: true, data: await withTimeout(Promise.resolve(route.handler(ctx)), config.requestTimeoutMs) }, { gzip: acceptsGzip(req), level: 4 }), { revalidate: req.method === 'GET' || req.method === 'HEAD' })
     } catch (err) {
       const e = toHttpError(err)
@@ -207,7 +180,6 @@ export function createApp({ registry, config, logger = console, community = null
       await sendError(req, res, e)
     }
   }
-
   return {
     handler,
     cache,

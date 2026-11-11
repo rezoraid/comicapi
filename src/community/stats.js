@@ -1,5 +1,3 @@
-// Statistik baca yang dihitung dari data tersimpan di server. Klien tidak pernah mengirim angka ini.
-// Hasil COUNT ditahan singkat di memori (10 dtk) dan dibuang tepat saat chapter baru dihitung di instance ini.
 export const chaptersRead = async (ctx, userId) => {
   const cached = ctx.stats?.chaptersRead.get(userId)
   if (cached !== undefined) return cached
@@ -10,7 +8,6 @@ export const chaptersRead = async (ctx, userId) => {
 
 export const forgetChaptersRead = (ctx, userId) => ctx.stats?.chaptersRead.delete(userId)
 
-// Satu aggregate untuk banyak komik sekaligus (menggantikan satu COUNT per baris riwayat). Hasil: Map "source:slug" → jumlah.
 export async function chaptersReadByComics(ctx, userId, rows) {
   const out = new Map()
   if (!rows.length) return out

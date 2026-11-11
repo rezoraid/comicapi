@@ -1,11 +1,3 @@
-/**
- * Metadata luar untuk melengkapi komik yang tidak punya rating / author / artist / tahun / status / sinopsis di sumbernya
- * (mis. Manta). Memakai AniList (GraphQL publik, tanpa API key) dan HANYA menerima kecocokan yang yakin:
- * judul komik kita harus sama persis (setelah dinormalisasi) dengan judul/sinonim di AniList, dan asal negaranya
- * tidak boleh bertentangan dengan jenis yang sudah diketahui. Hasilnya hanya mengisi kolom yang kosong.
- *
- * Dimatikan dengan env META_ENRICH=false. Yang dikirim ke AniList hanya judul komik.
- */
 import { normTitle } from './completeness.js'
 import { normGenres, normRating, canonStatus } from './normalize.js'
 
@@ -31,7 +23,6 @@ const strip = html =>
 
 const uniq = list => [...new Set(list.filter(Boolean))]
 
-/** Ubah satu `media` AniList menjadi kolom katalog. Kolom yang tidak ada = tidak disebut. */
 export function toFields(m) {
   const authors = []
   const artists = []
@@ -59,7 +50,6 @@ export function toFields(m) {
   return out
 }
 
-/** Pilih kecocokan yang yakin; null kalau tidak ada. */
 export function pickMatch(media, { title, alt = [], type = '' }) {
   const keys = new Set([title, ...alt].map(normTitle).filter(k => k.length >= 3))
   if (!keys.size) return null
@@ -75,16 +65,10 @@ export function pickMatch(media, { title, alt = [], type = '' }) {
   return exact[0] || null
 }
 
-/**
- * lookup() -> { ok: true, data: {...kolom} | null }  (null = tidak ada kecocokan yang yakin; aman di-cache lama)
- *          -> { ok: false }                          (gagal sementara: jangan di-cache)
- * Permintaan diantre satu per satu dengan jeda (batas AniList 90/menit) dan berhenti sejenak kalau kena 429.
- */
 export function createExternalMeta({ enabled = true, fetchImpl = globalThis.fetch, gapMs = 750, timeoutMs = 7000, now = Date.now, sleep = ms => new Promise(r => setTimeout(r, ms)), logger = console } = {}) {
   let chain = Promise.resolve()
   let pausedUntil = 0
   const stats = { requests: 0, matched: 0, none: 0, failed: 0 }
-
   async function request(search) {
     if (now() < pausedUntil) return { ok: false }
     stats.requests++
@@ -113,7 +97,6 @@ export function createExternalMeta({ enabled = true, fetchImpl = globalThis.fetc
       return { ok: false }
     }
   }
-
   function lookup(query) {
     if (!enabled || !query?.title) return Promise.resolve({ ok: false })
     const run = chain.then(async () => {
@@ -128,6 +111,5 @@ export function createExternalMeta({ enabled = true, fetchImpl = globalThis.fetc
     chain = run.catch(() => {})
     return run
   }
-
   return { enabled, lookup, stats: () => ({ ...stats, pausedUntil }) }
 }

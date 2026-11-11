@@ -18,13 +18,10 @@ const cleanPicture = p => {
   }
 }
 
-export const OWNER_LEVEL = 99999
+const OWNER_LEVEL = 99999
 
-// Dokumen user biasanya dibaca TANPA isi foto (lihat NO_BLOB), jadi status foto dibaca dari flag `hasAvatar`.
-// Dokumen penuh (belum ber-flag) tetap dikenali lewat customPicture.
 export const hasAvatar = u => (typeof u.hasAvatar === 'boolean' ? u.hasAvatar : !!u.customPicture)
 
-// OWNER selalu tampil sebagai #1 dengan level tetap; level pengguna lain murni dari XP di server.
 export const publicUser = (u, self = false) => {
   const owner = u.role === 'OWNER'
   const p = progress(u.xp || 0)
@@ -32,10 +29,8 @@ export const publicUser = (u, self = false) => {
     id: u._id,
     username: u.username,
     name: u.name,
-    // ?v= (waktu ganti foto) membuat URL baru tiap foto diganti → klien/CDN boleh cache lama (immutable) tapi foto baru tampil seketika
     picture: hasAvatar(u) ? `/api/community/users/${u._id}/avatar${u.avatarAt ? `?v=${u.avatarAt}` : ''}` : u.picture,
     role: u.role,
-    // OWNER selalu terverifikasi; akun lain diberi centang oleh OWNER lewat panel admin.
     verified: owner || !!u.verified,
     publicNo: owner ? 1 : u.publicNo || 0,
     level: owner ? OWNER_LEVEL : p.level,
@@ -51,7 +46,7 @@ const baseUsername = (email, name) => {
   return RESERVED.has(b) ? `${b}${randomInt(100, 1000)}` : b
 }
 
-export const resolveRole = (cfg, email, current = 'USER', manual = false) => {
+const resolveRole = (cfg, email, current = 'USER', manual = false) => {
   if (cfg.ownerEmails.includes(email)) return 'OWNER'
   if (current === 'OWNER') return 'USER'
   if (!manual && current === 'USER' && cfg.moderatorEmails.includes(email)) return 'MODERATOR'
@@ -124,7 +119,6 @@ export async function authenticate(ctx, req, { optional = false } = {}) {
 
 const nextNo = async ctx => {
   let row = await ctx.c.counters.findOneAndUpdate({ _id: 'publicNo' }, { $inc: { seq: 1 } }, { upsert: true, returnDocument: 'after' })
-  // Nomor 1 dicadangkan untuk OWNER.
   if (row.seq === 1) row = await ctx.c.counters.findOneAndUpdate({ _id: 'publicNo' }, { $inc: { seq: 1 } }, { upsert: true, returnDocument: 'after' })
   return row.seq
 }
@@ -132,7 +126,6 @@ const nextNo = async ctx => {
 async function claimOwnerNo(ctx, u) {
   if (u.publicNo === 1) return u
   const holder = await ctx.c.users.findOne({ publicNo: 1, _id: { $ne: u._id } }, NO_BLOB)
-  // Pemegang lama nomor 1 (bukan owner) menerima nomor owner sebelumnya supaya tidak ada dua #1.
   if (holder && holder.role !== 'OWNER') await ctx.c.users.updateOne({ _id: holder._id }, { $set: { publicNo: u.publicNo > 1 ? u.publicNo : await nextNo(ctx) } })
   await ctx.c.users.updateOne({ _id: u._id }, { $set: { publicNo: 1 } })
   return { ...u, publicNo: 1 }
@@ -151,7 +144,6 @@ export const monthsSince = (ctx, ts) => (ts > 0 ? Math.max(0, Math.floor((ctx.no
 export const me = async (ctx, user) => {
   user = { ...(await ensurePublicNo(ctx, user)), tokenExp: user.tokenExp }
   const left = user.tokenExp * 1000 - ctx.now()
-  // tiga pembacaan saling lepas → paralel (sebelumnya berurutan)
   const [synced, commentCount, read] = await Promise.all([
     reconcileXp(ctx, user._id),
     ctx.c.comments.countDocuments({ userId: user._id, deleted: false }),
@@ -163,7 +155,6 @@ export const me = async (ctx, user) => {
 
 const DISPLAY_NAME = /^[\p{L}\p{N}][\p{L}\p{N} ._'\-]{0,28}[\p{L}\p{N}._]?$/u
 
-// Ganti username dan/atau nama tampilan. Nama tampilan bebas (huruf, angka, spasi), tidak harus unik.
 export async function updateProfile(ctx, user, body) {
   const hasName = body.name !== undefined
   const hasUsername = body.username !== undefined
@@ -199,13 +190,11 @@ export async function updateProfile(ctx, user, body) {
   return { user: publicUser({ ...current, username, usernameChangedAt: changedAt }, true) }
 }
 
-// Memeriksa data URI gambar (JPEG/PNG/WebP): tipe, ukuran, dan tanda tangan file asli.
 function parseImage(data, { maxData, maxRaw, tooBig }) {
   if (typeof data !== 'string' || data.length > maxData || !/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+=*$/.test(data)) throw badRequest(tooBig)
   const mime = data.slice(5, data.indexOf(';'))
   const raw = Buffer.from(data.slice(data.indexOf(',') + 1), 'base64')
   if (!raw.length || raw.length > maxRaw) throw badRequest('Ukuran gambar terlalu besar')
-  // Cocokkan format yang diklaim dengan signature file agar payload sembarang ditolak.
   const valid = mime === 'image/jpeg' ? raw[0] === 0xff && raw[1] === 0xd8
     : mime === 'image/png' ? raw.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))
     : raw.subarray(0, 4).toString('ascii') === 'RIFF' && raw.subarray(8, 12).toString('ascii') === 'WEBP'

@@ -14,10 +14,9 @@ before(async () => {
   img = await listen((req, res) => {
     if (req.url === '/slow.png') {
       hits.slow++
-      return // tidak pernah merespons
+      return
     }
     if (req.url === '/flaky.png') {
-      // percobaan pertama menggantung, kedua sukses
       if (++hits.flaky === 1) return
     }
     res.writeHead(200, { 'content-type': 'image/png', 'content-length': PNG.length })
@@ -45,7 +44,7 @@ test('image proxy: sumber selalu menggantung → 504 SOURCE_TIMEOUT dengan nama 
   const res = await fetch(proxy('/slow.png'))
   assert.equal(res.status, 504)
   assert.equal((await res.json()).error?.code ?? 'SOURCE_TIMEOUT', 'SOURCE_TIMEOUT')
-  assert.equal(hits.slow, 2) // 1 percobaan + 1 ulang
+  assert.equal(hits.slow, 2)
   assert.ok(errors.some(e => e.includes('SOURCE_TIMEOUT') && e.includes('127.0.0.1')))
 })
 
@@ -56,7 +55,7 @@ test('image proxy: klien membatalkan request → tidak dicatat sebagai error ser
   const p = fetch(proxy('/slow.png'), { signal: ac.signal }).catch(() => 'aborted')
   setTimeout(() => ac.abort(), 80)
   assert.equal(await p, 'aborted')
-  await new Promise(r => setTimeout(r, 600)) // lewati batas timeout sumber
-  assert.equal(hits.slow, before + 1) // tidak diulang
+  await new Promise(r => setTimeout(r, 600))
+  assert.equal(hits.slow, before + 1)
   assert.deepEqual(errors, [])
 })
