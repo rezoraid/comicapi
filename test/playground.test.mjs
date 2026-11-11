@@ -45,7 +45,6 @@ test('PLAYGROUND=false mematikan halaman', async () => {
 test('playground: JS jalan end-to-end terhadap server (DOM di-stub)', async () => {
   const html = readFileSync(new URL('../src/public/playground.html', import.meta.url), 'utf8')
   const js = html.match(/<script>([\s\S]*)<\/script>/)[1]
-
   const els = new Map()
   const el = sel => {
     if (!els.has(sel)) els.set(sel, { value: '', innerHTML: '', textContent: '', hidden: false, className: '', title: '', disabled: false, dataset: {}, classList: { toggle() {}, add() {} } })
@@ -60,16 +59,13 @@ test('playground: JS jalan end-to-end terhadap server (DOM di-stub)', async () =
     fetch, URL, URLSearchParams, performance, setTimeout, clearTimeout, console, JSON, Promise, Object, String, Number, Math, Error, Array
   })
   vm.runInContext(js, ctx)
-
   for (let i = 0; i < 40 && !el('#src').innerHTML.includes('mock'); i++) await new Promise(r => setTimeout(r, 25))
   assert.match(el('#dot').className, /ok/)
   assert.match(el('#src').innerHTML, /mock/)
   assert.match(el('#form').innerHTML, /data-k="q"/)
-
   await el('#run').onclick()
   assert.match(el('#res').innerHTML, /Komik 0/)
   assert.match(el('#res').innerHTML, /class="st">200/)
-
   await el('#all').onclick()
   const out = el('#tests').innerHTML
   const steps = ['GET /health', 'GET /api/sources', 'GET /api/search (semua sumber)', 'validasi: tanpa q', 'validasi: sumber ngawur',

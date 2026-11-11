@@ -9,7 +9,6 @@ Satu pintu API, semua sumber punya bentuk data yang sama — cepat, ringan, cach
 npm install
 API_KEY=rahasia npm start   # http://localhost:3000 (API_KEY opsional)
 npm test                 # tes server + playground (offline, pakai mock)
-npm run smoke            # tes scraper ke situs asli (butuh internet)
 ```
 
 Butuh Node 20+. Dependensi: `cheerio` (scraper) dan `mongodb` (fitur komunitas).
@@ -130,7 +129,6 @@ src/
     lumos.js         Lumos
     utils.js         HTTP client (retry, cache, dedupe) + trackHost
 test/                tes server
-scripts/smoke-test.mjs   tes scraper ke situs asli
 ```
 
 ## Nambah scraper baru
@@ -140,7 +138,7 @@ scripts/smoke-test.mjs   tes scraper ke situs asli
    (bentuk item/detail ikuti `manta.js`). Method yang tidak didukung boleh dihilangkan → endpoint jawab `501`.
 2. Import dan tambahkan ke array `PROVIDERS` di `src/scrapers/index.js`.
 
-Route, cache, rate limit, pencarian gabungan, dan image proxy langsung ikut. Cek dengan `npm run smoke namabaru`.
+Route, cache, rate limit, pencarian gabungan, dan image proxy langsung ikut.
 
 
 ## Kalau muncul HTTP 403 (IP server diblokir)

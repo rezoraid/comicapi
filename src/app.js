@@ -75,7 +75,7 @@ export function createApp({ registry, config, logger = console, community = null
     if (!found?.route || !(found.route.ttl > 0)) return null
     const { value } = await cachedEntry(url, found.route, { params: found.params, query: url.searchParams, warm: null })
     try {
-      return JSON.parse(value.body.toString('utf8')).data
+      return dataOf(value)
     } catch {
       return null
     }
@@ -182,7 +182,6 @@ export function createApp({ registry, config, logger = console, community = null
   }
   return {
     handler,
-    cache,
     catalog,
     startWarmer,
     warmOnce,

@@ -407,5 +407,5 @@ export function createCatalog({ registry, collection = () => null, external = nu
       external: external ? { enabled: !!external.enabled, ...external.stats() } : { enabled: false }
     }
   }
-  return { fillList, fillOne, finalize, ingest, ensure, schedule, refresh, crawlOnce, startCrawler, close, status, peek, load, _mem: mem }
+  return { fillList, fillOne, finalize, ingest, ensure, refresh, crawlOnce, startCrawler, close, status }
 }
