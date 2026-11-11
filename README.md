@@ -8,24 +8,25 @@ Satu pintu API, semua sumber punya bentuk data yang sama — cepat, ringan, cach
 ```bash
 npm install
 API_KEY=rahasia npm start   # http://localhost:3000 (API_KEY opsional)
-npm test                 # tes server + playground (offline, pakai mock)
+npm test                 # tes server + playground + diagnosa (offline, pakai mock)
 ```
 
 Butuh Node 20+. Dependensi: `cheerio` (scraper) dan `mongodb` (fitur komunitas).
 
-## Playground (halaman tes)
+## Playground (halaman tes & diagnosa)
 
-Buka `http://localhost:3000/playground` (atau `https://server-kamu.com/playground`).
-Satu file HTML tanpa library, tampilan kotak polos, jalan di HP maupun desktop.
+Buka `http://localhost:3000/playground` (atau `https://server-kamu.com/playground`). Satu file HTML tanpa library, rapi di HP maupun desktop, mengikuti mode terang/gelap.
 
-1. **Tes otomatis**: klik **Tes semua endpoint**. Yang dites:
-   - Server: `/health`, `/api/sources`, `/api/search` (semua sumber), validasi `400` (tanpa `q`) dan `404` (sumber tidak ada).
-   - Tiap sumber: search → latest → popular → browse → genres → detail → chapter → gambar (proxy).
-   - Hasil per langkah `PASS` / `FAIL` / `SKIP` + waktu (ms) + keterangan, ringkasan di atas.
-2. **Coba manual**: pilih sumber + endpoint, isi parameter, **Execute** (atau Ctrl+Enter). Terlihat status, waktu, ukuran, `x-cache`. Preview (daftar, detail, thumbnail chapter) atau JSON mentah; klik item/chapter untuk lanjut.
+1. **Diagnosa scraper**: pilih scraper lalu klik **Diagnosa scraper ini** (atau **Diagnosa semua**). Tiap langkah dites langsung ke situs sumber: Cari → Terbaru → Populer → Jelajah → Genre → Detail → Baca chapter → Gambar. Hasilnya:
+   - `Lolos`, `Peringatan` (jalan tapi ada field kosong, mis. cover), `Gagal`, atau `Dilewati` (method belum dibuat).
+   - Kalau gagal: jenis error (`HTTP 403`, `TIMEOUT`, `JARINGAN`, `KODE`), pesan, **lokasi file:baris** di scraper, dan saran perbaikan.
+   - Slug, chapter, dan URL gambar dari langkah sebelumnya dipakai otomatis di langkah berikutnya.
+   - **Salin laporan** menyalin seluruh hasil sebagai teks.
+2. **Coba manual**: pilih endpoint, isi parameter, **Execute** untuk melihat respons JSON mentah, status, waktu, dan `x-cache`.
+3. Kalau ada file di `src/scrapers/` yang gagal dimuat (salah sintaks, dll), muncul banner merah berisi nama file dan errornya. Scraper lain tetap jalan.
 
-Server URL & API key disimpan di browser (localStorage), tidak dikirim ke mana pun selain server kamu.
-Matikan di production dengan env `PLAYGROUND=false`.
+Endpoint di balik layar: `GET /api/:source/diagnose/:step` (`search`, `latest`, `popular`, `browse`, `genres`, `detail`, `chapter`, `image`), kena API key seperti endpoint lain dan tidak di-cache.
+Server URL & API key disimpan di browser (localStorage). Matikan halaman dan endpoint diagnosa di production dengan env `PLAYGROUND=false`.
 
 ## Hosting
 
@@ -41,7 +42,7 @@ Kalau `API_KEY` diisi, kirim header `x-api-key`.
 | Endpoint | Keterangan |
 |---|---|
 | `GET /health` | status server (tanpa auth) |
-| `GET /playground` | halaman tes (tanpa auth, lihat bawah) |
+| `GET /playground` | halaman tes & diagnosa scraper (tanpa auth) |
 | `GET /api/sources` | daftar sumber + filter yang didukung |
 | `GET /api/search?q=&limit=` | cari di **semua** sumber sekaligus (hasil `source` per item) |
 | `GET /api/:source/search?q=&limit=` | cari di satu sumber |
@@ -118,12 +119,14 @@ src/
   routes.js          semua endpoint + validasi
   image-proxy.js     streaming gambar (anti-SSRF)
   playground.js      sajikan public/playground.html (gzip di-cache)
-  public/playground.html   halaman tes API
+  public/playground.html   halaman tes & diagnosa scraper
+  diagnose.js        tes per langkah tiap scraper (error, lokasi, saran)
   config.js          baca env
   http/              router, respond (JSON+gzip+ETag), middleware
   lib/               cache TTL, errors, timeout
   scrapers/
-    index.js         registry — daftar sumber
+    index.js         registry — otomatis memuat semua file scraper di folder ini
+    _template.js     contoh scraper (diabaikan registry), salin untuk scraper baru
     manta.js         Manta Comics
     shinigami.js     Shinigami
     lumos.js         Lumos
@@ -133,13 +136,13 @@ test/                tes server
 
 ## Nambah scraper baru
 
-1. Buat `src/scrapers/namabaru.js`, export default:
+1. Salin `src/scrapers/_template.js` jadi `src/scrapers/namabaru.js`, lalu ganti `id`, `name`, `BASE`, `imageHosts`, dan isi tiap fungsi sesuai situs sumber:
    `{ id, name, base, imageHeaders, imageHosts, filters?, search, latest, popular, browse, genres, detail, chapter }`
-   (bentuk item/detail ikuti `manta.js`). Method yang tidak didukung boleh dihilangkan → endpoint jawab `501`.
-2. Import dan tambahkan ke array `PROVIDERS` di `src/scrapers/index.js`.
+   (bentuk item/detail ikuti template atau `shinigami.js`). Method yang tidak didukung boleh dihilangkan, endpoint-nya menjawab `501`.
+2. Restart server. File otomatis terdeteksi, tanpa daftar manual. File berawalan `_` diabaikan.
+3. Buka `/playground`, pilih scraper baru, klik **Diagnosa scraper ini**. Langkah yang merah menunjukkan persis di mana errornya (file:baris dan sarannya). Perbaiki, restart, diagnosa ulang sampai hijau.
 
 Route, cache, rate limit, pencarian gabungan, dan image proxy langsung ikut.
-
 
 ## Kalau muncul HTTP 403 (IP server diblokir)
 

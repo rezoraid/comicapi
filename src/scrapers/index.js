@@ -1,9 +1,7 @@
-import lumos from './lumos.js'
-import manta from './manta.js'
-import shinigami from './shinigami.js'
+import { readdirSync } from 'node:fs'
 import { withTimeout } from '../lib/timeout.js'
 
-const PROVIDERS = [lumos, manta, shinigami]
+const NON_SCRAPERS = new Set(['index.js', 'utils.js'])
 const METHODS = ['search', 'latest', 'popular', 'browse', 'genres', 'detail', 'chapter']
 
 const providers = new Map()
@@ -22,7 +20,20 @@ export function register(p) {
   if (!id) throw new TypeError('Scraper wajib memiliki id')
   providers.set(id, { ...p, id })
 }
-PROVIDERS.forEach(register)
+const broken = []
+
+const dir = new URL('./', import.meta.url)
+for (const file of readdirSync(dir).filter(f => f.endsWith('.js') && !f.startsWith('_') && !NON_SCRAPERS.has(f)).sort()) {
+  try {
+    register((await import(new URL(file, dir))).default)
+  } catch (err) {
+    const at = String(err?.stack || '').match(/scrapers\/([\w.-]+\.js):(\d+)/)
+    broken.push({ file, error: String(err?.message || err).split('\n')[0].slice(0, 300), where: at ? `${at[1]}:${at[2]}` : '' })
+    console.error(`[scrapers] ${file} gagal dimuat → ${err?.message || err}`)
+  }
+}
+
+export const failed = () => [...broken]
 
 export const has = id => providers.has(normalizeId(id))
 
@@ -74,4 +85,4 @@ export async function searchAll(query, { limit = 10, timeoutMs = 8000 } = {}) {
   return { items, failed }
 }
 
-export default { register, has, get, list, findByImageHost, searchAll }
+export default { register, has, get, list, failed, findByImageHost, searchAll }

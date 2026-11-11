@@ -6,112 +6,121 @@
 <meta name="robots" content="noindex">
 <title>comic-api playground</title>
 <style>
-:root{--bg:#fff;--fg:#111;--mut:#666;--line:#111;--soft:#f2f2f2;--ok:#0a7a2f;--bad:#c4161c;--skip:#9a6700;--info:#2557d6}
-@media(prefers-color-scheme:dark){:root{--bg:#0d0d0d;--fg:#eee;--mut:#999;--line:#eee;--soft:#1b1b1b;--ok:#4ade80;--bad:#f87171;--skip:#fbbf24;--info:#7aa2ff}}
-*{box-sizing:border-box;border-radius:0}
-body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 ui-monospace,Menlo,Consolas,monospace}
-main{max-width:820px;margin:0 auto;padding:12px}
-h1{font-size:16px;margin:0 0 12px;display:flex;align-items:center;gap:8px}
-#dot{width:12px;height:12px;border:2px solid var(--line);background:var(--soft)}
-#logbadge{margin-left:auto}#logbadge:not(.alt){background:var(--bad);border-color:var(--bad);color:#fff}
-#dot.ok{background:var(--ok)}#dot.bad{background:var(--bad)}
-.box{border:2px solid var(--line);padding:10px;margin-bottom:12px}
-.box>h2{font-size:12px;margin:-10px -10px 10px;padding:4px 10px;background:var(--fg);color:var(--bg);text-transform:uppercase;letter-spacing:.06em}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px}
-label{display:block;font-size:11px;color:var(--mut);text-transform:uppercase}
-input,select{display:block;width:100%;margin-top:3px;padding:8px;font:inherit;font-size:16px;color:var(--fg);background:var(--bg);border:2px solid var(--line)}
-input:focus,select:focus{outline:3px solid var(--mut);outline-offset:0}
-button{font:inherit;font-size:13px;font-weight:700;padding:9px 14px;color:var(--bg);background:var(--fg);border:2px solid var(--line);cursor:pointer;text-transform:uppercase}
-button.alt{color:var(--fg);background:var(--bg)}
-button:active{transform:translateY(1px)}button:disabled{opacity:.45;cursor:wait}
-.mini{padding:2px 8px;font-size:11px}
-.bar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:8px}
-.st{padding:1px 8px;color:#fff;font-weight:700;background:var(--ok)}.st.bad{background:var(--bad)}
-.url{flex-basis:100%;color:var(--mut);font-size:12px;word-break:break-all}
-table{width:100%;border-collapse:collapse;margin:6px 0 10px}
-td,th{padding:5px 6px;border:1px solid var(--line);text-align:left;vertical-align:top;font-size:13px}
-th{background:var(--soft);font-size:11px;text-transform:uppercase}
-td.ms{white-space:nowrap;color:var(--mut)}td.r{white-space:nowrap;font-weight:700;width:1%}
-.ok{color:var(--ok)}.bad{color:var(--bad)}.skip{color:var(--skip)}
-.sum{font-weight:700;padding:8px;border:2px solid var(--line);margin-bottom:8px}
-.sum.ok{border-color:var(--ok)}.sum.bad{border-color:var(--bad)}
-pre{margin:0;padding:10px;background:var(--soft);border:1px solid var(--line);overflow:auto;max-height:65vh;font:12px/1.5 inherit;white-space:pre-wrap;word-break:break-word}
-.tabs{display:flex;gap:0;margin-bottom:8px}.tabs button{border-right-width:0}.tabs button:last-child{border-right-width:2px}
-.item{display:flex;gap:10px;padding:6px;border:1px solid var(--line);margin-bottom:-1px;cursor:pointer;align-items:center}
-.item:hover{background:var(--soft)}
-.item img,.item i{width:40px;height:56px;object-fit:cover;background:var(--soft);flex:none}
-.item div{min-width:0}.item b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-small,.muted{color:var(--mut);font-size:12px}
-.chs{display:flex;flex-wrap:wrap;gap:5px;margin:8px 0}.chs button{padding:3px 8px;font-size:12px}
-.thumbs{display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:6px;margin-top:8px}
-.thumbs img{width:100%;aspect-ratio:2/3;object-fit:cover;background:var(--soft);border:3px solid var(--line)}
-.thumbs img.ok{border-color:var(--ok)}.thumbs img.bad{border-color:var(--bad)}
-.head{display:flex;gap:10px}.head img{width:90px;height:128px;object-fit:cover;background:var(--soft);flex:none}
-.head h3{margin:0 0 4px;font-size:15px}
-/* log error */
-#logcount{font-weight:400;opacity:.8}
-.logbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:10px}
-.logbar .mini b{margin-left:5px;font-weight:400;opacity:.7}
-.logbar .sp{margin-left:auto;display:flex;gap:6px}
-#loglist{display:flex;flex-direction:column;gap:6px}
-.le{--c:var(--bad);border:1px solid var(--line);border-left:6px solid var(--c)}
-.le.k-src,.le.k-tes{--c:var(--skip)}.le.k-img{--c:var(--info)}.le.k-js{--c:var(--mut)}
-.le>summary{display:flex;flex-wrap:wrap;align-items:baseline;gap:3px 8px;padding:7px 9px;cursor:pointer;list-style:none}
-.le>summary::-webkit-details-marker{display:none}
-.le>summary::before{content:'▸';color:var(--mut);font-size:11px}
-.le[open]>summary::before{content:'▾'}
-.le>summary:hover{background:var(--soft)}
-.lt{color:var(--mut);font-size:12px;white-space:nowrap}
-.lk{padding:0 6px;font-size:11px;font-weight:700;color:var(--bg);background:var(--c);white-space:nowrap}
-.ls{color:var(--mut);font-size:12px;border-bottom:1px dotted var(--mut)}
-.lm{flex:1 1 200px;min-width:0;word-break:break-word}
-.ln{padding:0 5px;font-size:11px;font-weight:700;border:1px solid var(--line)}
-.ld{padding:2px 10px 10px;border-top:1px dashed var(--mut)}
-.ld dl{display:grid;grid-template-columns:max-content 1fr;gap:3px 12px;margin:8px 0;font-size:12px}
-.ld dt{color:var(--mut);font-size:11px;text-transform:uppercase}
-.ld dd{margin:0;word-break:break-all}
-.hint{margin:8px 0;padding:6px 9px;border:1px solid var(--c);font-size:12px}
-.ld pre{max-height:220px;margin-bottom:8px}
-.mx td,.mx th{text-align:center}.mx td:first-child,.mx th:first-child{text-align:left}.mx td b{font-size:15px}.fl{margin-bottom:8px}.fl div{padding:2px 0;word-break:break-word}
-.empty{padding:16px;text-align:center;color:var(--mut);border:1px dashed var(--mut)}
+:root{--bg:#f6f7fb;--card:#fff;--fg:#161a23;--mut:#6b7385;--line:#e4e7ef;--soft:#f0f2f8;--acc:#4f46e5;--ok:#16a34a;--warn:#d97706;--bad:#dc2626;--skip:#8b93a7;--r:14px}
+@media(prefers-color-scheme:dark){:root{--bg:#0e1118;--card:#171b26;--fg:#e8ebf4;--mut:#8f98ad;--line:#272d3c;--soft:#1e2331;--acc:#818cf8;--ok:#4ade80;--warn:#fbbf24;--bad:#f87171;--skip:#6b7385}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+main{max-width:860px;margin:0 auto;padding:16px}
+header{display:flex;align-items:center;gap:10px;margin-bottom:16px}
+header h1{font-size:18px;margin:0;font-weight:700;letter-spacing:-.01em}
+header h1 span{color:var(--mut);font-weight:500}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:99px;background:var(--soft);color:var(--mut);font-size:12px}
+.pill i{width:8px;height:8px;border-radius:50%;background:var(--skip)}
+.pill.ok i{background:var(--ok)}.pill.bad i{background:var(--bad)}
+header .sp{margin-left:auto}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:16px;margin-bottom:14px}
+.card>h2{margin:0 0 12px;font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--mut);font-weight:600}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
+label{display:block;font-size:12px;color:var(--mut)}
+input,select{display:block;width:100%;margin-top:4px;padding:9px 11px;font:inherit;font-size:15px;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:10px}
+input:focus,select:focus{outline:2px solid var(--acc);outline-offset:-1px}
+button{font:inherit;font-weight:600;font-size:13px;padding:9px 14px;color:#fff;background:var(--acc);border:0;border-radius:10px;cursor:pointer}
+button.ghost{color:var(--fg);background:var(--soft)}
+button.sm{padding:5px 10px;font-size:12px}
+button:active{transform:translateY(1px)}button:disabled{opacity:.5;cursor:wait}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+.chip{padding:7px 14px;border-radius:99px;background:var(--soft);color:var(--fg);border:1px solid transparent;cursor:pointer;font-weight:600;font-size:13px;display:flex;align-items:center;gap:7px}
+.chip.on{border-color:var(--acc);color:var(--acc);background:transparent}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--skip);display:inline-block;flex:none}
+.dot.pass{background:var(--ok)}.dot.warn{background:var(--warn)}.dot.fail{background:var(--bad)}.dot.run{background:var(--acc);animation:pulse 1s infinite}
+@keyframes pulse{50%{opacity:.3}}
+.actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.notice{padding:11px 14px;border-radius:10px;margin-bottom:14px;border:1px solid var(--bad);color:var(--bad);background:color-mix(in srgb,var(--bad) 8%,transparent)}
+.notice b{display:block}.notice code{color:var(--fg)}
+.verdict{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:12px}
+.verdict h3{margin:0;font-size:16px}
+.tag{padding:2px 9px;border-radius:99px;font-size:12px;font-weight:600;color:#fff;background:var(--skip)}
+.tag.pass{background:var(--ok)}.tag.warn{background:var(--warn)}.tag.fail{background:var(--bad)}
+.row{display:grid;grid-template-columns:26px 1fr auto;gap:10px;padding:10px 0;border-top:1px solid var(--line);align-items:start}
+.row:first-of-type{border-top:0}
+.ico{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;color:#fff;font-size:12px;font-weight:700;background:var(--skip)}
+.pass .ico{background:var(--ok)}.warn .ico{background:var(--warn)}.fail .ico{background:var(--bad)}.run .ico{background:var(--acc)}
+.name{font-weight:600}.name small{margin-left:8px;color:var(--mut);font-weight:400}
+.ms{color:var(--mut);font-size:12px;white-space:nowrap}
+.note{color:var(--mut);font-size:13px;word-break:break-word}
+.err{margin-top:6px;padding:10px 12px;border-radius:10px;background:color-mix(in srgb,var(--bad) 9%,transparent);border-left:3px solid var(--bad)}
+.err b{color:var(--bad)}
+.err .where{margin-top:4px;font-size:12px}
+code{font:12px ui-monospace,Menlo,Consolas,monospace;background:var(--soft);padding:1px 6px;border-radius:6px}
+.hint{margin-top:6px;padding:8px 12px;border-radius:10px;background:color-mix(in srgb,var(--acc) 9%,transparent);border-left:3px solid var(--acc);font-size:13px}
+.issues{margin:6px 0 0;padding:0;list-style:none;font-size:13px}
+.issues li{padding:1px 0}.issues .fail{color:var(--bad)}.issues .warn{color:var(--warn)}
+.sample{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+.sample figure{margin:0;width:74px;font-size:11px;color:var(--mut)}
+.sample img,.sample .ph{display:block;width:74px;height:104px;object-fit:cover;border-radius:8px;background:var(--soft);margin-bottom:3px}
+.sample figcaption{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#matrix{overflow-x:auto}
+table{width:100%;min-width:480px;border-collapse:collapse;font-size:13px}
+th,td{padding:7px 6px;text-align:center;border-bottom:1px solid var(--line)}
+th{font-size:11px;color:var(--mut);font-weight:600;text-transform:uppercase}
+td:first-child,th:first-child{text-align:left}
+tr.pick{cursor:pointer}tr.pick:hover{background:var(--soft)}tr.on td:first-child{color:var(--acc);font-weight:700}
+.empty{padding:18px;text-align:center;color:var(--mut)}
+pre{margin:10px 0 0;padding:12px;background:var(--soft);border-radius:10px;overflow:auto;max-height:60vh;font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-word}
+.bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:12px;font-size:13px}
+.st{padding:1px 9px;border-radius:99px;color:#fff;font-weight:700;background:var(--ok)}.st.bad{background:var(--bad)}
+details summary{cursor:pointer;font-weight:600}
+details[open] summary{margin-bottom:12px}
+.hide{display:none}
 </style>
 </head>
 <body>
 <main>
-<h1>comic-api / playground <button class="mini alt" id="logbadge" title="Lompat ke log error">log 0</button><span id="dot" title="health"></span></h1>
+<header>
+  <h1>comic-api <span>/ playground</span></h1>
+  <span class="pill" id="dot"><i></i><b id="health">memeriksa…</b></span>
+  <span class="sp"></span>
+  <button class="ghost sm" id="cfgbtn">Pengaturan</button>
+</header>
 
-<section class="box">
-  <h2>Server</h2>
+<section class="card hide" id="cfg">
+  <h2>Pengaturan</h2>
   <div class="grid">
     <label>Server URL<input id="base" placeholder="https://server-kamu.com" autocomplete="off" autocapitalize="off"></label>
     <label>API key<input id="key" type="password" placeholder="x-api-key (opsional)" autocomplete="off"></label>
     <label>Kata kunci tes<input id="q" value="solo" autocomplete="off" autocapitalize="off"></label>
-    <label>Bahasa (MANGA Plus)<select id="lang"><option value="">(default server)</option></select></label>
   </div>
 </section>
 
-<section class="box">
-  <h2>1 · Tes otomatis</h2>
-  <button id="all">Tes semua endpoint</button>
-  <div id="tests"></div>
-</section>
+<div id="notice"></div>
 
-<section class="box">
-  <h2>2 · Coba manual</h2>
-  <div class="grid">
-    <label>Sumber<select id="src"></select></label>
-    <label>Endpoint<select id="ep"></select></label>
+<section class="card">
+  <h2>Scraper</h2>
+  <div class="chips" id="chips"></div>
+  <div class="actions">
+    <button id="diag">Diagnosa scraper ini</button>
+    <button class="ghost" id="all">Diagnosa semua</button>
+    <button class="ghost" id="copy" disabled>Salin laporan</button>
   </div>
-  <div class="grid" id="form" style="margin:8px 0"></div>
-  <button id="run">Execute</button>
 </section>
 
-<section class="box" id="res" hidden></section>
+<section class="card hide" id="matrixbox">
+  <h2>Ringkasan</h2>
+  <div id="matrix"></div>
+</section>
 
-<section class="box" id="log">
-  <h2>3 · Log error <span id="logcount"></span></h2>
-  <div class="logbar" id="logbar"></div>
-  <div id="loglist"></div>
+<section class="card" id="detail"><div class="empty">Pilih scraper lalu klik <b>Diagnosa</b>. Tiap langkah dites langsung ke situs sumber, dan kalau gagal kamu tahu di langkah mana, di file:baris mana, dan saran perbaikannya.</div></section>
+
+<section class="card">
+  <details id="manual">
+    <summary>Coba manual (lihat respons mentah)</summary>
+    <div class="grid">
+      <label>Endpoint<select id="ep"></select></label>
+    </div>
+    <div class="grid" id="form" style="margin:10px 0"></div>
+    <button id="run">Execute</button>
+    <div id="res"></div>
+  </details>
 </section>
 </main>
 
@@ -120,545 +129,226 @@ small,.muted{color:var(--mut);font-size:12px}
 const $ = s => document.querySelector(s)
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
 const store = {
-  get(k, d) { try { const v = localStorage.getItem('cp.' + k); return v == null ? d : JSON.parse(v) } catch { return d } },
-  set(k, v) { try { localStorage.setItem('cp.' + k, JSON.stringify(v)) } catch {} }
+  get(k, d) { try { const v = localStorage.getItem('cp2.' + k); return v == null ? d : JSON.parse(v) } catch { return d } },
+  set(k, v) { try { localStorage.setItem('cp2.' + k, JSON.stringify(v)) } catch {} }
 }
 
-const F = {
-  q: { label: 'q', def: 'solo' },
-  limit: { label: 'limit', def: '10' },
-  page: { label: 'page', def: '1' },
-  period: { label: 'period', ph: '(tergantung sumber)' },
-  genre: { label: 'genre (pisah koma)', ph: 'action,fantasy' },
-  type: { label: 'type', sel: 'types' },
-  status: { label: 'status', sel: 'statuses' },
-  sort: { label: 'sort', sel: 'sorts' },
-  lang: { label: 'lang', sel: 'languages' },
-  min: { label: 'min chapter' },
-  slug: { label: 'slug *', req: 1 },
-  chapter: { label: 'chapter *', req: 1 },
-  url: { label: 'url gambar *', req: 1 }
-}
-const EP = {
-  search: { path: '/api/{src}/search', f: ['q', 'limit', 'lang'], scoped: 1 },
-  latest: { path: '/api/{src}/latest', f: ['page', 'lang'], scoped: 1 },
-  popular: { path: '/api/{src}/popular', f: ['period', 'limit', 'lang'], scoped: 1 },
-  browse: { path: '/api/{src}/browse', f: ['q', 'genre', 'type', 'status', 'sort', 'min', 'page', 'lang'], scoped: 1 },
-  genres: { path: '/api/{src}/genres', f: ['lang'], scoped: 1 },
-  comic: { path: '/api/{src}/comic/{slug}', f: ['slug', 'lang'], scoped: 1 },
-  chapter: { path: '/api/{src}/chapter/{slug}/{chapter}', f: ['slug', 'chapter', 'lang'], scoped: 1 },
-  'search-all': { path: '/api/search', f: ['q', 'limit'] },
-  image: { path: '/api/image', f: ['url'] },
-  sources: { path: '/api/sources', f: [] },
-  health: { path: '/health', f: [] }
-}
+const STEPS = [
+  ['search', 'Cari'], ['latest', 'Terbaru'], ['popular', 'Populer'], ['browse', 'Jelajah'],
+  ['genres', 'Genre'], ['detail', 'Detail komik'], ['chapter', 'Baca chapter'], ['image', 'Gambar']
+]
+const NEEDS = { detail: ['slug'], chapter: ['slug', 'chapter'], image: ['image'] }
+const LABEL = { pass: 'Lolos', warn: 'Peringatan', fail: 'Gagal', skip: 'Dilewati', run: 'Berjalan' }
+const ICON = { pass: '✓', warn: '!', fail: '✕', skip: '–', run: '…' }
 
-let sources = [], src = store.get('src', ''), ep = store.get('ep', 'search'), vals = store.get('vals', {}), view = 'preview', last = null
+let sources = [], sel = store.get('src', ''), results = {}, busy = false
 $('#base').value = store.get('base', location.origin === 'null' ? '' : location.origin)
 $('#key').value = store.get('key', '')
 $('#q').value = store.get('q', 'solo')
-if (!EP[ep]) ep = 'search'
-
-/* ───── log error ───── */
-const LOG_MAX = 100
-const KIND = { http: 'HTTP', net: 'JARINGAN', src: 'SUMBER', img: 'GAMBAR', tes: 'TES', js: 'JS' }
-let logs = store.get('log', []), logFilter = 'all', logSeq = 0, logTimer
-if (!Array.isArray(logs)) logs = []
-logs.forEach(l => { logSeq = Math.max(logSeq, l.id || 0) })
-const openIds = new Set()
-const pad = n => String(n).padStart(2, '0')
-const clip = (s, n) => { s = String(s ?? ''); return s.length > n ? s.slice(0, n) + '…' : s }
-const hostOf = u => { try { return new URL(u).hostname } catch { return '' } }
-const stamp = t => {
-  const d = new Date(t), c = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
-  return d.toDateString() === new Date().toDateString() ? c : `${pad(d.getDate())}/${pad(d.getMonth() + 1)} ${c}`
-}
-
-function logErr(e) {
-  let path = '', src = '', host = ''
-  if (e.url) {
-    try {
-      const u = new URL(e.url)
-      path = u.pathname + u.search
-      src = (u.pathname.match(/^\/api\/([^/]+)\/./) || [])[1] || ''
-      if (u.pathname === '/api/image') host = hostOf(u.searchParams.get('url'))
-    } catch {}
-  }
-  if (!src && e.step && !e.step.startsWith('server')) src = e.step.split(' › ')[0]
-  const msg = clip(String(e.msg ?? 'error').replace(/\s+/g, ' ').trim(), 300)
-  const key = [e.kind, e.status, e.code, msg, e.kind === 'img' ? host : path, e.step].join('|')
-  const at = logs.slice(0, 10).findIndex(l => l.key === key)
-  const now = Date.now()
-  if (at >= 0) {
-    const l = logs.splice(at, 1)[0]
-    l.n++; l.t = now; l.ms = e.ms ?? l.ms; l.path = path || l.path; l.body = e.body ? clip(e.body, 1500) : l.body
-    logs.unshift(l)
-  } else {
-    logs.unshift({ id: ++logSeq, key, t: now, n: 1, kind: e.kind, status: e.status ?? null, code: e.code || '', msg, path, src, host, step: e.step || '', ms: e.ms ?? null, body: clip(e.body, 1500) })
-    if (logs.length > LOG_MAX) logs.length = LOG_MAX
-  }
-  store.set('log', logs.slice(0, 50).map(l => ({ ...l, body: clip(l.body, 800) })))
-  clearTimeout(logTimer)
-  logTimer = setTimeout(renderLog, 60)
-}
-
-function hintFor(l) {
-  const s = l.status, m = l.msg || ''
-  if (l.kind === 'js') return 'Error di halaman playground ini. Muat ulang halaman; kalau berulang, salin detail di bawah.'
-  if (l.kind === 'src') return 'Sumber itu down atau memblokir IP server. Tes langsung lewat “Coba manual” untuk melihat error aslinya.'
-  if (l.kind === 'tes') return 'Server menjawab, tapi isinya tidak sesuai harapan (kosong / field kurang). Cek lewat “Coba manual”.'
-  if (s === 0) return 'Server tidak terjangkau. Cek Server URL, koneksi internet, atau pengaturan CORS_ORIGIN di server.'
-  if (s === 401) return 'API key salah atau belum diisi. Isi kolom API key di atas.'
-  if (s === 429) return 'Kena rate limit. Tunggu sebentar, lalu coba lagi.'
-  if (l.code === 'FORBIDDEN_HOST') return 'Host gambar tidak terdaftar di scraper manapun, jadi image proxy menolaknya.'
-  if (l.kind === 'img' && /bukan gambar/.test(m)) return 'Sumber mengirim halaman, bukan gambar — biasanya hotlink diblokir atau URL sudah kedaluwarsa.'
-  if (s === 400) return 'Parameter tidak valid. Periksa isian form.'
-  if (s === 404) return l.kind === 'img' ? 'Gambar sudah tidak ada di sumber.' : 'Data tidak ditemukan. Periksa slug / chapter, atau sumbernya.'
-  if (s === 413) return 'Gambar melebihi batas ukuran image proxy.'
-  if (s === 501) return 'Sumber ini tidak mendukung endpoint tersebut.'
-  if (s === 504 || l.code === 'SOURCE_TIMEOUT') return 'Sumber terlalu lama merespons. Coba lagi, atau naikkan REQUEST_TIMEOUT_MS di server.'
-  if (s === 502) return /HTTP (403|429|503)/.test(m) ? 'Situs sumber menolak IP server (diblokir). Coba relay — lihat README.' : 'Situs sumber sedang down atau struktur halamannya berubah.'
-  if (s >= 500) return 'Error di server. Cek log server untuk detailnya.'
-  return ''
-}
-
-const logText = l =>
-  `[${stamp(l.t)}] ${KIND[l.kind]}${l.status ? ' ' + l.status : ''}${l.src ? ' [' + l.src + ']' : ''}${l.n > 1 ? ' x' + l.n : ''} — ${l.code ? l.code + ': ' : ''}${l.msg}` +
-  (l.path ? `\n  ${l.path}` : '') + (l.step ? `\n  langkah: ${l.step}` : '')
-
-function logRow(l) {
-  const kv = (k, v) => (v ? `<dt>${k}</dt><dd>${esc(v)}</dd>` : '')
-  const hint = hintFor(l)
-  let body = l.body || ''
-  try { body = JSON.stringify(JSON.parse(body), null, 2) } catch {}
-  return `<details class="le k-${l.kind}" data-id="${l.id}"${openIds.has(l.id) ? ' open' : ''}><summary>` +
-    `<span class="lt">${stamp(l.t)}</span><span class="lk">${KIND[l.kind]}${l.status && l.kind !== 'src' ? ' ' + l.status : ''}</span>` +
-    (l.src ? `<span class="ls">${esc(l.src)}</span>` : '') +
-    `<span class="lm">${esc((l.kind === 'tes' && l.step ? l.step.split(' › ').slice(1).join(' › ') + ' — ' : '') + (l.code ? l.code + ' · ' : '') + l.msg)}</span>${l.n > 1 ? `<span class="ln">×${l.n}</span>` : ''}</summary>` +
-    `<div class="ld"><dl>${kv('Sumber', l.src)}${kv('Endpoint', l.path)}${kv('Host gambar', l.host)}${kv('Langkah', l.step)}${kv('Durasi', l.ms != null && Math.round(l.ms) + ' ms')}${kv('Terakhir', new Date(l.t).toLocaleString('id-ID'))}</dl>` +
-    (hint ? `<p class="hint"><b>Saran:</b> ${esc(hint)}</p>` : '') +
-    (body ? `<pre>${esc(body)}</pre>` : '') +
-    `<button class="mini alt" data-act="lcopy" data-id="${l.id}">copy</button></div></details>`
-}
-
-function renderLog() {
-  const cnt = k => (k === 'all' ? logs.length : logs.filter(l => l.kind === k).length)
-  const total = logs.length
-  if (logFilter !== 'all' && !cnt(logFilter)) logFilter = 'all'
-  $('#logbadge').textContent = 'log ' + total
-  $('#logbadge').className = 'mini' + (total ? '' : ' alt')
-  $('#logcount').textContent = total ? `(${total})` : ''
-  const list = logFilter === 'all' ? logs : logs.filter(l => l.kind === logFilter)
-  $('#logbar').innerHTML =
-    ['all', ...Object.keys(KIND)].filter(k => k === 'all' || cnt(k)).map(k => `<button class="mini${logFilter === k ? '' : ' alt'}" data-lf="${k}">${k === 'all' ? 'Semua' : KIND[k]}<b>${cnt(k)}</b></button>`).join('') +
-    `<span class="sp"><button class="mini alt" data-act="lcopyall"${total ? '' : ' disabled'}>Copy semua</button><button class="mini alt" data-act="lclear"${total ? '' : ' disabled'}>Hapus</button></span>`
-  $('#loglist').innerHTML = list.length ? list.map(logRow).join('') : `<div class="empty">${total ? 'Tidak ada error pada filter ini' : 'Belum ada error — semua aman ✓'}</div>`
-}
-
-const copy = (text, btn) => { navigator.clipboard?.writeText(text); if (btn) btn.textContent = 'tersalin' }
-$('#log').onclick = e => {
-  const t = e.target.closest('[data-lf],[data-act]')
-  if (!t) return
-  if (t.dataset.lf) { logFilter = t.dataset.lf; return renderLog() }
-  const a = t.dataset.act
-  if (a === 'lclear') { logs = []; openIds.clear(); store.set('log', []); renderLog() }
-  else if (a === 'lcopyall') copy(logs.map(logText).join('\n\n'), t)
-  else if (a === 'lcopy') { const l = logs.find(x => x.id === +t.dataset.id); if (l) copy(logText(l) + (l.body ? '\n' + l.body : ''), t) }
-}
-$('#loglist').addEventListener?.('toggle', e => {
-  const id = +e.target.dataset?.id
-  if (id) e.target.open ? openIds.add(id) : openIds.delete(id)
-}, true)
-$('#logbadge').onclick = () => $('#log').scrollIntoView?.({ behavior: 'smooth' })
-
-if (typeof window !== 'undefined' && window.addEventListener) {
-  window.addEventListener('error', e => logErr({ kind: 'js', msg: e.message || 'error', body: e.error?.stack }))
-  window.addEventListener('unhandledrejection', e => logErr({ kind: 'js', msg: e.reason?.message || String(e.reason), body: e.reason?.stack }))
-}
 
 const baseUrl = () => ($('#base').value.trim() || (location.origin === 'null' ? '' : location.origin)).replace(/\/+$/, '')
-const hdr = () => { const k = $('#key').value.trim(); return k ? { 'x-api-key': k } : {} }
-const testQ = () => $('#q').value.trim() || 'solo'
-const filters = () => sources.find(s => s.id === src)?.filters || {}
+const headers = () => { const k = $('#key').value.trim(); return k ? { 'x-api-key': k } : {} }
 
-async function call(path, q = {}, opts = {}) {
+async function api(path, params = {}) {
   const base = baseUrl()
-  if (!base) throw new Error('Isi Server URL dulu')
+  if (!base) return { status: 0, ms: 0, err: 'Isi Server URL dulu' }
   const url = new URL(base + path)
-  for (const [k, v] of Object.entries(q)) if (v !== '' && v != null) url.searchParams.set(k, v)
+  for (const [k, v] of Object.entries(params)) if (v !== '' && v != null) url.searchParams.set(k, v)
   const t = performance.now()
-  let r, text
   try {
-    r = await fetch(url, { headers: hdr(), cache: 'no-store' })
-    text = await r.text()
+    const r = await fetch(url, { headers: headers(), cache: 'no-store' })
+    const text = await r.text()
+    let json = null
+    try { json = JSON.parse(text) } catch {}
+    return { status: r.status, ms: performance.now() - t, text, json, url: url.href, cache: r.headers.get('x-cache') }
   } catch (e) {
-    const ms = performance.now() - t
-    logErr({ kind: 'net', status: 0, msg: e.message || 'gagal terhubung', url: url.href, ms })
-    return { status: 0, ms, size: 0, url: url.href, text: '', err: e.message, logged: true }
-  }
-  let json = null
-  try { json = JSON.parse(text) } catch {}
-  const res = { status: r.status, ms: performance.now() - t, size: text.length, cache: r.headers.get('x-cache'), url: url.href, text, json }
-  if (r.status < 200 || r.status >= 300) {
-    if (!(opts.ignore || []).includes(r.status)) {
-      const er = json?.error
-      logErr({ kind: 'http', status: r.status, code: er?.code, msg: er?.message || text.replace(/\s+/g, ' ').trim() || r.statusText || 'error', url: url.href, ms: res.ms, body: text })
-      res.logged = true
-    }
-  } else if (json?.data?.failed?.length) {
-    logErr({ kind: 'src', status: r.status, msg: 'Sumber gagal: ' + json.data.failed.join(', '), url: url.href, ms: res.ms })
-  }
-  return res
-}
-
-function build(name) {
-  const e = EP[name]
-  let path = e.path.replace('{src}', encodeURIComponent(src))
-  const q = {}
-  for (const k of e.f) {
-    const v = String(vals[k] ?? F[k].def ?? '').trim()
-    if (path.includes('{' + k + '}')) path = path.replace('{' + k + '}', encodeURIComponent(v))
-    else if (v !== '') q[k] = v
-  }
-  return { path, q }
-}
-
-function renderSelects() {
-  $('#src').innerHTML = sources.map(s => `<option value="${esc(s.id)}"${s.id === src ? ' selected' : ''}>${esc(s.id)}</option>`).join('')
-  $('#src').disabled = !EP[ep].scoped
-  $('#ep').innerHTML = Object.keys(EP).map(k => `<option value="${k}"${k === ep ? ' selected' : ''}>${k}</option>`).join('')
-}
-function renderForm() {
-  const f = filters()
-  const html = EP[ep].f.map(k => {
-    const d = F[k], v = vals[k] ?? d.def ?? ''
-    if (d.sel) {
-      const opts = f[d.sel] || []
-      if (!opts.length) return ''
-      return `<label>${d.label}<select data-k="${k}"><option value="">(semua)</option>${opts.map(o => `<option${o === v ? ' selected' : ''}>${esc(o)}</option>`).join('')}</select></label>`
-    }
-    return `<label>${d.label}<input data-k="${k}" value="${esc(v)}" placeholder="${esc(d.ph || '')}" autocomplete="off" autocapitalize="off"></label>`
-  }).join('')
-  $('#form').innerHTML = html || '<small class="muted">Tanpa parameter.</small>'
-}
-const setSrc = id => { src = id; store.set('src', id); renderSelects(); renderForm() }
-const setEp = k => { ep = k; store.set('ep', k); renderSelects(); renderForm() }
-const setVals = o => { Object.assign(vals, o); store.set('vals', vals) }
-
-$('#src').onchange = e => setSrc(e.target.value)
-$('#ep').onchange = e => setEp(e.target.value)
-$('#form').oninput = e => { const k = e.target.dataset.k; if (k) setVals({ [k]: e.target.value }) }
-$('#form').onchange = $('#form').oninput
-$('#form').onkeydown = e => { if (e.key === 'Enter') run() }
-$('#q').oninput = () => store.set('q', $('#q').value)
-$('#lang').onchange = () => store.set('lang', $('#lang').value)
-
-let blobs = [], active = 0
-const queue = []
-function pump() {
-  while (active < 4 && queue.length) {
-    active++
-    loadImg(queue.shift()).finally(() => { active--; pump(); stat() })
+    return { status: 0, ms: performance.now() - t, err: e.message || 'gagal terhubung', url: url.href }
   }
 }
-async function imgFetch(path) {
-  const url = baseUrl() + path, t = performance.now()
-  const bad = o => Object.assign(new Error(o.msg), (logErr({ kind: 'img', url, ms: performance.now() - t, ...o }), { logged: true }))
-  let r
-  try { r = await fetch(url, { headers: hdr() }) } catch (e) { throw bad({ status: 0, msg: e.message || 'gagal terhubung' }) }
-  if (!r.ok) {
-    let body = '', j = null
-    try { body = await r.text(); j = JSON.parse(body) } catch {}
-    throw bad({ status: r.status, code: j?.error?.code, msg: j?.error?.message || 'HTTP ' + r.status, body })
+
+const httpFail = r => {
+  const er = r.json?.error
+  const kind = r.status ? `HTTP ${r.status}` : 'JARINGAN'
+  const hint = r.status === 401 ? 'API key salah atau belum diisi (Pengaturan).' : r.status === 404 ? 'Endpoint diagnosa tidak ada. Pastikan PLAYGROUND tidak di-set false di server.' : r.status === 429 ? 'Kena rate limit, tunggu sebentar.' : !r.status ? 'Server tidak terjangkau. Cek Server URL dan koneksi.' : ''
+  return { kind, message: er?.message || r.err || `HTTP ${r.status}`, where: '', hint }
+}
+
+const verdictOf = rows => {
+  const s = rows.map(r => r.status)
+  return s.includes('fail') ? 'fail' : s.includes('warn') ? 'warn' : s.includes('pass') ? 'pass' : 'skip'
+}
+const VERDICT = { pass: 'Siap dipakai', warn: 'Jalan, ada peringatan', fail: 'Ada yang gagal', skip: 'Belum ada hasil' }
+
+function renderChips() {
+  $('#chips').innerHTML = sources.length
+    ? sources.map(s => {
+        const rows = Object.values(results[s.id] || {})
+        return `<button class="chip${s.id === sel ? ' on' : ''}" data-src="${esc(s.id)}"><span class="dot ${rows.length ? verdictOf(rows) : ''}"></span>${esc(s.name || s.id)}</button>`
+      }).join('')
+    : '<div class="empty">Belum ada scraper terdeteksi.</div>'
+}
+
+function renderMatrix() {
+  const ids = Object.keys(results)
+  $('#matrixbox').classList.toggle('hide', ids.length < 2)
+  if (ids.length < 2) return
+  $('#matrix').innerHTML = `<table><tr><th>Scraper</th>${STEPS.map(([, n]) => `<th>${n}</th>`).join('')}</tr>` +
+    ids.map(id => `<tr class="pick${id === sel ? ' on' : ''}" data-src="${esc(id)}"><td>${esc(id)}</td>${STEPS.map(([k]) => `<td><span class="dot ${results[id][k]?.status || ''}" title="${esc(LABEL[results[id][k]?.status] || '')}"></span></td>`).join('')}</tr>`).join('') + '</table>'
+}
+
+function stepRow([key, name], r) {
+  if (!r) return `<div class="row"><span class="ico">–</span><div class="name">${name}<small>${key}</small></div><span class="ms"></span></div>`
+  const e = r.error
+  const sample = Array.isArray(r.sample) && r.sample[0]?.title !== undefined
+    ? `<div class="sample">${r.sample.map(i => `<figure>${i.cover ? `<img data-src="/api/image?url=${encodeURIComponent(i.cover)}" alt="">` : '<div class="ph"></div>'}<figcaption title="${esc(i.title)}">${esc(i.title)}</figcaption></figure>`).join('')}</div>`
+    : r.sample?.first ? `<div class="note">contoh: <code>${esc(r.sample.first)}</code></div>` : ''
+  const body =
+    (e ? `<div class="err"><b>${esc(e.kind)}</b> ${e.message === e.kind ? '' : esc(e.message)}${e.where ? `<div class="where">lokasi: <code>${esc(e.where)}</code></div>` : ''}</div>${e.hint ? `<div class="hint"><b>Saran:</b> ${esc(e.hint)}</div>` : ''}` : '') +
+    (r.issues?.length ? `<ul class="issues">${r.issues.map(i => `<li class="${i.level}">${i.level === 'fail' ? '✕' : '!'} ${esc(i.text)}</li>`).join('')}</ul>` : '') +
+    (e || r.status === 'skip' ? '' : sample)
+  return `<div class="row ${r.status}"><span class="ico">${ICON[r.status]}</span><div><div class="name">${name}<small>${key}</small></div>${r.note ? `<div class="note">${esc(r.note)}</div>` : ''}${body}</div><span class="ms">${r.ms != null ? Math.round(r.ms) + ' ms' : ''}</span></div>`
+}
+
+function renderDetail() {
+  const rows = results[sel]
+  if (!rows) return
+  const list = Object.values(rows)
+  const v = busy && list.some(r => r.status === 'run') ? 'run' : verdictOf(list)
+  const c = k => list.filter(r => r.status === k).length
+  $('#detail').innerHTML =
+    `<div class="verdict"><h3>${esc(sel)}</h3><span class="tag ${v}">${v === 'run' ? 'Berjalan…' : VERDICT[v]}</span><span class="note">${c('pass')} lolos · ${c('warn')} peringatan · ${c('fail')} gagal · ${c('skip')} dilewati</span></div>` +
+    STEPS.map(s => stepRow(s, rows[s[0]])).join('')
+  $('#copy').disabled = false
+  loadThumbs()
+}
+
+function render() { renderChips(); renderMatrix(); renderDetail() }
+
+async function loadThumbs() {
+  for (const img of document.querySelectorAll('#detail img[data-src]')) {
+    try {
+      const r = await fetch(baseUrl() + img.dataset.src, { headers: headers() })
+      const b = await r.blob()
+      if (r.ok && b.type.startsWith('image/')) img.src = URL.createObjectURL(b)
+    } catch {}
   }
-  const b = await r.blob()
-  if (!b.type.startsWith('image/')) throw bad({ status: r.status, msg: 'respons bukan gambar (' + (b.type || 'tanpa tipe') + ')' })
-  return b
-}
-async function loadImg(img) {
-  try {
-    const b = await imgFetch(img.dataset.src)
-    const u = URL.createObjectURL(b)
-    blobs.push(u)
-    img.src = u
-    img.classList.add('ok')
-  } catch (e) {
-    img.classList.add('bad')
-    img.title = 'gagal: ' + e.message
-  }
-}
-function stat() {
-  const el = $('#imgstat'); if (!el) return
-  const all = document.querySelectorAll('.thumbs img')
-  const ok = document.querySelectorAll('.thumbs img.ok').length, bad = document.querySelectorAll('.thumbs img.bad').length
-  el.innerHTML = `<span class="ok">${ok} ok</span> · <span class="bad">${bad} gagal</span> · ${all.length - ok - bad} menunggu`
-}
-function resetImages() { queue.length = 0; blobs.forEach(URL.revokeObjectURL); blobs = [] }
-function watchImages() {
-  document.querySelectorAll('#res img[data-src]').forEach(i => queue.push(i))
-  pump()
 }
 
-const imgTag = u => u ? `<img data-src="/api/image?url=${encodeURIComponent(u)}" alt="">` : '<i></i>'
-
-function item(it) {
-  const meta = [it.source, it.type, it.status, it.rating != null && '★' + it.rating, it.slug].filter(Boolean).join(' · ')
-  const act = it.slug ? ` data-act="open" data-slug="${esc(it.slug)}"${it.source ? ` data-src="${esc(it.source)}"` : ''}` : ''
-  return `<div class="item"${act}>${imgTag(it.cover)}<div><b>${esc(it.title || it.slug)}</b><small>${esc(meta)}</small></div></div>`
-}
-function preview(j) {
-  const d = j?.data
-  if (!j?.ok || !d) return null
-  if (Array.isArray(d.items)) {
-    if (!d.items.length) return '<p class="muted">Kosong (0 item)</p>'
-    if (typeof d.items[0] === 'string') return `<div class="chs">${d.items.map(g => `<button class="alt" data-act="genre" data-g="${esc(g)}">${esc(g)}</button>`).join('')}</div>`
-    const info = [d.page != null && `hal ${d.page}${d.pages ? '/' + d.pages : ''}`, d.total != null && `total ${d.total}`, d.failed?.length && `gagal: ${d.failed.join(', ')}`].filter(Boolean).join(' · ')
-    return `<small>${d.items.length} item${info ? ' · ' + esc(info) : ''}</small>` + d.items.map(item).join('')
-  }
-  if (d.chapters && d.title) {
-    const meta = [d.type, d.status, d.author, d.rating != null && '★' + d.rating, (d.totalChapters ?? d.chapters.length) + ' chapter'].filter(Boolean).join(' · ')
-    const cl = d.chapters.slice(0, 80).map(c => `<button class="alt" data-act="chap" data-slug="${esc(d.slug)}" data-ch="${esc(c.slug)}">ch ${esc(c.number)}</button>`).join('')
-    return `<div class="head">${imgTag(d.cover)}<div><h3>${esc(d.title)}</h3><small>${esc(meta)}</small><br><small>${esc((d.genres || []).join(', '))}</small></div></div>` +
-      `<p>${esc((d.synopsis || '').slice(0, 400))}</p><small>Klik chapter untuk buka${d.chapters.length > 80 ? ` (80 dari ${d.chapters.length})` : ''}</small><div class="chs">${cl}</div>`
-  }
-  if (d.images && d.proxy) {
-    const nav = (s, label) => s ? `<button class="alt" data-act="chap" data-slug="${esc(d.comic)}" data-ch="${esc(s)}">${label}</button>` : ''
-    return `<small>${esc(d.comic)} · chapter ${esc(d.chapter)} · ${d.images.length} gambar · <span id="imgstat"></span></small><div class="chs">${nav(d.prev, '◀ prev')}${nav(d.next, 'next ▶')}</div>` +
-      `<div class="thumbs">${d.proxy.map(p => `<img data-src="${esc(p)}" alt="">`).join('')}</div>`
-  }
-  return null
-}
-
-function renderResult() {
-  if (!last) return
-  const r = last, ok = r.status >= 200 && r.status < 300
-  const p = preview(r.json)
-  const showJson = view === 'json' || p == null
-  const MAX = 150000
-  let pretty = r.text.length > MAX ? r.text.slice(0, MAX) + '\n… (dipotong)' : r.text
-  try { if (r.text.length <= MAX) pretty = JSON.stringify(JSON.parse(r.text), null, 2) } catch {}
-  const errMsg = r.err || (!ok && r.json?.error ? `${r.json.error.code}: ${r.json.error.message}` : '')
-  resetImages()
-  $('#res').hidden = false
-  $('#res').innerHTML =
-    `<h2>Hasil</h2><div class="bar"><span class="st${ok ? '' : ' bad'}">${r.status || 'ERR'}</span><b>${r.ms.toFixed(0)} ms</b><span>${(r.size / 1024).toFixed(1)} KB</span>` +
-    (r.cache ? `<span>${esc(r.cache)}</span>` : '') + `<button class="mini alt" data-act="copy">copy URL</button><span class="url">${esc(r.url)}</span></div>` +
-    (errMsg ? `<p class="bad"><b>${esc(errMsg)}</b></p>` : '') +
-    (p == null ? '' : `<div class="tabs"><button class="${showJson ? 'alt' : ''}" data-act="tab" data-v="preview">Preview</button><button class="${showJson ? '' : 'alt'}" data-act="tab" data-v="json">JSON</button></div>`) +
-    (showJson ? `<pre>${esc(pretty)}</pre>` : p)
-  watchImages()
-}
-
-$('#res').onclick = e => {
-  const t = e.target.closest('[data-act]')
-  if (!t) return
-  const a = t.dataset.act
-  if (a === 'copy') { navigator.clipboard?.writeText(last.url); t.textContent = 'tersalin' }
-  else if (a === 'tab') { view = t.dataset.v; renderResult() }
-  else if (a === 'open') { if (t.dataset.src) setSrc(t.dataset.src); setVals({ slug: t.dataset.slug }); setEp('comic'); run() }
-  else if (a === 'chap') { setVals({ slug: t.dataset.slug, chapter: t.dataset.ch }); setEp('chapter'); run() }
-  else if (a === 'genre') { setVals({ genre: t.dataset.g.toLowerCase() }); setEp('browse'); run() }
-}
-
-async function run() {
-  const e = EP[ep]
-  const miss = e.f.find(k => F[k].req && !String(vals[k] ?? '').trim())
-  if (e.scoped && !src) return fail('Belum ada sumber — cek Server URL / API key')
-  if (miss) return fail(`Parameter "${miss}" wajib diisi`)
-  const btn = $('#run'); btn.disabled = true
-  try {
-    const { path, q } = build(ep)
-    view = 'preview'
-    last = await call(path, q)
-    renderResult()
-  } catch (err) { fail(err.message) }
-  btn.disabled = false
-}
-function fail(msg) {
-  last = null; resetImages(); $('#res').hidden = false
-  $('#res').innerHTML = `<h2>Hasil</h2><p class="bad"><b>${esc(msg)}</b></p>`
-}
-$('#run').onclick = run
-
-class Skip extends Error {}
-
-async function runGroup(steps, onUpdate, group) {
-  const rows = []
+async function diagSource(id) {
+  const rows = (results[id] = {})
   const ctx = {}
-  for (const [name, fn] of steps) {
-    const t = performance.now()
-    let row
-    try { row = { name, res: 'PASS', note: await fn(ctx) } }
-    catch (e) {
-      row = { name, res: e instanceof Skip ? 'SKIP' : 'FAIL', note: e.message }
-      if (!(e instanceof Skip) && !e.logged) logErr({ kind: 'tes', msg: e.message, step: group + ' › ' + name, ms: performance.now() - t })
-    }
-    row.ms = performance.now() - t
-    rows.push(row)
-    onUpdate(rows)
+  sel = id
+  store.set('src', id)
+  for (const [step] of STEPS) {
+    const miss = (NEEDS[step] || []).find(k => !ctx[k])
+    if (miss) { rows[step] = { status: 'skip', note: `dilewati: belum ada "${miss}" dari langkah sebelumnya` }; continue }
+    rows[step] = { status: 'run', note: 'menguji…' }
+    render()
+    const r = await api(`/api/${encodeURIComponent(id)}/diagnose/${step}`, { q: $('#q').value.trim() || 'solo', slug: ctx.slug, chapter: ctx.chapter, url: ctx.image })
+    const d = r.json?.ok ? r.json.data : null
+    rows[step] = d || { status: 'fail', ms: r.ms, error: httpFail(r), issues: [] }
+    for (const k of ['slug', 'chapter', 'image']) if (d?.next?.[k] && !ctx[k]) ctx[k] = d.next[k]
   }
-  return rows
+  render()
 }
 
-const mkErr = (r, msg) => Object.assign(new Error(msg), { logged: !!r.logged })
-function need(r, cond, msg) {
-  if (r.err) throw mkErr(r, r.err)
-  if (r.status === 501) throw new Skip('tidak didukung sumber ini')
-  if (r.status !== 200 || !r.json?.ok) throw mkErr(r, `HTTP ${r.status} ${r.json?.error?.message || ''}`.trim())
-  if (!cond) throw mkErr(r, msg)
-}
-const info = r => `${r.ms.toFixed(0)}ms${r.cache ? ' · ' + r.cache : ''}`
-
-function serverSteps(q, firstId) {
-  return [
-    ['GET /health', async () => {
-      const r = await call('/health')
-      need(r, r.json?.data?.status === 'ok', 'status bukan ok')
-      return `uptime ${r.json.data.uptime}s`
-    }],
-    ['GET /api/sources', async () => {
-      const r = await call('/api/sources')
-      need(r, r.json?.data?.items?.length, 'tidak ada sumber')
-      return r.json.data.items.map(s => s.id).join(', ')
-    }],
-    ['GET /api/search (semua sumber)', async () => {
-      const r = await call('/api/search', { q, limit: 5 })
-      need(r, r.json?.data?.items?.length, 'kosong')
-      const failed = r.json.data.failed || []
-      return `${r.json.data.items.length} item${failed.length ? ' · sumber gagal: ' + failed.join(', ') : ''} · ${info(r)}`
-    }],
-    ['validasi: tanpa q → 400', async () => {
-      const r = await call(`/api/${encodeURIComponent(firstId)}/search`, {}, { ignore: [400] })
-      if (r.err) throw mkErr(r, r.err)
-      if (r.status !== 400) throw mkErr(r, `harusnya 400, dapat ${r.status}`)
-      return r.json?.error?.code || '400'
-    }],
-    ['validasi: sumber ngawur → 404', async () => {
-      const r = await call('/api/tidak-ada/search', { q: 'x' }, { ignore: [404] })
-      if (r.err) throw mkErr(r, r.err)
-      if (r.status !== 404) throw mkErr(r, `harusnya 404, dapat ${r.status}`)
-      return r.json?.error?.code || '404'
-    }]
-  ]
+async function runDiag(ids) {
+  if (busy) return
+  busy = true
+  $('#diag').disabled = $('#all').disabled = true
+  try { for (const id of ids) await diagSource(id) } finally { busy = false; $('#diag').disabled = $('#all').disabled = false; render() }
 }
 
-function sourceSteps(id, q, lang = '') {
-  const P = `/api/${encodeURIComponent(id)}`
-  const L = lang ? { lang } : {}
-  const list = (path, params, keep) => async c => {
-    const r = await call(P + path, { ...params, ...L }, { ignore: [501] })
-    const items = Array.isArray(r.json?.data?.items) ? r.json.data.items : null
-    need(r, items?.length, 'kosong')
-    if (keep) c.first = items[0]
-    return `${items.length} item · ${info(r)}`
+function report() {
+  return Object.entries(results).map(([id, rows]) => {
+    const lines = STEPS.map(([k]) => {
+      const r = rows[k]
+      if (!r) return ''
+      const e = r.error
+      return `${ICON[r.status]} ${k} ${r.ms != null ? Math.round(r.ms) + 'ms' : ''} ${r.note || ''}` +
+        (e ? `\n    ${e.kind}: ${e.message}${e.where ? ' @ ' + e.where : ''}${e.hint ? '\n    saran: ' + e.hint : ''}` : '') +
+        (r.issues || []).map(i => `\n    ${i.level === 'fail' ? 'x' : '!'} ${i.text}`).join('')
+    })
+    return `[${id}] ${VERDICT[verdictOf(Object.values(rows))]}\n` + lines.filter(Boolean).join('\n')
+  }).join('\n\n')
+}
+
+$('#chips').onclick = $('#matrix').onclick = e => {
+  const t = e.target.closest('[data-src]')
+  if (!t) return
+  sel = t.dataset.src
+  store.set('src', sel)
+  if (results[sel]) render()
+  else { renderChips(); $('#detail').innerHTML = '<div class="empty">Klik <b>Diagnosa scraper ini</b> untuk mulai.</div>' }
+}
+$('#diag').onclick = () => (sel ? runDiag([sel]) : undefined)
+$('#all').onclick = () => runDiag(sources.map(s => s.id))
+$('#copy').onclick = () => { navigator.clipboard?.writeText(report()); $('#copy').textContent = 'Tersalin'; setTimeout(() => ($('#copy').textContent = 'Salin laporan'), 1500) }
+$('#cfgbtn').onclick = () => $('#cfg').classList.toggle('hide')
+for (const id of ['base', 'key', 'q']) $('#' + id).oninput = () => store.set(id, $('#' + id).value)
+
+const EP = {
+  search: ['/api/{src}/search', ['q', 'limit']],
+  latest: ['/api/{src}/latest', ['page']],
+  popular: ['/api/{src}/popular', ['limit']],
+  browse: ['/api/{src}/browse', ['q', 'genre', 'page']],
+  genres: ['/api/{src}/genres', []],
+  comic: ['/api/{src}/comic/{slug}', ['slug']],
+  chapter: ['/api/{src}/chapter/{slug}/{chapter}', ['slug', 'chapter']],
+  'search-all': ['/api/search', ['q', 'limit']],
+  sources: ['/api/sources', []],
+  health: ['/health', []]
+}
+const DEF = { q: 'solo', limit: '10', page: '1' }
+let ep = store.get('ep', 'search'), vals = store.get('vals', {})
+if (!EP[ep]) ep = 'search'
+
+function renderForm() {
+  $('#ep').innerHTML = Object.keys(EP).map(k => `<option${k === ep ? ' selected' : ''}>${k}</option>`).join('')
+  $('#form').innerHTML = EP[ep][1].map(k => `<label>${k}<input data-k="${k}" value="${esc(vals[k] ?? DEF[k] ?? '')}" autocomplete="off" autocapitalize="off"></label>`).join('') || '<div class="note">Tanpa parameter.</div>'
+}
+$('#ep').onchange = e => { ep = e.target.value; store.set('ep', ep); renderForm() }
+$('#form').oninput = e => { const k = e.target.dataset.k; if (k) { vals[k] = e.target.value; store.set('vals', vals) } }
+
+$('#run').onclick = async () => {
+  let path = EP[ep][0].replace('{src}', encodeURIComponent(sel))
+  const q = {}
+  for (const k of EP[ep][1]) {
+    const v = String(vals[k] ?? DEF[k] ?? '').trim()
+    if (path.includes(`{${k}}`)) path = path.replace(`{${k}}`, encodeURIComponent(v))
+    else q[k] = v
   }
-  const dep = (c, k, why) => { if (!c[k]) throw new Skip(why) }
-  return [
-    ['search', list('/search', { q, limit: 10 }, true)],
-    ['latest', list('/latest', { page: 1 })],
-    ['popular', list('/popular', { limit: 10 })],
-    ['browse', list('/browse', { page: 1 })],
-    ['genres', list('/genres', {})],
-    ['detail', async c => {
-      dep(c, 'first', 'search gagal')
-      const r = await call(`${P}/comic/${encodeURIComponent(c.first.slug)}`, L, { ignore: [501] })
-      const d = r.json?.data
-      need(r, d?.title && d.chapters?.length, 'title/chapter kosong')
-      c.ch = d.chapters[d.chapters.length - 1].slug
-      return `${d.title} · ${d.chapters.length} chapter · cover ${d.cover ? 'ada' : 'KOSONG'} · ${info(r)}`
-    }],
-    ['chapter', async c => {
-      dep(c, 'ch', 'detail gagal')
-      const r = await call(`${P}/chapter/${encodeURIComponent(c.first.slug)}/${encodeURIComponent(c.ch)}`, L, { ignore: [501] })
-      const d = r.json?.data
-      need(r, d?.images?.length && d.proxy?.length, 'gambar kosong')
-      c.img = d.proxy[0]
-      return `ch ${c.ch}: ${d.images.length} gambar · ${info(r)}`
-    }],
-    ['gambar (proxy)', async c => {
-      dep(c, 'img', 'chapter gagal')
-      const t = performance.now()
-      const b = await imgFetch(c.img)
-      return `${b.type} · ${(b.size / 1024).toFixed(0)} KB · ${(performance.now() - t).toFixed(0)}ms`
-    }]
-  ]
+  $('#run').disabled = true
+  const r = await api(path, q)
+  $('#run').disabled = false
+  let out = r.text || ''
+  try { out = JSON.stringify(JSON.parse(out), null, 2) } catch {}
+  if (out.length > 150000) out = out.slice(0, 150000) + '\n… (dipotong)'
+  const ok = r.status >= 200 && r.status < 300
+  $('#res').innerHTML = `<div class="bar"><span class="st${ok ? '' : ' bad'}">${r.status || 'ERR'}</span><b>${Math.round(r.ms)} ms</b>${r.cache ? `<span>${esc(r.cache)}</span>` : ''}<code>${esc(r.url || '')}</code></div>` +
+    (r.err ? `<div class="err"><b>${esc(r.err)}</b></div>` : `<pre>${esc(out)}</pre>`)
 }
 
-const label = { PASS: 'ok', FAIL: 'bad', SKIP: 'skip' }
-const groupHTML = (title, rows) =>
-  `<table><tr><th colspan="4">${esc(title)}</th></tr>` +
-  rows.map(r => `<tr><td class="r ${label[r.res]}">${r.res}</td><td>${esc(r.name)}</td><td class="ms">${r.ms.toFixed(0)} ms</td><td class="${r.res === 'FAIL' ? 'bad' : ''}">${esc(r.note)}</td></tr>`).join('') +
-  '</table>'
-
-const COLS = ['search', 'latest', 'popular', 'browse', 'genres', 'detail', 'chapter', 'gambar (proxy)']
-const MARK = { PASS: '✓', FAIL: '✗', SKIP: '–' }
-const cell = r => (r ? `<td class="${label[r.res]}" title="${esc(r.note)}"><b>${MARK[r.res]}</b></td>` : '<td class="muted">·</td>')
-const matrix = gs =>
-  '<table class="mx"><tr><th>Sumber</th>' + COLS.map(c => `<th>${esc(c.replace(' (proxy)', ''))}</th>`).join('') + '</tr>' +
-  gs.filter(g => g.src).map(g => `<tr><td><b>${esc(g.title.replace('Sumber: ', ''))}</b></td>${COLS.map(c => cell(g.rows.find(r => r.name === c))).join('')}</tr>`).join('') +
-  '</table>'
-const failures = gs => {
-  const f = gs.flatMap(g => g.rows.filter(r => r.res === 'FAIL').map(r => ({ g: g.title, ...r })))
-  return f.length ? `<div class="sum bad fl"><b>Yang error (${f.length})</b>${f.map(x => `<div>✗ ${esc(x.g)} › ${esc(x.name)} — ${esc(x.note)}</div>`).join('')}</div>` : ''
-}
-
-async function runAll() {
-  if (!baseUrl()) return fail('Isi Server URL dulu')
-  if (!sources.length) await loadSources()
-  if (!sources.length) return
-  const q = testQ()
-  const pick = $('#lang').value
-  const targets = sources.flatMap(s => {
-    const langs = s.filters?.languages || []
-    if (pick === '*' && langs.length) return langs.map(l => ({ id: s.id, lang: l }))
-    return [{ id: s.id, lang: langs.includes(pick) ? pick : '' }]
-  })
-  const groups = [{ title: 'Server', rows: [] }, ...targets.map(t => ({ title: 'Sumber: ' + t.id + (t.lang ? ' [' + t.lang + ']' : ''), rows: [], src: true }))]
-  const draw = (done = false) => {
-    const all = groups.flatMap(g => g.rows)
-    const n = x => all.filter(r => r.res === x).length
-    const sum = done
-      ? `<div class="sum ${n('FAIL') ? 'bad' : 'ok'}">${n('FAIL') ? 'ADA YANG GAGAL' : 'SEMUA LOLOS'} — ${n('PASS')} pass · ${n('FAIL')} fail · ${n('SKIP')} skip</div>`
-      : `<div class="sum">Menjalankan… ${all.length} langkah selesai</div>`
-    $('#tests').innerHTML = `<p><small>q = "${esc(q)}"</small></p>` + sum + matrix(groups) + failures(groups) + groups.map(g => groupHTML(g.title, g.rows)).join('')
+async function init() {
+  renderForm()
+  const [h, s] = await Promise.all([api('/health'), api('/api/sources')])
+  const up = h.json?.ok
+  $('#dot').className = 'pill ' + (up ? 'ok' : 'bad')
+  $('#health').textContent = up ? `online · ${h.json.data.uptime}s` : h.status ? `error ${h.status}` : 'offline'
+  if (!up) $('#cfg').classList.remove('hide')
+  if (s.status === 401) {
+    $('#cfg').classList.remove('hide')
+    $('#notice').innerHTML = '<div class="notice"><b>API key salah atau belum diisi</b>Isi di Pengaturan lalu muat ulang halaman.</div>'
   }
-  const btn = $('#all')
-  btn.disabled = true
-  draw()
-  const jobs = [
-    runGroup(serverSteps(q, sources[0].id), rows => { groups[0].rows = rows; draw() }, 'server'),
-    ...targets.map((t, i) => runGroup(sourceSteps(t.id, q, t.lang), rows => { groups[i + 1].rows = rows; draw() }, t.id + (t.lang ? '[' + t.lang + ']' : '')))
-  ]
-  await Promise.all(jobs.map(j => j.catch(e => { groups[0].rows.push({ name: 'error', res: 'FAIL', note: e.message, ms: 0 }) })))
-  draw(true)
-  btn.disabled = false
+  sources = s.json?.data?.items || []
+  const broken = s.json?.data?.broken || []
+  if (broken.length) {
+    $('#notice').innerHTML = `<div class="notice"><b>${broken.length} file scraper gagal dimuat</b>${broken.map(b => `<div><code>${esc(b.file)}</code> ${esc(b.error)}${b.where ? ` <code>${esc(b.where)}</code>` : ''}</div>`).join('')}</div>`
+  }
+  if (!sources.some(x => x.id === sel)) sel = sources[0]?.id || ''
+  render()
 }
-$('#all').onclick = runAll
-
-async function loadSources() {
-  store.set('base', $('#base').value.trim()); store.set('key', $('#key').value.trim())
-  const base = baseUrl()
-  $('#dot').className = ''
-  if (!base) { sources = []; renderSelects(); return fail('Isi Server URL (mis. https://server-kamu.com)') }
-  const h = await call('/health').catch(() => null)
-  $('#dot').className = h && h.status === 200 ? 'ok' : 'bad'
-  $('#dot').title = h && h.status === 200 ? `online · uptime ${h.json.data.uptime}s` : 'server tidak terjangkau'
-  const r = await call('/api/sources').catch(() => null)
-  sources = r?.json?.data?.items || []
-  if (!sources.some(s => s.id === src)) src = sources[0]?.id || ''
-  const langs = [...new Set(sources.flatMap(s => s.filters?.languages || []))]
-  const keep = $('#lang').value || store.get('lang', '')
-  $('#lang').innerHTML = '<option value="">(default server)</option>' + langs.map(l => `<option value="${esc(l)}">${esc(l)}</option>`).join('') + (langs.length ? '<option value="*">* tes semua bahasa</option>' : '')
-  $('#lang').value = langs.includes(keep) || keep === '*' ? keep : ''
-  renderSelects(); renderForm()
-  if (r && r.status === 401) fail('API key salah / belum diisi')
-  else if (!sources.length) fail('Tidak bisa memuat sumber' + (r?.err ? ': ' + r.err : ''))
-  else if (!last) $('#res').hidden = true
-}
-let tm
-for (const id of ['#base', '#key']) $(id).oninput = () => { clearTimeout(tm); tm = setTimeout(loadSources, 500) }
-document.onkeydown = e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) run() }
-renderSelects(); renderForm(); renderLog(); loadSources()
+init()
 </script>
 </body>
 </html>

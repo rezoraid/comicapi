@@ -1,6 +1,7 @@
 import { badRequest, notFound, HttpError } from './lib/errors.js'
 import { imageProxy } from './image-proxy.js'
 import { playground } from './playground.js'
+import { diagnose } from './diagnose.js'
 import { legalHandler, privacyPage, termsPage } from './legal.js'
 import { overlayList, overlayDetail, overlayChapter, browseWant } from './community/catalog.js'
 import { normalizeBrowse, normalizeDetail, normalizeList } from './normalize.js'
@@ -62,7 +63,7 @@ export function registerRoutes(router, { registry, config, community = null, cat
   router.get('/health', () => ({ status: 'ok', uptime: Math.round(process.uptime()), sources: registry.list().length, community: !!cm() }), {
     public: true
   })
-  router.get('/api/sources', () => ({ items: registry.list() }), { ttl: 3600 })
+  router.get('/api/sources', () => ({ items: registry.list(), broken: registry.failed?.() ?? [] }), { ttl: 3600 })
   router.get(
     '/api/search',
     async ({ query }) => {
@@ -123,6 +124,13 @@ export function registerRoutes(router, { registry, config, community = null, cat
     { ttl: 120, overlay: completed('list', (c, d, { params, query }) => overlayList(c, d, params.source, browseWant(query))) }
   )
   router.get('/api/:source/genres', async ({ params }) => ({ items: await call(source(params), 'genres') }), { ttl: 3600 })
+  if (config.playground) {
+    router.get('/api/:source/diagnose/:step', ({ params, query }) => {
+      const opt = (name, re) => (query.get(name) ? slugParam(query.get(name), name, re) : '')
+      return diagnose(source(params), params.step, { q: str(query, 'q'), slug: opt('slug'), chapter: opt('chapter', CHAPTER), url: str(query, 'url', 2000) })
+    })
+  }
+
   router.get(
     '/api/:source/comic/:slug',
     async ({ params }) => {

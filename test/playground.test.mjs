@@ -23,162 +23,142 @@ after(() => {
   app.close()
 })
 
+const serve = async (t, reg, env = {}) => {
+  const a = createApp({ registry: reg, config: loadConfig({ LOG_REQUESTS: 'false', ...env }), logger: quiet })
+  const s = await listen(a.handler)
+  t.after(() => {
+    s.server.close()
+    a.close()
+  })
+  return s
+}
+
+const diag = async (path, base = api.url) => (await (await fetch(`${base}/api/mock/diagnose/${path}`)).json()).data
+
 test('GET /playground: HTML, gzip, ETag/304, CSP', async () => {
   const r = await fetch(`${api.url}/playground`)
   assert.equal(r.status, 200)
   assert.match(r.headers.get('content-type'), /text\/html/)
   assert.equal(r.headers.get('content-encoding'), 'gzip')
   assert.match(r.headers.get('content-security-policy'), /frame-ancestors 'none'/)
-  assert.match(await r.text(), /comic-api \/ playground/)
+  assert.match(await r.text(), /comic-api/)
   const etag = r.headers.get('etag')
   assert.equal((await fetch(`${api.url}/playground`, { headers: { 'if-none-match': etag } })).status, 304)
 })
 
-test('PLAYGROUND=false mematikan halaman', async () => {
-  const a = createApp({ registry, config: loadConfig({ PLAYGROUND: 'false', LOG_REQUESTS: 'false' }), logger: quiet })
-  const s = await listen(a.handler)
+test('PLAYGROUND=false mematikan halaman dan endpoint diagnosa', async t => {
+  const s = await serve(t, registry, { PLAYGROUND: 'false' })
   assert.equal((await fetch(`${s.url}/playground`)).status, 404)
-  s.server.close()
-  a.close()
+  assert.equal((await fetch(`${s.url}/api/mock/diagnose/search`)).status, 404)
 })
 
-test('playground: JS jalan end-to-end terhadap server (DOM di-stub)', async () => {
+test('diagnosa: rantai langkah lolos dan membawa slug/chapter/gambar ke langkah berikutnya', async () => {
+  const search = await diag('search?q=solo')
+  assert.equal(search.status, 'warn')
+  assert.match(search.issues[0].text, /cover/)
+  assert.equal(search.next.slug, 'komik-0')
+  const detail = await diag('detail?slug=komik-0')
+  assert.equal(detail.next.chapter, '1')
+  const chapter = await diag('chapter?slug=komik-0&chapter=1')
+  assert.equal(chapter.status, 'pass')
+  assert.equal(chapter.next.image, `http://127.0.0.1:${img.port}/img/1.png`)
+  const image = await diag(`image?url=${encodeURIComponent(chapter.next.image)}`)
+  assert.equal(image.status, 'pass')
+  assert.match(image.note, /image\/png/)
+})
+
+test('diagnosa: gambar dari host yang tidak terdaftar ditolak tanpa diunduh', async () => {
+  const r = await diag(`image?url=${encodeURIComponent('https://evil.example/x.png')}`)
+  assert.equal(r.status, 'fail')
+  assert.match(r.issues[0].text, /imageHosts/)
+})
+
+test('diagnosa: error scraper dijelaskan jenis, pesan, dan sarannya', async t => {
+  const broken = makeRegistry(img.port)
+  broken.provider.latest = async () => { throw Object.assign(new Error('HTTP 403'), { status: 403 }) }
+  broken.provider.browse = async () => ({ items: [], pages: 1 })
+  broken.provider.genres = async () => 'bukan array'
+  broken.provider.popular = undefined
+  const s = await serve(t, broken)
+  const latest = await diag('latest', s.url)
+  assert.equal(latest.status, 'fail')
+  assert.equal(latest.error.kind, 'HTTP 403')
+  assert.match(latest.error.hint, /relay/)
+  assert.equal((await diag('browse', s.url)).status, 'fail')
+  assert.equal((await diag('genres', s.url)).status, 'fail')
+  const popular = await diag('popular', s.url)
+  assert.equal(popular.status, 'skip')
+  assert.match(popular.note, /popular\(\)/)
+})
+
+test('diagnosa: langkah tidak dikenal 400, parameter wajib dilaporkan sebagai gagal', async () => {
+  assert.equal((await fetch(`${api.url}/api/mock/diagnose/ngawur`)).status, 400)
+  assert.equal((await fetch(`${api.url}/api/ngawur/diagnose/search`)).status, 404)
+  const r = await diag('detail')
+  assert.equal(r.status, 'fail')
+  assert.match(r.error.message, /slug/)
+})
+
+const boot = origin => {
   const html = readFileSync(new URL('../src/public/playground.html', import.meta.url), 'utf8')
-  const js = html.match(/<script>([\s\S]*)<\/script>/)[1]
   const els = new Map()
   const el = sel => {
-    if (!els.has(sel)) els.set(sel, { value: '', innerHTML: '', textContent: '', hidden: false, className: '', title: '', disabled: false, dataset: {}, classList: { toggle() {}, add() {} } })
+    if (!els.has(sel)) els.set(sel, { value: '', innerHTML: '', textContent: '', disabled: false, dataset: {}, classList: { toggle() {}, add() {}, remove() {} } })
     return els.get(sel)
   }
   const mem = new Map()
   const ctx = vm.createContext({
     document: { querySelector: el, querySelectorAll: () => [] },
     localStorage: { getItem: k => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, v) },
-    location: { origin: api.url },
-    IntersectionObserver: class { observe() {} unobserve() {} disconnect() {} },
+    location: { origin },
     fetch, URL, URLSearchParams, performance, setTimeout, clearTimeout, console, JSON, Promise, Object, String, Number, Math, Error, Array
   })
-  vm.runInContext(js, ctx)
-  for (let i = 0; i < 40 && !el('#src').innerHTML.includes('mock'); i++) await new Promise(r => setTimeout(r, 25))
+  vm.runInContext(html.match(/<script>([\s\S]*)<\/script>/)[1], ctx)
+  return el
+}
+
+const ready = async (el, text = 'mock') => {
+  for (let i = 0; i < 40 && !el('#chips').innerHTML.includes(text); i++) await new Promise(r => setTimeout(r, 25))
+}
+
+test('playground: UI mendeteksi scraper, menjalankan diagnosa, dan menampilkan hasil per langkah', async () => {
+  const el = boot(api.url)
+  await ready(el)
   assert.match(el('#dot').className, /ok/)
-  assert.match(el('#src').innerHTML, /mock/)
-  assert.match(el('#form').innerHTML, /data-k="q"/)
-  await el('#run').onclick()
-  assert.match(el('#res').innerHTML, /Komik 0/)
-  assert.match(el('#res').innerHTML, /class="st">200/)
-  await el('#all').onclick()
-  const out = el('#tests').innerHTML
-  const steps = ['GET /health', 'GET /api/sources', 'GET /api/search (semua sumber)', 'validasi: tanpa q', 'validasi: sumber ngawur',
-    'search', 'latest', 'popular', 'browse', 'genres', 'detail', 'chapter', 'gambar (proxy)']
-  for (const step of steps) assert.ok(out.includes(`<td>${step}`), `langkah ${step} tidak ada`)
-  assert.ok(!out.includes('FAIL</td>'), 'ada langkah gagal:\n' + out.replace(/<[^>]+>/g, ' '))
-  assert.ok(!out.includes('SKIP</td>'), 'ada langkah dilewati')
-  assert.equal((out.match(/PASS<\/td>/g) || []).length, steps.length)
-  assert.match(out, /SEMUA LOLOS/)
-  await new Promise(r => setTimeout(r, 150))
-  assert.match(el('#loglist').innerHTML, /Belum ada error/)
-  assert.equal(el('#logbadge').textContent, 'log 0')
+  assert.match(el('#chips').innerHTML, /mock/)
+  await el('#diag').onclick()
+  const out = el('#detail').innerHTML
+  for (const step of ['search', 'latest', 'popular', 'browse', 'genres', 'detail', 'chapter', 'image']) assert.ok(out.includes(`<small>${step}</small>`), `langkah ${step} tidak tampil`)
+  assert.doesNotMatch(out, /class="row fail"/)
+  assert.match(out, /Jalan, ada peringatan|Siap dipakai/)
+  assert.equal(el('#copy').disabled, false)
 })
 
-test('playground: tes otomatis menandai FAIL kalau endpoint rusak', async () => {
-  const broken = { ...registry, get: id => ({ ...registry.get(id), genres: async () => [] }) }
-  const a = createApp({ registry: broken, config: loadConfig({ LOG_REQUESTS: 'false' }), logger: quiet })
-  const s = await listen(a.handler)
-  const html = readFileSync(new URL('../src/public/playground.html', import.meta.url), 'utf8')
-  const els = new Map()
-  const el = sel => (els.has(sel) || els.set(sel, { value: '', innerHTML: '', textContent: '', hidden: false, className: '', title: '', disabled: false, dataset: {} }), els.get(sel))
-  const ctx = vm.createContext({
-    document: { querySelector: el, querySelectorAll: () => [] },
-    localStorage: { getItem: () => null, setItem() {} },
-    location: { origin: s.url },
-    fetch, URL, URLSearchParams, performance, setTimeout, clearTimeout, console, JSON, Promise, Object, String, Number, Math, Error, Array
-  })
-  vm.runInContext(html.match(/<script>([\s\S]*)<\/script>/)[1], ctx)
-  for (let i = 0; i < 40 && !el('#src').innerHTML.includes('mock'); i++) await new Promise(r => setTimeout(r, 25))
-  await el('#all').onclick()
-  const out = el('#tests').innerHTML
-  assert.match(out, /ADA YANG GAGAL/)
-  assert.equal((out.match(/FAIL<\/td>/g) || []).length, 1)
-  assert.match(out, /class="mx"/)
-  assert.match(out, /Yang error \(1\)/)
-  assert.match(out, /✗ Sumber: mock › genres/)
-  await new Promise(r => setTimeout(r, 150))
-  const log = el('#loglist').innerHTML
-  assert.match(log, /class="lk">TES</)
-  assert.match(log, /mock › genres/)
-  assert.equal(el('#logbadge').textContent, 'log 1')
-  s.server.close()
-  a.close()
+test('playground: UI menampilkan lokasi dan saran saat scraper error', async t => {
+  const broken = makeRegistry(img.port)
+  broken.provider.detail = async () => { throw Object.assign(new Error('HTTP 403'), { status: 403 }) }
+  const s = await serve(t, broken)
+  const el = boot(s.url)
+  await ready(el)
+  await el('#diag').onclick()
+  const out = el('#detail').innerHTML
+  assert.match(out, /class="row fail"/)
+  assert.match(out, /HTTP 403/)
+  assert.match(out, /Saran:/)
+  assert.match(out, /dilewati: belum ada &quot;chapter&quot;/)
+  assert.match(out, /Ada yang gagal/)
 })
 
-test('playground: API key salah → pesan jelas', async () => {
-  const a = createApp({ registry, config: loadConfig({ API_KEY: 'rahasia', LOG_REQUESTS: 'false' }), logger: quiet })
-  const s = await listen(a.handler)
-  const html = readFileSync(new URL('../src/public/playground.html', import.meta.url), 'utf8')
-  const els = new Map()
-  const el = sel => (els.has(sel) || els.set(sel, { value: '', innerHTML: '', textContent: '', hidden: false, className: '', dataset: {}, classList: { toggle() {} } }), els.get(sel))
-  const ctx = vm.createContext({
-    document: { querySelector: el, querySelectorAll: () => [] },
-    localStorage: { getItem: () => null, setItem() {} },
-    location: { origin: s.url },
-    IntersectionObserver: class { observe() {} unobserve() {} disconnect() {} },
-    fetch, URL, URLSearchParams, performance, setTimeout, clearTimeout, console, JSON, Promise, Object, String, Number, Math, Error, Array
-  })
-  vm.runInContext(html.match(/<script>([\s\S]*)<\/script>/)[1], ctx)
-  for (let i = 0; i < 40 && !el('#res').innerHTML; i++) await new Promise(r => setTimeout(r, 25))
-  assert.match(el('#res').innerHTML, /API key/)
-  await new Promise(r => setTimeout(r, 150))
-  assert.match(el('#loglist').innerHTML, /HTTP 401/)
-  assert.match(el('#loglist').innerHTML, /UNAUTHORIZED/)
-  assert.match(el('#loglist').innerHTML, /API key/)
-  s.server.close()
-  a.close()
+test('playground: API key salah → pesan jelas', async t => {
+  const s = await serve(t, registry, { API_KEY: 'rahasia' })
+  const el = boot(s.url)
+  for (let i = 0; i < 40 && !el('#notice').innerHTML; i++) await new Promise(r => setTimeout(r, 25))
+  assert.match(el('#notice').innerHTML, /API key/)
 })
 
-test('playground: server tidak terjangkau → log JARINGAN + saran', async () => {
-  const html = readFileSync(new URL('../src/public/playground.html', import.meta.url), 'utf8')
-  const els = new Map()
-  const el = sel => (els.has(sel) || els.set(sel, { value: '', innerHTML: '', textContent: '', hidden: false, className: '', title: '', dataset: {}, classList: { toggle() {} } }), els.get(sel))
-  const ctx = vm.createContext({
-    document: { querySelector: el, querySelectorAll: () => [] },
-    localStorage: { getItem: () => null, setItem() {} },
-    location: { origin: 'http://127.0.0.1:1' },
-    fetch, URL, URLSearchParams, performance, setTimeout, clearTimeout, console, JSON, Promise, Object, String, Number, Math, Error, Array
-  })
-  vm.runInContext(html.match(/<script>([\s\S]*)<\/script>/)[1], ctx)
-  await new Promise(r => setTimeout(r, 400))
-  const log = el('#loglist').innerHTML
-  assert.match(log, /class="lk">JARINGAN</)
-  assert.match(log, /Server tidak terjangkau/)
-  assert.match(el('#logbar').innerHTML, /data-act="lclear"/)
-})
-
-test('playground: pilihan bahasa → tes tiap bahasa + matriks ringkasan', async () => {
-  const reg = { ...registry, list: () => [{ ...registry.list()[0], filters: { types: ['manhwa'], languages: ['eng', 'ind'] } }] }
-  const wrapped = { ...registry, list: reg.list, get: registry.get }
-  const a = createApp({ registry: wrapped, config: loadConfig({ LOG_REQUESTS: 'false' }), logger: quiet })
-  const s = await listen(a.handler)
-  const html = readFileSync(new URL('../src/public/playground.html', import.meta.url), 'utf8')
-  const els = new Map()
-  const el = sel => (els.has(sel) || els.set(sel, { value: '', innerHTML: '', textContent: '', hidden: false, className: '', title: '', disabled: false, dataset: {}, classList: { toggle() {} } }), els.get(sel))
-  const ctx = vm.createContext({
-    document: { querySelector: el, querySelectorAll: () => [] },
-    localStorage: { getItem: () => null, setItem() {} },
-    location: { origin: s.url },
-    IntersectionObserver: class { observe() {} unobserve() {} disconnect() {} },
-    fetch, URL, URLSearchParams, performance, setTimeout, clearTimeout, console, JSON, Promise, Object, String, Number, Math, Error, Array
-  })
-  vm.runInContext(html.match(/<script>([\s\S]*)<\/script>/)[1], ctx)
-  for (let i = 0; i < 40 && !el('#src').innerHTML.includes('mock'); i++) await new Promise(r => setTimeout(r, 25))
-  assert.match(el('#lang').innerHTML, /value="ind"/)
-  assert.match(el('#lang').innerHTML, /value="\*"/)
-  el('#lang').value = '*'
-  await el('#all').onclick()
-  const out = el('#tests').innerHTML
-  assert.match(out, /Sumber: mock \[eng\]/)
-  assert.match(out, /Sumber: mock \[ind\]/)
-  assert.match(out, /SEMUA LOLOS/)
-  assert.equal((out.match(/<tr><td><b>mock \[/g) || []).length, 2)
-  s.server.close()
-  a.close()
+test('playground: server tidak terjangkau → status offline', async () => {
+  const el = boot('http://127.0.0.1:1')
+  for (let i = 0; i < 40 && el('#health').textContent === ''; i++) await new Promise(r => setTimeout(r, 25))
+  assert.match(el('#dot').className, /bad/)
+  assert.equal(el('#health').textContent, 'offline')
 })
