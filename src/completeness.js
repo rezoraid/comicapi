@@ -14,11 +14,11 @@
  */
 import { normGenres } from './normalize.js'
 
-export const SOURCE_NAMES = { lumos: 'Lumos', manta: 'Manta', shinigami: 'Shinigami' }
+export const SOURCE_NAMES = { lumos: 'Lumos', manta: 'Manta', shinigami: 'Shinigami', cosmic: 'CosmicScans' }
 export const sourceName = id => SOURCE_NAMES[id] || (id ? String(id)[0].toUpperCase() + String(id).slice(1) : 'Komikta')
 
 // Jenis bawaan per sumber bila jenis tidak terbaca dari mana pun. Manta = komik vertikal (webtoon).
-const DEFAULT_TYPE = { manta: 'webtoon', shinigami: 'manhwa', lumos: 'manhwa' }
+const DEFAULT_TYPE = { manta: 'webtoon', shinigami: 'manhwa', lumos: 'manhwa', cosmic: 'manhwa' }
 const TYPE_WORD = { manga: 'manga', manhwa: 'manhwa', manhua: 'manhua', webtoon: 'webtoon', novel: 'novel' }
 const STATUS_PHRASE = { ongoing: 'masih berlangsung', completed: 'sudah tamat', hiatus: 'sedang hiatus', cancelled: 'dihentikan' }
 const MONTHS = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember']
