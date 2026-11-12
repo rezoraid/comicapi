@@ -85,7 +85,7 @@ export function createHttp({
       } catch (e) {
         lastError = e
         if (fatal.includes(e.status)) break
-        if (i < retries) await sleep(400 * (i + 1))
+        if (i < retries) await sleep(200 * (i + 1))
       }
     }
     throw lastError
@@ -150,7 +150,9 @@ export function createHttp({
 }
 
 export function createMirrorHttp({ bases, ...options }) {
-  const clients = bases.map(base => ({ base, http: createHttp({ ...options, base, referer: base + '/' }) }))
+  // Mirror sudah berfungsi sebagai retry, jadi per-mirror cukup 1 retry agar mirror mati tidak menahan request lama
+  const perMirror = bases.length > 1 ? { ...options, retries: Math.min(options.retries ?? 2, 1) } : options
+  const clients = bases.map(base => ({ base, http: createHttp({ ...perMirror, base, referer: base + '/' }) }))
   let active = 0
   async function get(path, opts) {
     if (/^https?:\/\//i.test(path)) return clients[active].http.get(path, opts)

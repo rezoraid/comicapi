@@ -86,12 +86,14 @@ export function createApp({ registry, config, logger = console, community = null
     warmRunning = true
     try {
       const only = config.warmSources?.length ? new Set(config.warmSources) : null
-      for (const s of registry.list()) {
-        if (only && !only.has(s.id)) continue
+      const sources = registry.list().filter(s => !only || only.has(s.id))
+      await Promise.allSettled(sources.map(async s => {
         const id = encodeURIComponent(s.id)
         try {
-          const latest = await warmPath(`/api/${id}/latest?page=1`)
-          const popular = s.features?.includes('popular') === false ? null : await warmPath(`/api/${id}/popular`)
+          const [latest, popular] = await Promise.all([
+            warmPath(`/api/${id}/latest?page=1`),
+            s.features?.includes('popular') === false ? null : warmPath(`/api/${id}/popular`)
+          ])
           const slugs = [...new Set([...(latest?.items || []), ...(popular?.items || [])].map(i => i?.slug).filter(x => typeof x === 'string' && x))].slice(0, config.warmDetails ?? 6)
           let chapters = 0
           for (const slug of slugs) {
@@ -106,7 +108,7 @@ export function createApp({ registry, config, logger = console, community = null
         } catch (err) {
           logger.error(`[warm] ${s.id} gagal → ${err?.message || err}`)
         }
-      }
+      }))
     } finally {
       warmRunning = false
     }

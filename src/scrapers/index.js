@@ -62,14 +62,37 @@ export function findByImageHost(hostname) {
   return null
 }
 
-export async function searchAll(query, { limit = 10, timeoutMs = 8000 } = {}) {
-  const all = [...providers.values()]
-  const settled = await Promise.allSettled(all.map(p => withTimeout(p.search(query, { limit }), timeoutMs)))
+export const searchAll = (query, opts) => searchProviders([...providers.values()], query, opts)
+
+export async function searchProviders(all, query, { limit = 10, timeoutMs = 8000, graceMs = 2500 } = {}) {
+  const results = new Array(all.length)
+  await new Promise(resolve => {
+    let pending = all.length
+    let timer = null
+    const finish = () => {
+      clearTimeout(timer)
+      resolve()
+    }
+    if (!pending) return finish()
+    all.forEach((p, i) => {
+      withTimeout((async () => p.search(query, { limit }))(), timeoutMs)
+        .then(
+          v => {
+            results[i] = v
+            if (!timer) timer = setTimeout(finish, graceMs)
+          },
+          () => {}
+        )
+        .finally(() => {
+          if (--pending === 0) finish()
+        })
+    })
+  })
   const lists = []
   const failed = []
-  settled.forEach((r, i) => {
-    if (r.status === 'fulfilled') lists.push(r.value.map(x => ({ ...x, source: all[i].id })))
-    else failed.push(all[i].id)
+  all.forEach((p, i) => {
+    if (results[i]) lists.push(results[i].map(x => ({ ...x, source: p.id })))
+    else failed.push(p.id)
   })
   const items = []
   for (let i = 0; ; i++) {
