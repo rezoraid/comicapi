@@ -15,7 +15,7 @@ Butuh Node 20+. Dependensi: `cheerio` (scraper) dan `mongodb` (fitur komunitas).
 
 ## Playground (halaman tes & diagnosa)
 
-Buka `http://localhost:3000/playground` (atau `https://server-kamu.com/playground`). Satu file HTML tanpa library, dashboard API bergaya neo-brutalism, rapi di HP maupun desktop.
+Buka `http://localhost:3000/playground` (atau `https://server-kamu.com/playground`). Satu file HTML tanpa library, ringan (satu halaman, tanpa animasi, tanpa gambar, font sistem), rapi di HP maupun desktop.
 
 1. **Diagnosa scraper**: pilih scraper lalu klik **Diagnosa scraper ini** (atau **Diagnosa semua**). Tiap langkah dites langsung ke situs sumber: Cari → Terbaru → Populer → Jelajah → Genre → Detail → Baca chapter → Gambar. Hasilnya:
    - `Lolos`, `Peringatan` (jalan tapi ada field kosong, mis. cover), `Gagal`, atau `Dilewati` (method belum dibuat).
