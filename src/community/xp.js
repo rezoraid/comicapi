@@ -1,9 +1,9 @@
 import { newId, isDup, sum, DAY, NO_BLOB } from './util.js'
 
 export const XP = { comment: 5, reply: 3, likeReceived: 2, chapterRead: 8 }
-const DAILY_CAP = { post: 50, like: 20, read: 80 }
-const MAX_LEVEL = 100
-const LIKE_PAIR_DAILY = 3
+export const DAILY_CAP = { post: 50, like: 20, read: 80 }
+export const MAX_LEVEL = 100
+export const LIKE_PAIR_DAILY = 3
 export const LIKER_MIN_AGE_MS = 3_600_000
 
 export const xpForLevel = level => 25 * level * (level - 1)
@@ -22,6 +22,7 @@ export const isQuality = text => {
   return words.length < 3 || new Set(words).size > 1
 }
 
+// Samakan xp/level di dokumen user dengan nilai yang benar; hanya menulis kalau memang berbeda.
 const fixLevel = async (ctx, u) => {
   if (!u) return null
   const xp = Math.max(0, u.xp || 0)
@@ -30,6 +31,7 @@ const fixLevel = async (ctx, u) => {
   return { ...u, xp, level }
 }
 
+// $inc lalu baca dokumen hasilnya dalam satu round-trip (sebelumnya: updateOne + findOne terpisah).
 const incXp = async (ctx, userId, delta) =>
   fixLevel(ctx, await ctx.c.users.findOneAndUpdate({ _id: userId }, { $inc: { xp: delta } }, { returnDocument: 'after', projection: { customPicture: 0 } }))
 
@@ -72,6 +74,7 @@ export async function reverseXp(ctx, commentId, group = null) {
   }
 }
 
+// Total XP dihitung di database ($sum, terlayani indeks userId+reversed+xp) — bukan dengan menarik semua event ke Node.
 export async function reconcileXp(ctx, userId) {
   const [rows, u] = await Promise.all([
     ctx.c.xpEvents.aggregate([{ $match: { userId, reversed: false } }, { $group: { _id: null, total: { $sum: '$xp' } } }]).toArray(),

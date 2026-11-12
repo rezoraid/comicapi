@@ -101,6 +101,7 @@ class FakeCollection {
     if (i >= 0) this.docs.splice(i, 1)
     return { deletedCount: i >= 0 ? 1 : 0 }
   }
+  // aggregate minimal: $match + $group (_id: null | '$field' | {a:'$field'}, akumulator $sum: angka | '$field')
   aggregate(pipeline) {
     const ref = (d, e) => (typeof e === 'string' && e.startsWith('$') ? d[e.slice(1)] : e)
     return {

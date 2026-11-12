@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { HttpError, badRequest, forbidden, notFound } from '../lib/errors.js'
+import { HttpError, badRequest } from '../lib/errors.js'
 import { etagMatches } from '../http/respond.js'
 import { qint, qstr, hit } from './util.js'
 import { loginWithGoogle, authenticate, me, updateProfile, updateAvatar, getUser } from './users.js'
@@ -9,15 +9,13 @@ import { resolveTarget, listComments, listReplies, createComment, chapterCounts,
 import { deleteAccount } from './account.js'
 import { saveProgress, trackReadingTime } from './reading.js'
 import { createBroadcast, feed, listBroadcasts, removeBroadcast } from './broadcasts.js'
-import { trackComicView, trackChapterView, viewerKey, getComicAdmin, saveComic, resetComic, getPages, savePages, resetPages, uploadMedia, serveMedia } from './catalog.js'
-import { normalizeDetail } from '../normalize.js'
-import { rank } from './util.js'
 import { listReports, resolveReport, findUser, userDetail, grantXp, resetMedia, setRole, setVerified, setBan, adminStats, listUsers, listAdminComments } from './admin.js'
 
 const P = '/api/community'
 
-export function registerCommunityRoutes(router, { registry, community, catalog = null }) {
+export function registerCommunityRoutes(router, { registry, community }) {
   const hasSource = id => registry.has(id)
+  // community boleh berupa objek atau fungsi getter (koneksi MongoDB bisa tersambung belakangan, dengan retry)
   const current = () => (typeof community === 'function' ? community() : community)
   const guard = fn => ctx => {
     const cm = current()
@@ -26,19 +24,8 @@ export function registerCommunityRoutes(router, { registry, community, catalog =
   }
   const authed = fn => guard(async (cm, ctx) => fn(cm, ctx, await authenticate(cm, ctx.req)))
   const maybe = fn => guard(async (cm, ctx) => fn(cm, ctx, await authenticate(cm, ctx.req, { optional: true })))
-  const notSupported = (p, fn) => new HttpError(501, 'NOT_SUPPORTED', `${p.id} tidak mendukung ${fn}`)
-  const fetchDetail = async (source, slug) => {
-    const p = registry.get(source)
-    if (typeof p.detail !== 'function') throw notSupported(p, 'detail')
-    return normalizeDetail(await p.detail(slug), p.id)
-  }
-  const fetchChapter = async (source, slug, chapter) => {
-    const p = registry.get(source)
-    if (typeof p.chapter !== 'function') throw notSupported(p, 'chapter')
-    return p.chapter(slug, chapter)
-  }
-  const cat = { hasSource, fetchDetail, fetchChapter }
   const pageOf = q => ({ page: qint(q, 'page', 1, 1, 200), limit: qint(q, 'limit', 15, 1, 30) })
+
   router.post(`${P}/auth/google`, guard(async (cm, { body, ip }) => {
     await hit(cm.limits.login, ip, 'Terlalu banyak percobaan login')
     return loginWithGoogle(cm, body.idToken)
@@ -52,6 +39,7 @@ export function registerCommunityRoutes(router, { registry, community, catalog =
     if (!cm) throw new HttpError(503, 'COMMUNITY_DISABLED', 'Fitur komunitas belum diaktifkan di server')
     const asked = /^\d{1,15}$/.test(query.get('v') || '') ? query.get('v') : '0'
     let e = cm.avatars.get(params.id)
+    // URL bertanda versi (?v=) tidak berubah isinya → cache aman; URL lama tanpa ?v= dicek ulang tiap 30 dtk
     if (!e || e.v !== asked || (asked === '0' && cm.now() - e.at > 30_000)) {
       const user = await cm.c.users.findOne({ _id: params.id }, { projection: { customPicture: 1, avatarAt: 1 } })
       if (!user?.customPicture) throw new HttpError(404, 'AVATAR_NOT_FOUND', 'Foto profil tidak ditemukan')
@@ -61,7 +49,7 @@ export function registerCommunityRoutes(router, { registry, community, catalog =
       e = { v: String(user.avatarAt || 0), at: cm.now(), mime: `image/${match[1]}`, bytes, etag: `"${createHash('sha1').update(bytes).digest('base64url').slice(0, 20)}"` }
       cm.avatars.set(params.id, e)
     }
-    const immutable = asked !== '0' && asked === e.v
+    const immutable = asked !== '0' && asked === e.v // URL versi terbaru → boleh disimpan klien selamanya
     const headers = {
       'content-type': e.mime,
       etag: e.etag,
@@ -87,6 +75,7 @@ export function registerCommunityRoutes(router, { registry, community, catalog =
   router.put(`${P}/likes`, authed((cm, { body }, user) => setLike(cm, user, body, hasSource, true)))
   router.delete(`${P}/likes`, authed((cm, { query }, user) => setLike(cm, user, likeTarget(query), hasSource, false)))
   router.put(`${P}/me/reading-progress`, authed((cm, { body }, user) => saveProgress(cm, user, body, hasSource)))
+
   router.get(`${P}/comments`, maybe((cm, { query }, viewer) => {
     const target = resolveTarget(
       { type: qstr(query, 'type', 10), source: qstr(query, 'source', 40), slug: qstr(query, 'slug', 200), chapter: qstr(query, 'chapter', 50) },
@@ -107,6 +96,8 @@ export function registerCommunityRoutes(router, { registry, community, catalog =
   router.put(`${P}/comments/:id/like`, authed((cm, { params }, user) => likeComment(cm, user, params.id, true)))
   router.delete(`${P}/comments/:id/like`, authed((cm, { params }, user) => likeComment(cm, user, params.id, false)))
   router.post(`${P}/comments/:id/report`, authed((cm, { params, body }, user) => reportComment(cm, user, params.id, body)))
+
+  // Pengumuman → notifikasi di semua HP. Feed publik (tanpa login, tanpa data pribadi); kirim/riwayat/tarik khusus OWNER.
   router.get(`${P}/broadcasts`, guard((cm, { query }) => feed(cm, query)))
   router.post(`${P}/admin/broadcasts`, authed(async (cm, { body }, user) => {
     await hit(cm.limits.write, user._id, 'Terlalu banyak pengumuman')
@@ -114,43 +105,10 @@ export function registerCommunityRoutes(router, { registry, community, catalog =
   }))
   router.get(`${P}/admin/broadcasts`, authed((cm, { query }, user) => listBroadcasts(cm, user, query)))
   router.delete(`${P}/admin/broadcasts/:id`, authed((cm, { params }, user) => removeBroadcast(cm, user, params.id)))
-  router.put(`${P}/push-token`, guard(async (cm, { body, ip, req }) => {
-    await hit(cm.limits.write, `push:${ip}`, 'Terlalu banyak permintaan')
-    const viewer = await authenticate(cm, req, { optional: true }).catch(() => null)
-    return cm.push.register(viewer, body)
-  }))
-  router.post(`${P}/push-token/unregister`, guard(async (cm, { body, ip }) => {
-    await hit(cm.limits.write, `push:${ip}`, 'Terlalu banyak permintaan')
-    return cm.push.unregister(body)
-  }))
-  router.get(`${P}/admin/push-status`, authed((cm, ctx, user) => cm.push.status(user)))
-  const needOwner = u => {
-    if (rank(u) < 3) throw forbidden('Fitur ini khusus OWNER')
-  }
-  const needCatalog = () => {
-    if (!catalog) throw new HttpError(503, 'CATALOG_DISABLED', 'Katalog internal dimatikan (CATALOG=false)')
-    return catalog
-  }
-  router.get(`${P}/admin/catalog/status`, authed((cm, ctx, user) => {
-    needOwner(user)
-    return needCatalog().status()
-  }))
-  router.post(`${P}/admin/catalog/sync`, authed(async (cm, { body }, user) => {
-    needOwner(user)
-    const cat = needCatalog()
-    const source = typeof body?.source === 'string' ? body.source : ''
-    if (source && !hasSource(source)) throw notFound(`Sumber "${source}" tidak ada`)
-    if (typeof body?.slug === 'string' && body.slug) {
-      if (!source) throw badRequest('"source" wajib diisi bersama "slug"')
-      const rec = await cat.refresh(source, body.slug)
-      if (!rec) throw new HttpError(502, 'SYNC_FAILED', 'Komik gagal disinkronkan dari sumbernya')
-      return { synced: rec }
-    }
-    void cat.crawlOnce({ source, pages: Math.min(200, Math.max(1, parseInt(body?.pages, 10) || 8)) }).catch(() => {})
-    return { started: true, source: source || 'semua' }
-  }))
+
   router.get(`${P}/admin/reports`, authed((cm, { query }, user) => listReports(cm, user, { status: qstr(query, 'status', 10) || 'open', page: qint(query, 'page', 1, 1, 200), limit: 20 })))
   router.post(`${P}/admin/reports/:id/resolve`, authed((cm, { params, body }, user) => resolveReport(cm, user, params.id, body.action)))
+  // ?username= = cari satu akun persis (MODERATOR/OWNER). Tanpa itu = daftar pengguna untuk panel OWNER (q, role, banned, page).
   router.get(`${P}/admin/users`, authed((cm, { query }, user) => (query.has('username') ? findUser(cm, user, query) : listUsers(cm, user, query))))
   router.get(`${P}/admin/stats`, authed((cm, ctx, user) => adminStats(cm, user)))
   router.get(`${P}/admin/comments`, authed((cm, { query }, user) => listAdminComments(cm, user, query)))
@@ -160,22 +118,4 @@ export function registerCommunityRoutes(router, { registry, community, catalog =
   router.put(`${P}/admin/users/:id/role`, authed((cm, { params, body }, user) => setRole(cm, user, params.id, body.role)))
   router.put(`${P}/admin/users/:id/verified`, authed((cm, { params, body }, user) => setVerified(cm, user, params.id, body.verified)))
   router.put(`${P}/admin/users/:id/ban`, authed((cm, { params, body }, user) => setBan(cm, user, params.id, body.banned)))
-  const viewer = (cm, req, ip) => authenticate(cm, req, { optional: true }).then(u => viewerKey(u, req, ip), () => viewerKey(null, req, ip))
-  router.post(`${P}/views/comic`, guard(async (cm, { body, ip, req }) => {
-    await hit(cm.limits.view, ip, 'Terlalu banyak permintaan')
-    return trackComicView(cm, await viewer(cm, req, ip), body, hasSource)
-  }))
-  router.post(`${P}/views/chapter`, guard(async (cm, { body, ip, req }) => {
-    await hit(cm.limits.view, ip, 'Terlalu banyak permintaan')
-    return trackChapterView(cm, await viewer(cm, req, ip), body, hasSource)
-  }))
-  const writeLimit = (cm, user) => hit(cm.limits.write, user._id, 'Terlalu banyak perubahan, coba lagi sebentar')
-  router.get(`${P}/admin/comics/:source/:slug`, authed((cm, { params }, user) => getComicAdmin(cm, user, params, cat)))
-  router.put(`${P}/admin/comics/:source/:slug`, authed(async (cm, { params, body }, user) => (await writeLimit(cm, user), saveComic(cm, user, params, body, cat))), { bodyLimit: 65_536 })
-  router.delete(`${P}/admin/comics/:source/:slug/override`, authed((cm, { params }, user) => resetComic(cm, user, params, cat)))
-  router.get(`${P}/admin/comics/:source/:slug/chapters/:chapter/pages`, authed((cm, { params }, user) => getPages(cm, user, params, cat)))
-  router.put(`${P}/admin/comics/:source/:slug/chapters/:chapter/pages`, authed(async (cm, { params, body }, user) => (await writeLimit(cm, user), savePages(cm, user, params, body, cat))), { bodyLimit: 262_144 })
-  router.delete(`${P}/admin/comics/:source/:slug/chapters/:chapter/pages`, authed((cm, { params }, user) => resetPages(cm, user, params, cat)))
-  router.post(`${P}/admin/media`, authed(async (cm, { req }, user) => (await writeLimit(cm, user), uploadMedia(cm, user, req))), { body: false })
-  router.get('/media/:id', guard((cm, { req, res, params }) => serveMedia(cm, req, res, params.id)), { raw: true, limiter: 'image' })
 }

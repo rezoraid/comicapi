@@ -1,7 +1,18 @@
-import { readdirSync } from 'node:fs'
-import { withTimeout } from '../lib/timeout.js'
+/**
+ * Registry semua scraper komik — satu pintu untuk server.
+ *
+ * Nambah scraper baru:
+ *   1. Bikin src/scrapers/<nama>.js, export default object:
+ *      { id, name, base, imageHeaders, imageHosts, filters?,
+ *        search, latest, popular, browse, genres, detail, chapter }
+ *   2. import di bawah lalu masukkan ke array PROVIDERS. Selesai —
+ *      route, cache, dan image proxy otomatis ikut.
+ */
+import lumos from './lumos.js'
+import manta from './manta.js'
+import shinigami from './shinigami.js'
 
-const NON_SCRAPERS = new Set(['index.js', 'utils.js'])
+const PROVIDERS = [lumos, manta, shinigami]
 const METHODS = ['search', 'latest', 'popular', 'browse', 'genres', 'detail', 'chapter']
 
 const providers = new Map()
@@ -18,22 +29,10 @@ function normalizeId(id) {
 export function register(p) {
   const id = normalizeId(p?.id)
   if (!id) throw new TypeError('Scraper wajib memiliki id')
+  // Simpan dengan ID kanonis agar pencarian sumber tidak sensitif huruf besar/kecil.
   providers.set(id, { ...p, id })
 }
-const broken = []
-
-const dir = new URL('./', import.meta.url)
-for (const file of readdirSync(dir).filter(f => f.endsWith('.js') && !f.startsWith('_') && !NON_SCRAPERS.has(f)).sort()) {
-  try {
-    register((await import(new URL(file, dir))).default)
-  } catch (err) {
-    const at = String(err?.stack || '').match(/scrapers\/([\w.-]+\.js):(\d+)/)
-    broken.push({ file, error: String(err?.message || err).split('\n')[0].slice(0, 300), where: at ? `${at[1]}:${at[2]}` : '' })
-    console.error(`[scrapers] ${file} gagal dimuat → ${err?.message || err}`)
-  }
-}
-
-export const failed = () => [...broken]
+PROVIDERS.forEach(register)
 
 export const has = id => providers.has(normalizeId(id))
 
@@ -54,6 +53,7 @@ export function list() {
   }))
 }
 
+/** Provider yang boleh membuka host gambar ini (untuk image proxy). */
 export function findByImageHost(hostname) {
   const h = String(hostname).toLowerCase()
   for (const p of providers.values()) {
@@ -62,38 +62,24 @@ export function findByImageHost(hostname) {
   return null
 }
 
-export const searchAll = (query, opts) => searchProviders([...providers.values()], query, opts)
+function timeout(promise, ms) {
+  let t
+  const timer = new Promise((_, rej) => (t = setTimeout(() => rej(new Error('timeout')), ms)))
+  return Promise.race([promise, timer]).finally(() => clearTimeout(t))
+}
 
-export async function searchProviders(all, query, { limit = 10, timeoutMs = 8000, graceMs = 2500 } = {}) {
-  const results = new Array(all.length)
-  await new Promise(resolve => {
-    let pending = all.length
-    let timer = null
-    const finish = () => {
-      clearTimeout(timer)
-      resolve()
-    }
-    if (!pending) return finish()
-    all.forEach((p, i) => {
-      withTimeout((async () => p.search(query, { limit }))(), timeoutMs)
-        .then(
-          v => {
-            results[i] = v
-            if (!timer) timer = setTimeout(finish, graceMs)
-          },
-          () => {}
-        )
-        .finally(() => {
-          if (--pending === 0) finish()
-        })
-    })
-  })
+/** Cari ke semua sumber paralel; hasil di-interleave biar tiap sumber kebagian di atas. */
+export async function searchAll(query, { limit = 10, timeoutMs = 8000 } = {}) {
+  const all = [...providers.values()]
+  const settled = await Promise.allSettled(all.map(p => timeout(p.search(query, { limit }), timeoutMs)))
+
   const lists = []
   const failed = []
-  all.forEach((p, i) => {
-    if (results[i]) lists.push(results[i].map(x => ({ ...x, source: p.id })))
-    else failed.push(p.id)
+  settled.forEach((r, i) => {
+    if (r.status === 'fulfilled') lists.push(r.value.map(x => ({ ...x, source: all[i].id })))
+    else failed.push(all[i].id)
   })
+
   const items = []
   for (let i = 0; ; i++) {
     let added = false
@@ -108,4 +94,4 @@ export async function searchProviders(all, query, { limit = 10, timeoutMs = 8000
   return { items, failed }
 }
 
-export default { register, has, get, list, failed, findByImageHost, searchAll }
+export default { register, has, get, list, findByImageHost, searchAll }

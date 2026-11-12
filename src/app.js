@@ -7,15 +7,17 @@ import { TtlCache } from './lib/cache.js'
 import { RedisRestCache } from './lib/redis-rest-cache.js'
 import { registerRoutes } from './routes.js'
 import { registerCommunityRoutes } from './community/routes.js'
-import { createCatalog } from './catalog-sync.js'
 
+/** Key cache: path + query yang diurutkan (?a=1&b=2 sama dengan ?b=2&a=1). */
 function cacheKey(url) {
+  // URLSearchParams.sort() is stable and re-encodes values, avoiding collisions
+  // when a query value itself contains '&' or '=' characters.
   const params = new URLSearchParams(url.searchParams)
   params.sort()
   return `${url.pathname}?${params.toString()}`
 }
 
-export function createApp({ registry, config, logger = console, community = null, sharedCache: injectedSharedCache = null, catalog: injectedCatalog }) {
+export function createApp({ registry, config, logger = console, community = null, sharedCache: injectedSharedCache = null }) {
   const cache = new TtlCache({
     max: config.cacheMax,
     maxBytes: (config.cacheMaxMb ?? 96) * 1024 * 1024,
@@ -29,35 +31,31 @@ export function createApp({ registry, config, logger = console, community = null
     prefix: config.redisKeyPrefix,
     timeoutMs: config.redisTimeoutMs
   })
-  const parsed = new WeakMap()
-  const dataOf = value => {
-    let d = parsed.get(value)
-    if (d === undefined) {
-      d = JSON.parse(value.body.toString('utf8')).data
-      parsed.set(value, d)
-    }
-    return d
-  }
-  const catalog = injectedCatalog !== undefined
-    ? injectedCatalog
-    : createCatalog({ registry, collection: () => (typeof community === 'function' ? community() : community)?.c?.catalog ?? null, logger, crawl: false })
   const router = new Router()
-  registerCommunityRoutes(router, { registry, community, catalog })
-  registerRoutes(router, { registry, config, community, catalog })
+  registerCommunityRoutes(router, { registry, community })
+  registerRoutes(router, { registry, config, community })
+
   const limiters = {
     default: createRateLimiter(config.rateLimit),
     image: createRateLimiter(config.imageRateLimit)
   }
+
+  // di-cache: dikompres sekali (level tinggi) lalu dipakai ulang oleh semua request berikutnya
   function cachedEntry(url, route, ctx) {
     const key = cacheKey(url)
     return cache.remember(key, route.ttl * 1000, async () => {
+      // Redis is L2: only consulted after local memory misses. Redis outage never blocks correctness.
       const shared = await sharedCache.get(key)
       if (shared) return shared
       const fresh = await encode({ ok: true, data: await withTimeout(Promise.resolve(route.handler(ctx)), config.requestTimeoutMs) })
+      // Do not add Redis write latency to the first response.
       void sharedCache.set(key, fresh, route.ttl).catch(() => {})
       return fresh
     })
   }
+
+  // Preload di server: chapter berikutnya dimuat diam-diam begitu chapter ini diambil dari sumber,
+  // sehingga ketika pembaca menekan "Next" datanya sudah ada di cache. Maks 3 sekaligus, error diabaikan.
   let warming = 0
   function warm(pathname) {
     if (warming >= 3 || !pathname.startsWith('/api/')) return
@@ -69,31 +67,33 @@ export function createApp({ registry, config, logger = console, community = null
       .catch(() => {})
       .finally(() => warming--)
   }
+
+  // Pemanas cache: daftar Home (latest/popular), detail komik teratas, dan chapter terbarunya dijaga selalu hangat,
+  // sehingga request PERTAMA pengguna pun langsung HIT (bukan menunggu scrape ke situs sumber).
   async function warmPath(pathAndQuery) {
     const url = new URL(pathAndQuery, 'http://localhost')
     const found = router.match(url.pathname, 'GET')
     if (!found?.route || !(found.route.ttl > 0)) return null
     const { value } = await cachedEntry(url, found.route, { params: found.params, query: url.searchParams, warm: null })
     try {
-      return dataOf(value)
+      return JSON.parse(value.body.toString('utf8')).data
     } catch {
       return null
     }
   }
+
   let warmRunning = false
   async function warmOnce() {
     if (warmRunning) return
     warmRunning = true
     try {
       const only = config.warmSources?.length ? new Set(config.warmSources) : null
-      const sources = registry.list().filter(s => !only || only.has(s.id))
-      await Promise.allSettled(sources.map(async s => {
+      for (const s of registry.list()) {
+        if (only && !only.has(s.id)) continue
         const id = encodeURIComponent(s.id)
         try {
-          const [latest, popular] = await Promise.all([
-            warmPath(`/api/${id}/latest?page=1`),
-            s.features?.includes('popular') === false ? null : warmPath(`/api/${id}/popular`)
-          ])
+          const latest = await warmPath(`/api/${id}/latest?page=1`)
+          const popular = s.features?.includes('popular') === false ? null : await warmPath(`/api/${id}/popular`)
           const slugs = [...new Set([...(latest?.items || []), ...(popular?.items || [])].map(i => i?.slug).filter(x => typeof x === 'string' && x))].slice(0, config.warmDetails ?? 6)
           let chapters = 0
           for (const slug of slugs) {
@@ -103,16 +103,17 @@ export function createApp({ registry, config, logger = console, community = null
               chapters++
               await warmPath(`/api/${id}/chapter/${encodeURIComponent(slug)}/${encodeURIComponent(first)}`)
             }
-            await new Promise(r => setTimeout(r, 100))
+            await new Promise(r => setTimeout(r, 100)) // jeda kecil agar situs sumber tidak dibanjiri
           }
         } catch (err) {
           logger.error(`[warm] ${s.id} gagal → ${err?.message || err}`)
         }
-      }))
+      }
     } finally {
       warmRunning = false
     }
   }
+
   let warmTimer = null
   let warmStart = null
   function startWarmer() {
@@ -123,6 +124,7 @@ export function createApp({ registry, config, logger = console, community = null
     warmTimer = setInterval(tick, Math.max(5, config.warmIntervalSec ?? 30) * 1000)
     warmTimer.unref?.()
   }
+
   async function handler(req, res) {
     const started = Date.now()
     const path = req.url
@@ -133,9 +135,11 @@ export function createApp({ registry, config, logger = console, community = null
         if (logMode === 'all' || res.statusCode >= 400 || ms >= (config.slowRequestMs ?? 1000)) logger.log(`${req.method} ${path} ${res.statusCode} ${ms}ms`)
       })
     }
+
     try {
       applyCors(res, req.headers.origin, config.corsOrigin)
       res.setHeader('x-content-type-options', 'nosniff')
+
       if (req.method === 'OPTIONS') {
         res.writeHead(204, { 'access-control-max-age': '86400' })
         return res.end()
@@ -149,6 +153,7 @@ export function createApp({ registry, config, logger = console, community = null
         throw new HttpError(405, 'METHOD_NOT_ALLOWED', 'Method tidak didukung')
       }
       const { route, params } = found
+
       if (!route.public) {
         if (!isAuthorized(req, config.apiKey)) throw new HttpError(401, 'UNAUTHORIZED', 'API key salah atau tidak ada')
         const rl = await limiters[route.limiter || 'default'].check(clientIp(req, config.trustProxy))
@@ -158,22 +163,17 @@ export function createApp({ registry, config, logger = console, community = null
           throw new HttpError(429, 'RATE_LIMITED', 'Terlalu banyak request, coba lagi sebentar')
         }
       }
+
       const ctx = { req, res, params, query: url.searchParams, ip: clientIp(req, config.trustProxy), warm }
-      if (route.body) ctx.body = await readJson(req, route.bodyLimit ?? (url.pathname.endsWith('/me/avatar') ? 512 * 1024 : 16_384))
+      if (route.body) ctx.body = await readJson(req, url.pathname.endsWith('/me/avatar') ? 512 * 1024 : 16_384)
       if (route.raw) return await route.handler(ctx)
+
       if (route.ttl > 0) {
         const { value, state } = await cachedEntry(url, route, ctx)
-        if (route.overlay) {
-          try {
-            const base = dataOf(value)
-            const data = await withTimeout(Promise.resolve(route.overlay(base, ctx)), config.requestTimeoutMs)
-            if (data !== base) return send(req, res, await encode({ ok: true, data }, { gzip: acceptsGzip(req), level: 4 }), { revalidate: true, cacheState: state })
-          } catch (err) {
-            logger.error(`[overlay] ${url.pathname} → ${err?.message || err}`)
-          }
-        }
         return send(req, res, value, { cacheSeconds: route.ttl, cacheState: state })
       }
+      // dinamis: kompres hanya kalau klien meminta, level ringan
+      // GET dinamis (profil, komentar, riwayat): boleh disimpan klien tapi wajib divalidasi ETag; tulis (POST/PUT/DELETE) tetap no-store
       return send(req, res, await encode({ ok: true, data: await withTimeout(Promise.resolve(route.handler(ctx)), config.requestTimeoutMs) }, { gzip: acceptsGzip(req), level: 4 }), { revalidate: req.method === 'GET' || req.method === 'HEAD' })
     } catch (err) {
       const e = toHttpError(err)
@@ -182,9 +182,10 @@ export function createApp({ registry, config, logger = console, community = null
       await sendError(req, res, e)
     }
   }
+
   return {
     handler,
-    catalog,
+    cache,
     startWarmer,
     warmOnce,
     close() {

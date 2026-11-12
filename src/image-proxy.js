@@ -7,8 +7,9 @@ import { createLimiter } from './lib/limiter.js'
 
 const MAX_BYTES = 25 * 1024 * 1024
 const MAX_REDIRECTS = 3
-const CACHE_ITEM_MAX = 1_500_000
+const CACHE_ITEM_MAX = 1_500_000 // gambar > 1,5 MB tetap di-stream tanpa disimpan
 
+/** LRU berbasis total byte untuk gambar kecil/sedang (halaman chapter yang sering dibuka banyak orang). */
 const sniff = b =>
   b[0] === 0xff && b[1] === 0xd8 ? 'image/jpeg' : b[0] === 0x89 && b[1] === 0x50 ? 'image/png' : b.length > 11 && b.toString('latin1', 8, 12) === 'WEBP' ? 'image/webp' : null
 
@@ -22,7 +23,7 @@ function createImageCache(maxMb) {
       const e = map.get(key)
       if (!e) return null
       map.delete(key)
-      map.set(key, e)
+      map.set(key, e) // segarkan urutan LRU
       return e
     },
     set(key, entry) {
@@ -43,15 +44,26 @@ function createImageCache(maxMb) {
   }
 }
 
+/**
+ * GET /api/image?url=<url gambar>
+ * Menambahkan referer/header yang dibutuhkan situs sumber, jadi APK bisa
+ * menampilkan gambar tanpa kena hotlink-protection. Hanya host milik
+ * scraper yang diizinkan (anti-SSRF), redirect divalidasi ulang.
+ */
 export function imageProxy(registry, { cacheMb = 48, headerTimeoutMs = 12_000, bodyIdleMs = 15_000, retries = 1, concurrency = 128, maxQueue = 1024, queueWaitMs = 15_000 } = {}) {
+  // headerTimeoutMs: tunggu sumber mulai merespons (per percobaan) · bodyIdleMs: batas diam saat unduh (reset tiap ada data)
+  // retries: ulang kalau sumber timeout / koneksi putus (batal dari klien tidak pernah diulang)
   const HEADER_TIMEOUT_MS = headerTimeoutMs
   const BODY_IDLE_MS = bodyIdleMs
   const FETCH_RETRIES = retries
   const cache = createImageCache(cacheMb)
   const limiter = createLimiter({ max: concurrency, maxQueue, waitMs: queueWaitMs })
-  return async ({ req, res, query }) => {
+  const handle = async ({ req, res, query }) => {
     const raw = query.get('url')
     if (!raw) throw badRequest('Parameter "url" wajib diisi')
+
+    // clientGone = klien (APK) membatalkan request, mis. pindah chapter / scroll cepat. Itu bukan error server.
+    // timedOut  = sumber gambar yang terlalu lambat.
     let ac = new AbortController()
     let timer = null
     let clientGone = false
@@ -71,6 +83,8 @@ export function imageProxy(registry, { cacheMb = 48, headerTimeoutMs = 12_000, b
       }
       clearTimer()
     })
+
+    /** fetch ke sumber dengan timeout per percobaan + 1x ulang. Batal dari klien tidak diulang. */
     const fetchSource = async (url, headers) => {
       for (let attempt = 0; ; attempt++) {
         if (clientGone) throw new Error('client closed')
@@ -88,6 +102,7 @@ export function imageProxy(registry, { cacheMb = 48, headerTimeoutMs = 12_000, b
         }
       }
     }
+
     let target
     let provider
     let upstream
@@ -96,6 +111,7 @@ export function imageProxy(registry, { cacheMb = 48, headerTimeoutMs = 12_000, b
     try {
       target = parse(raw)
       firstHref = target.href
+      // cache hanya dilayani untuk host yang diizinkan (aturan anti-SSRF tetap berlaku sebelum cache)
       const cached = cache.enabled && registry.findByImageHost(target.hostname) ? cache.get(target.href) : null
       if (cached) {
         clearTimer()
@@ -115,8 +131,10 @@ export function imageProxy(registry, { cacheMb = 48, headerTimeoutMs = 12_000, b
           if (!provider) throw new HttpError(403, 'FORBIDDEN_HOST', `Host gambar tidak diizinkan: ${target.hostname}`)
           prep = provider.imagePrep?.(target) ?? null
         } else if (!known && !(await isPublicHost(target.hostname))) {
+          // redirect dari host sumber ke CDN lain boleh, asal bukan alamat internal
           throw new HttpError(403, 'FORBIDDEN_HOST', `Redirect ke host tidak diizinkan: ${target.hostname}`)
         }
+
         const baseHeaders = (known || provider).imageHeaders
         upstream = await fetchSource(target, hop === 0 && prep ? { ...baseHeaders, ...prep.headers } : baseHeaders)
         if (upstream.status >= 300 && upstream.status < 400 && upstream.headers.get('location')) {
@@ -129,9 +147,10 @@ export function imageProxy(registry, { cacheMb = 48, headerTimeoutMs = 12_000, b
       }
     } catch (error) {
       clearTimer()
-      if (clientGone) return res.destroy()
+      if (clientGone) return res.destroy() // klien sudah pergi: jangan dicatat sebagai error
       throw error
     }
+
     if (!upstream.ok) {
       clearTimer()
       upstream.body?.cancel()
@@ -149,7 +168,8 @@ export function imageProxy(registry, { cacheMb = 48, headerTimeoutMs = 12_000, b
       upstream.body?.cancel()
       throw new HttpError(413, 'TOO_LARGE', 'Gambar terlalu besar')
     }
-    arm(BODY_IDLE_MS)
+
+    arm(BODY_IDLE_MS) // header sudah diterima: sekarang batasi waktu unduh body
     if (prep?.decode) {
       try {
         if (req.method === 'HEAD') {
@@ -173,19 +193,25 @@ export function imageProxy(registry, { cacheMb = 48, headerTimeoutMs = 12_000, b
         clearTimer()
       }
     }
+
     const headers = {
       'content-type': type,
       'cache-control': 'public, max-age=604800, immutable',
       'x-content-type-options': 'nosniff'
     }
+    // content-length hanya valid kalau upstream tidak di-compress
     if (length && !upstream.headers.get('content-encoding')) headers['content-length'] = length
     res.writeHead(200, headers)
+
     if (req.method === 'HEAD') {
       clearTimer()
       upstream.body?.cancel()
       return res.end()
     }
+
+    // Batasi ukuran aktual juga: Content-Length dari upstream bisa tidak ada atau tidak jujur.
     let received = 0
+    // salin ke memori hanya selama masih di bawah batas item cache; disimpan setelah seluruh body sukses terkirim
     let keep = cache.enabled && length <= CACHE_ITEM_MAX ? [] : null
     const sizeGuard = new Transform({
       transform(chunk, _encoding, callback) {
@@ -207,9 +233,29 @@ export function imageProxy(registry, { cacheMb = 48, headerTimeoutMs = 12_000, b
       await pipeline(Readable.fromWeb(upstream.body), sizeGuard, res)
       if (keep && received > 0 && (!length || length === received || upstream.headers.get('content-encoding'))) cache.set(firstHref, { type, buf: Buffer.concat(keep) })
     } catch {
-      res.destroy()
+      res.destroy() // klien putus, timeout, atau upstream melewati batas ukuran
     } finally {
       clearTimer()
+    }
+  }
+
+  // Kalau sumber gagal, coba sekali lewat alamat cadangan milik scraper (mis. CDN <-> proxy situs, mirror lain)
+  return async ctx => {
+    try {
+      return await handle(ctx)
+    } catch (error) {
+      if (!(error instanceof HttpError) || ![404, 502, 504].includes(error.status) || ctx.res.headersSent) throw error
+      let alt = null
+      try {
+        const u = new URL(ctx.query.get('url'))
+        alt = registry.findByImageHost(u.hostname)?.imageFallback?.(u) || null
+      } catch {}
+      if (!alt || alt === ctx.query.get('url')) throw error
+      try {
+        return await handle({ ...ctx, query: new URLSearchParams({ url: alt }) })
+      } catch {
+        throw error
+      }
     }
   }
 }
@@ -225,6 +271,7 @@ function parse(raw) {
   return u
 }
 
+/** true kalau hostname me-resolve ke alamat publik saja (anti-SSRF untuk redirect). */
 async function isPublicHost(hostname) {
   try {
     const ips = net.isIP(hostname) ? [{ address: hostname }] : await dns.lookup(hostname, { all: true })

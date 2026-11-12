@@ -1,5 +1,19 @@
+/**
+ * Skema katalog tunggal Komikta. Setiap sumber (Lumos, MANGA Plus, Manta, Shinigami, ...) menulis
+ * type/status/genre/rating dengan cara berbeda; semuanya diseragamkan di sini sebelum dikirim ke APK,
+ * jadi klien tidak perlu tahu komik itu datang dari sumber mana.
+ *
+ *  type    : 'manga' | 'manhwa' | 'manhua' | 'webtoon' | 'novel' | ''
+ *  status  : 'ongoing' | 'completed' | 'hiatus' | 'cancelled' | ''
+ *  genres  : ['Action', 'Slice of Life', ...]  (rapi, tanpa duplikat)
+ *  rating  : 0-10 satu desimal, atau null
+ *  views   : angka, atau null
+ *  author/artist/year/synopsis : teks bersih ('' kalau tidak ada)
+ */
+
 const clean = v => String(v ?? '').replace(/\s+/g, ' ').trim()
 
+// Nama jenis yang eksplisit didahulukan; baru petunjuk asal negara ("Korean" -> manhwa).
 const TYPES = [
   ['manhwa', /manhwa/i],
   ['manhua', /manhua/i],
@@ -8,13 +22,13 @@ const TYPES = [
   ['novel', /novel/i],
   ['manhwa', /korea/i],
   ['manhua', /china|chinese/i],
-  ['manga', /japan/i],
-  ['webtoon', /^comics?$/i]
+  ['manga', /japan/i]
 ]
 
 export function canonType(raw, genres = []) {
   const direct = clean(raw)
   if (direct) for (const [id, re] of TYPES) if (re.test(direct)) return id
+  // sebagian sumber hanya menaruh jenis di tag/genre
   for (const g of genres || []) for (const [id, re] of TYPES.slice(0, 5)) if (re.test(clean(g))) return id
   return ''
 }
@@ -49,7 +63,7 @@ export function normGenres(list) {
   for (const raw of Array.isArray(list) ? list : []) {
     let g = clean(typeof raw === 'object' && raw ? raw.name : raw)
     if (!g) continue
-    if (g === g.toLowerCase() || g === g.toUpperCase()) g = titleCase(g)
+    if (g === g.toLowerCase() || g === g.toUpperCase()) g = titleCase(g) // "action" / "ACTION" -> "Action"
     const key = g.toLowerCase()
     if (!seen.has(key)) {
       seen.add(key)
@@ -61,7 +75,7 @@ export function normGenres(list) {
 
 const PLACEHOLDER = /^(-|—|n\/a|none|unknown|updating|tba|\?|null|undefined)$/i
 
-const person = v => {
+export const person = v => {
   const s = clean(v)
   return PLACEHOLDER.test(s) ? '' : s
 }
@@ -92,24 +106,18 @@ const count = v => {
 
 const year = v => (/^(19|20)\d{2}$/.test(clean(v)) ? clean(v) : '')
 
-function isoDate(v) {
-  if (v == null || v === '') return ''
-  const t = typeof v === 'number' ? (v < 1e11 ? v * 1000 : v) : /^\d{9,13}$/.test(String(v)) ? (String(v).length <= 10 ? Number(v) * 1000 : Number(v)) : Date.parse(String(v))
-  return Number.isFinite(t) && t > 0 ? new Date(t).toISOString() : ''
-}
-
 export function normChapter(c = {}) {
-  const releaseDate = c.releaseDate || null
   return {
     slug: clean(c.slug),
     number: clean(c.number),
     title: clean(c.title),
-    timeAgo: clean(c.timeAgo) || isoDate(releaseDate),
-    releaseDate,
+    timeAgo: clean(c.timeAgo),
+    releaseDate: c.releaseDate || null,
     isNew: !!c.isNew
   }
 }
 
+/** Item untuk daftar (search / latest / popular / browse). Properti khusus sumber tetap ikut, yang baku selalu ada. */
 export function normalizeItem(it = {}, source = '') {
   const genres = normGenres(it.genres)
   const chapters = (Array.isArray(it.chapters) ? it.chapters : []).map(normChapter).filter(c => c.slug || c.number)
@@ -125,14 +133,13 @@ export function normalizeItem(it = {}, source = '') {
     chapterCount: count(it.chapterCount) ?? (chapters.length > 1 ? chapters.length : null),
     genres,
     author: person(it.author),
-    artist: person(it.artist),
-    year: year(it.year),
     views: normViews(it.views),
     chapters,
     source: it.source || source
   }
 }
 
+/** Detail komik: semua kolom baku selalu ada, kosong = '' / [] / null. */
 export function normalizeDetail(d = {}, source = '') {
   const genres = normGenres(d.genres)
   const chapters = (Array.isArray(d.chapters) ? d.chapters : []).map(normChapter)
@@ -162,6 +169,7 @@ export function normalizeDetail(d = {}, source = '') {
 
 export const normalizeList = (list, source = '') => (Array.isArray(list) ? list.map(i => normalizeItem(i, i?.source || source)) : list)
 
+/** browse mengembalikan { items, page, pages, total }; sumber lain bisa array biasa. */
 export function normalizeBrowse(result, source = '') {
   if (Array.isArray(result)) return normalizeList(result, source)
   if (result && Array.isArray(result.items)) return { ...result, items: normalizeList(result.items, source) }

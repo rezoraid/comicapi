@@ -3,7 +3,6 @@ import assert from 'node:assert/strict'
 import { createApp } from '../src/app.js'
 import { loadConfig } from '../src/config.js'
 import { TtlCache } from '../src/lib/cache.js'
-import { createCatalog } from '../src/catalog-sync.js'
 
 import { PNG, quiet, listen, makeRegistry } from './helpers.mjs'
 
@@ -23,8 +22,7 @@ before(async () => {
     res.writeHead(404).end()
   })
   registry = makeRegistry(img.port)
-  const catalog = createCatalog({ registry, logger: quiet, inlineMax: 100, crawl: false })
-  app = createApp({ registry, config: loadConfig({ LOG_REQUESTS: 'false' }), logger: quiet, catalog })
+  app = createApp({ registry, config: loadConfig({ LOG_REQUESTS: 'false' }), logger: quiet })
   api = await listen(app.handler)
 })
 
@@ -64,7 +62,7 @@ test('cache: request kedua HIT dan scraper tidak dipanggil lagi', async () => {
   const url = `${api.url}/api/mock/search?q=cachetest&limit=5`
   const before = registry.provider.calls
   const a = await fetch(url)
-  const b = await fetch(`${api.url}/api/mock/search?limit=5&q=cachetest`)
+  const b = await fetch(`${api.url}/api/mock/search?limit=5&q=cachetest`) // urutan param beda
   assert.equal(a.headers.get('x-cache'), 'MISS')
   assert.equal(b.headers.get('x-cache'), 'HIT')
   assert.equal(registry.provider.calls - before, 1)

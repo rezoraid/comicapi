@@ -1,8 +1,12 @@
 import { readFileSync } from 'node:fs'
 import { gzipSync } from 'node:zlib'
 import { createHash } from 'node:crypto'
-import { acceptsGzip } from './http/respond.js'
 
+/**
+ * GET /playground — halaman tes API (1 file HTML, tanpa library).
+ * Dibaca & di-gzip sekali saat boot, jadi tiap request cuma kirim buffer.
+ * Nonaktifkan di production dengan env PLAYGROUND=false.
+ */
 export function playground() {
   const html = readFileSync(new URL('./public/playground.html', import.meta.url))
   const gz = gzipSync(html)
@@ -17,12 +21,13 @@ export function playground() {
     'x-frame-options': 'DENY',
     'referrer-policy': 'no-referrer'
   }
+
   return ({ req, res }) => {
     if (req.headers['if-none-match'] === etag) {
       res.writeHead(304, base)
       return res.end()
     }
-    const useGzip = acceptsGzip(req)
+    const useGzip = /\bgzip\b/.test(req.headers['accept-encoding'] || '')
     const out = useGzip ? gz : html
     res.writeHead(200, { ...base, ...(useGzip && { 'content-encoding': 'gzip' }), 'content-length': out.length })
     res.end(req.method === 'HEAD' ? undefined : out)

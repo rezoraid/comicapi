@@ -31,12 +31,15 @@ test('Redis L2 membagikan respons cache antar instance backend', async t => {
     app1.close()
     app2.close()
   })
+
   const path = '/api/mock/search?q=shared-cache&limit=5'
   const first = await fetch(`${server1.url}${path}`)
   assert.equal(first.status, 200)
   assert.equal(registry1.provider.calls, 1)
+  // Redis writes are intentionally off the response critical path; wait for the mock command to settle.
   for (let i = 0; i < 20 && store.size === 0; i++) await new Promise(resolve => setTimeout(resolve, 5))
   assert.equal(store.size, 1)
+
   const second = await fetch(`${server2.url}${path}`)
   assert.equal(second.status, 200)
   assert.equal(registry2.provider.calls, 0, 'instance kedua harus membaca dari Redis, bukan scrape ulang')

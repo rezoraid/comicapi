@@ -6,7 +6,7 @@ test('type: berbagai tulisan sumber -> satu nilai baku', () => {
   for (const [raw, want] of [['Manhwa', 'manhwa'], ['MANHUA', 'manhua'], ['manga', 'manga'], ['Korean Webtoon', 'webtoon'], ['Light Novel', 'novel'], ['', ''], ['komik', '']]) {
     assert.equal(canonType(raw), want, raw)
   }
-  assert.equal(canonType('', ['Action', 'Manhua']), 'manhua')
+  assert.equal(canonType('', ['Action', 'Manhua']), 'manhua') // jenis hanya ada di tag
 })
 
 test('status: berbagai tulisan sumber -> satu nilai baku', () => {

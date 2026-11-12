@@ -8,25 +8,25 @@ Satu pintu API, semua sumber punya bentuk data yang sama — cepat, ringan, cach
 ```bash
 npm install
 API_KEY=rahasia npm start   # http://localhost:3000 (API_KEY opsional)
-npm test                 # tes server + playground + diagnosa (offline, pakai mock)
+npm test                 # tes server + playground (offline, pakai mock)
+npm run smoke            # tes scraper ke situs asli (butuh internet)
 ```
 
 Butuh Node 20+. Dependensi: `cheerio` (scraper) dan `mongodb` (fitur komunitas).
 
-## Playground (halaman tes & diagnosa)
+## Playground (halaman tes)
 
-Buka `http://localhost:3000/playground` (atau `https://server-kamu.com/playground`). Satu file HTML tanpa library, ringan (satu halaman, tanpa animasi, tanpa gambar, font sistem), rapi di HP maupun desktop.
+Buka `http://localhost:3000/playground` (atau `https://server-kamu.com/playground`).
+Satu file HTML tanpa library, tampilan kotak polos, jalan di HP maupun desktop.
 
-1. **Diagnosa scraper**: pilih scraper lalu klik **Diagnosa scraper ini** (atau **Diagnosa semua**). Tiap langkah dites langsung ke situs sumber: Cari → Terbaru → Populer → Jelajah → Genre → Detail → Baca chapter → Gambar. Hasilnya:
-   - `Lolos`, `Peringatan` (jalan tapi ada field kosong, mis. cover), `Gagal`, atau `Dilewati` (method belum dibuat).
-   - Kalau gagal: jenis error (`HTTP 403`, `TIMEOUT`, `JARINGAN`, `KODE`), pesan, **lokasi file:baris** di scraper, dan saran perbaikan.
-   - Slug, chapter, dan URL gambar dari langkah sebelumnya dipakai otomatis di langkah berikutnya.
-   - **Salin laporan** menyalin seluruh hasil sebagai teks.
-2. **Coba manual**: pilih endpoint, isi parameter, **Execute** untuk melihat respons JSON mentah, status, waktu, dan `x-cache`.
-3. Kalau ada file di `src/scrapers/` yang gagal dimuat (salah sintaks, dll), muncul banner merah berisi nama file dan errornya. Scraper lain tetap jalan.
+1. **Tes otomatis**: klik **Tes semua endpoint**. Yang dites:
+   - Server: `/health`, `/api/sources`, `/api/search` (semua sumber), validasi `400` (tanpa `q`) dan `404` (sumber tidak ada).
+   - Tiap sumber: search → latest → popular → browse → genres → detail → chapter → gambar (proxy).
+   - Hasil per langkah `PASS` / `FAIL` / `SKIP` + waktu (ms) + keterangan, ringkasan di atas.
+2. **Coba manual**: pilih sumber + endpoint, isi parameter, **Execute** (atau Ctrl+Enter). Terlihat status, waktu, ukuran, `x-cache`. Preview (daftar, detail, thumbnail chapter) atau JSON mentah; klik item/chapter untuk lanjut.
 
-Endpoint di balik layar: `GET /api/:source/diagnose/:step` (`search`, `latest`, `popular`, `browse`, `genres`, `detail`, `chapter`, `image`), kena API key seperti endpoint lain dan tidak di-cache.
-Server URL & API key disimpan di browser (localStorage). Matikan halaman dan endpoint diagnosa di production dengan env `PLAYGROUND=false`.
+Server URL & API key disimpan di browser (localStorage), tidak dikirim ke mana pun selain server kamu.
+Matikan di production dengan env `PLAYGROUND=false`.
 
 ## Hosting
 
@@ -42,7 +42,7 @@ Kalau `API_KEY` diisi, kirim header `x-api-key`.
 | Endpoint | Keterangan |
 |---|---|
 | `GET /health` | status server (tanpa auth) |
-| `GET /playground` | halaman tes & diagnosa scraper (tanpa auth) |
+| `GET /playground` | halaman tes (tanpa auth, lihat bawah) |
 | `GET /api/sources` | daftar sumber + filter yang didukung |
 | `GET /api/search?q=&limit=` | cari di **semua** sumber sekaligus (hasil `source` per item) |
 | `GET /api/:source/search?q=&limit=` | cari di satu sumber |
@@ -66,26 +66,6 @@ Kalau `API_KEY` diisi, kirim header `x-api-key`.
 | `GET /api/community/likes/status?type=&source=&slug=&chapter=` | `{liked, count}` |
 
 Koleksi baru: `likes`, `counters` (ID publik berurutan, diberikan sekali per pengguna saat pertama dibutuhkan). Menit membaca = akumulasi `users.readSeconds`; per komik tersimpan di `reading_progress.readSeconds`. Pengguna lama mulai dari 0 menit karena durasi sebelumnya memang tidak pernah dicatat.
-
-### Katalog mandiri: views, edit komik, gambar chapter (untuk APK)
-
-Kontrak lengkap: `BACKEND_KATALOG.md` di proyek APK. Kode: `src/community/catalog.js`.
-
-| Endpoint | Fungsi |
-|---|---|
-| `POST /api/community/views/comic` `{source, slug}` | catat 1 view komik (login atau anonim, header `X-Device-Id`); dedupe per userId/deviceId/IP per komik, jendela 6 jam; balas `{viewCount}` |
-| `POST /api/community/views/chapter` `{source, comic, chapter}` | sama untuk chapter |
-| `GET\|PUT /api/community/admin/comics/:source/:slug` | OWNER: data gabungan / simpan override (`title, cover, synopsis, genres[], type, status, author, artist`) |
-| `DELETE /api/community/admin/comics/:source/:slug/override` | OWNER: kembali ke data scraper |
-| `GET\|PUT\|DELETE /api/community/admin/comics/:source/:slug/chapters/:chapter/pages` | OWNER: daftar gambar chapter (PUT = daftar lengkap berurutan, 1–500 item) |
-| `POST /api/community/admin/media` | OWNER: unggah gambar (multipart, field `file`, JPEG/PNG/WebP/GIF, maks 10 MB, dicek byte-nya) → `{url: "/media/<id>"}` |
-| `GET /media/:id` | sajikan gambar unggahan (`Cache-Control: immutable`, ETag) |
-
-- `viewCount` ditambahkan ke item daftar (`latest`, `popular`, `search`, `browse`, `/api/search`) dan detail komik (+ tiap `chapters[]`). Field `views` dari scraper dibiarkan apa adanya (APK mengabaikannya).
-- Override menggantikan field scraper di semua respons; field kosong = pakai scraper. Override `type`/`status`/`genres` ikut dihitung di `browse` (komik yang dipindahkan keluar disaring, yang dipindahkan masuk muncul di halaman 1).
-- Cache scraper (memori + Redis) tidak diubah dan tidak perlu dibuang: views dan override ditempel di atas hasil cache tiap request (`overlay` di `app.js`). Kalau MongoDB bermasalah, respons cache disajikan apa adanya.
-- Koleksi baru: `comic_stats`, `chapter_stats`, `view_dedupe` (indeks TTL 6 jam), `comic_overrides`, `chapter_overrides`, `media`. File di `media` tidak dihapus otomatis kalau tidak lagi dipakai.
-- Header `X-Device-Id` kini diizinkan CORS.
 
 Filter per sumber ada di `/api/sources` → `filters` (mis. manta: `types`).
 
@@ -119,30 +99,29 @@ src/
   routes.js          semua endpoint + validasi
   image-proxy.js     streaming gambar (anti-SSRF)
   playground.js      sajikan public/playground.html (gzip di-cache)
-  public/playground.html   halaman tes & diagnosa scraper
-  diagnose.js        tes per langkah tiap scraper (error, lokasi, saran)
+  public/playground.html   halaman tes API
   config.js          baca env
   http/              router, respond (JSON+gzip+ETag), middleware
   lib/               cache TTL, errors, timeout
   scrapers/
-    index.js         registry — otomatis memuat semua file scraper di folder ini
-    _template.js     contoh scraper (diabaikan registry), salin untuk scraper baru
+    index.js         registry — daftar sumber
     manta.js         Manta Comics
     shinigami.js     Shinigami
     lumos.js         Lumos
     utils.js         HTTP client (retry, cache, dedupe) + trackHost
 test/                tes server
+scripts/smoke-test.mjs   tes scraper ke situs asli
 ```
 
 ## Nambah scraper baru
 
-1. Salin `src/scrapers/_template.js` jadi `src/scrapers/namabaru.js`, lalu ganti `id`, `name`, `BASE`, `imageHosts`, dan isi tiap fungsi sesuai situs sumber:
+1. Buat `src/scrapers/namabaru.js`, export default:
    `{ id, name, base, imageHeaders, imageHosts, filters?, search, latest, popular, browse, genres, detail, chapter }`
-   (bentuk item/detail ikuti template atau `shinigami.js`). Method yang tidak didukung boleh dihilangkan, endpoint-nya menjawab `501`.
-2. Restart server. File otomatis terdeteksi, tanpa daftar manual. File berawalan `_` diabaikan.
-3. Buka `/playground`, pilih scraper baru, klik **Diagnosa scraper ini**. Langkah yang merah menunjukkan persis di mana errornya (file:baris dan sarannya). Perbaiki, restart, diagnosa ulang sampai hijau.
+   (bentuk item/detail ikuti `manta.js`). Method yang tidak didukung boleh dihilangkan → endpoint jawab `501`.
+2. Import dan tambahkan ke array `PROVIDERS` di `src/scrapers/index.js`.
 
-Route, cache, rate limit, pencarian gabungan, dan image proxy langsung ikut.
+Route, cache, rate limit, pencarian gabungan, dan image proxy langsung ikut. Cek dengan `npm run smoke namabaru`.
+
 
 ## Kalau muncul HTTP 403 (IP server diblokir)
 
@@ -200,26 +179,7 @@ Endpoint (header `Authorization: Bearer <token>`):
 | `DELETE /api/community/admin/broadcasts/:id` | hanya OWNER: tarik pengumuman (HP yang belum mengambilnya tidak akan menerimanya) |
 | `GET /api/community/broadcasts?after=<id>` | publik (tanpa login, tanpa data pribadi), dipakai APK. Tanpa `after` → hanya `{latestId}` (posisi awal untuk HP baru). Dengan `after` → `{latestId, items}` yang lebih baru, paling lama dulu, maks 20 |
 
-Koleksi: `broadcasts`. Pengumuman OWNER kini langsung didorong lewat Firebase Cloud Messaging (FCM) ke semua perangkat terdaftar. Feed di atas tetap ada sebagai cadangan: APK tetap mengambilnya tiap ±30 menit, dan pengumuman yang sudah tampil dari FCM tidak ditampilkan lagi (dedupe per ID di perangkat).
-
-### FCM
-
-| Endpoint | Keterangan |
-|---|---|
-| `PUT /api/community/push-token` | `{token, appVersion?, previous?}`. Login opsional: kalau ada sesi valid token ditautkan ke akun, kalau tidak `userId: null`. Upsert per token (satu token = satu dokumen). `previous` = token lama perangkat yang sama, langsung dihapus |
-| `POST /api/community/push-token/unregister` | `{token}`. Dipanggil APK saat notifikasi dimatikan |
-| `GET /api/community/admin/push-status` | hanya OWNER: `{enabled, devices, linkedToAccount}` untuk cek konfigurasi |
-
-Koleksi `push_tokens`: `{token (unik), userId|null, appVersion, createdAt, updatedAt}`. Token yang ditolak FCM (`registration-token-not-registered`/`invalid-registration-token`) dihapus otomatis, token yang tidak diperbarui > 60 hari dibersihkan saat pengiriman, dan token ikut terhapus saat akun dihapus. APK menyinkronkan ulang tiap 7 hari.
-
-Pesan yang dikirim berupa **data-only** (tanpa blok `notification`) dengan prioritas `high` dan TTL 3 hari, supaya `onMessageReceived` di APK selalu jalan (juga saat aplikasi ditutup) dan tidak ada notifikasi ganda dari sistem. Hasil pengiriman disimpan di dokumen pengumuman (`push: {sent, failed, at}`).
-
-Env yang dibutuhkan di server (Railway):
-
-- `FIREBASE_SERVICE_ACCOUNT`: isi file JSON service account (Firebase Console → Project settings → Service accounts → Generate new private key), boleh JSON mentah atau base64.
-- `FIREBASE_PROJECT_ID`: opsional, bawaan `komikta-id`.
-
-Tanpa `FIREBASE_SERVICE_ACCOUNT`, FCM nonaktif dan semua fitur lain (termasuk polling pengumuman) tetap berjalan.
+Koleksi baru: `broadcasts`. APK mengambil feed ini tiap ±30 menit lewat WorkManager lalu memposting notifikasi lokal (bukan push instan).
 
 XP: komentar +5, balasan +3, like diterima +2. Hanya komentar bermutu (min. 8 karakter, 2 kata, bukan huruf berulang), batas 50 XP/hari dari posting dan 20 XP/hari dari like, like hanya dihitung dari akun berumur > 1 jam dan maks 3 per pasangan akun per hari, komentar identik 24 jam ditolak, menghapus komentar membalikkan XP-nya. Level = `floor((1+sqrt(1+4*xp/25))/2)`, maks 100. Rate limit per pengguna ada di memori proses (cukup untuk 1 instance).
 
@@ -233,13 +193,6 @@ Halaman publik `/privacy` (Kebijakan Privasi) dan `/terms` (Ketentuan) tersedia 
 - **Khusus OWNER**: `GET /admin/users/:id` (detail akun), `POST /admin/users/:id/xp` (`{ amount }`, ±50.000, dicatat sebagai event `admin`), `POST /admin/users/:id/reset-media` (`{ avatar }`, juga boleh MODERATOR untuk akun di bawahnya).
 - Pengguna lama mulai dari 0 chapter dibaca (riwayat lama tidak punya bukti waktu baca per chapter).
 
-## Katalog internal & kelengkapan data
+## Performa & operasional
 
-Semua daftar (latest/popular/search/browse) dan detail melewati `catalog` (koleksi Mongo `comic_catalog`):
-data yang kosong dilengkapi dari detail sumber, sumber lain (judul sama), lalu AniList (hanya judul dikirim).
-Nilai hasil turunan (status/tahun/sinopsis) ditandai di `derived[]`. Crawler latar belakang mengisi seluruh katalog bertahap (butuh MongoDB).
-
-Env: `CATALOG` (true), `META_ENRICH` (true; `false` menonaktifkan AniList), `CATALOG_CRAWL` (true),
-`CATALOG_CRAWL_PAGES` (8), `CATALOG_CRAWL_INTERVAL_MIN` (20), `CATALOG_CRAWL_DELAY_MS` (400), `CATALOG_INLINE_MAX` (12).
-
-Admin (OWNER): `GET {prefix}/admin/catalog/status`, `POST {prefix}/admin/catalog/sync` body `{source?, slug?, pages?}`.
+Ringkasan optimasi dan variabel env baru: lihat [`OPTIMIZATION.md`](OPTIMIZATION.md).

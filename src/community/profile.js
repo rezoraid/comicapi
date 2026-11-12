@@ -11,6 +11,7 @@ const loadUser = async (ctx, id) => {
   return ensurePublicNo(ctx, u)
 }
 
+// Statistik profil: semua angka dihitung dari data tersimpan, tidak ada nilai statis.
 export async function getProfile(ctx, viewer, id) {
   const u = await loadUser(ctx, id)
   const self = viewer?._id === u._id
@@ -27,6 +28,7 @@ export async function getProfile(ctx, viewer, id) {
   }
 }
 
+// Judul komik untuk komentar lama yang tidak menyimpan judul: ambil dari riwayat/like siapa pun.
 const titleLookup = async (ctx, rows) => {
   const keys = [...new Map(rows.map(r => [`${r.source}:${r.slug}`, { source: r.source, slug: r.slug }])).values()]
   const out = new Map()
@@ -51,6 +53,7 @@ const pretty = slug => slug.replace(/[-_]+/g, ' ').replace(/\b\w/g, c => c.toUpp
 export async function listActivity(ctx, viewer, id, { tab, page, limit }) {
   if (!TABS.includes(tab)) throw badRequest('"tab" harus all, comments, atau likes')
   const u = await loadUser(ctx, id)
+  // riwayat baca sendiri harus sudah memuat progres yang masih antre tulis-belakangan
   if (tab === 'all') await ctx.progress.flushFor(u._id)
   const skip = (page - 1) * limit
   let rows
@@ -59,6 +62,7 @@ export async function listActivity(ctx, viewer, id, { tab, page, limit }) {
   else rows = await ctx.c.comments.find({ userId: u._id, deleted: false }, { sort: { _id: -1 }, skip, limit: limit + 1 }).toArray()
   const hasMore = rows.length > limit
   rows = rows.slice(0, limit)
+  // judul & jumlah chapter dibaca saling lepas; jumlah dihitung dalam SATU aggregate (bukan satu COUNT per baris)
   const [titles, reads] = await Promise.all([
     tab === 'comments' || rows.some(badTitle) ? titleLookup(ctx, rows) : new Map(),
     tab === 'all' ? chaptersReadByComics(ctx, u._id, rows) : new Map()

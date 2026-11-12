@@ -1,7 +1,13 @@
 import { badRequest, forbidden, notFound } from '../lib/errors.js'
 import { rank, idParam, newId, bodyText, qint, qstr, ID, SLUG } from './util.js'
 
-const ZERO_ID = '0'.repeat(24)
+/**
+ * Pengumuman dari OWNER yang ditampilkan sebagai notifikasi di semua HP.
+ * HP mengambilnya berkala (tanpa login, tanpa data pribadi) dan memposting notifikasi lokal.
+ * ID berurutan menurut waktu (hex), jadi "setelah ID ini" cukup dengan perbandingan teks.
+ */
+
+export const ZERO_ID = '0'.repeat(24)
 const PAGE_SIZE = 20
 const FEED_LIMIT = 20
 
@@ -13,6 +19,7 @@ const oneLine = (v, name, max) => bodyText(v, name, { max }).replace(/\s*\n\s*/g
 
 const view = b => ({ id: b._id, title: b.title, body: b.body, source: b.source || '', slug: b.slug || '', createdAt: b.createdAt })
 
+/** OWNER mengirim pengumuman. `source` + `slug` (opsional, harus berpasangan) = komik yang dibuka saat notifikasi diketuk. */
 export async function createBroadcast(ctx, actor, input, hasSource) {
   needOwner(actor)
   const title = oneLine(input?.title, 'title', 60)
@@ -24,10 +31,14 @@ export async function createBroadcast(ctx, actor, input, hasSource) {
   if (slug && !SLUG.test(slug)) throw badRequest('"slug" tidak valid')
   const doc = { _id: newId(), title, body, source, slug, createdBy: actor._id, createdAt: ctx.now(), deleted: false }
   await ctx.c.broadcasts.insertOne(doc)
-  ctx.push?.dispatch(doc)
   return { broadcast: view(doc) }
 }
 
+/**
+ * Publik, dipakai HP.
+ *  - tanpa `after`: hanya `latestId` (posisi awal untuk HP baru; pengumuman lama tidak dikirim ulang)
+ *  - dengan `after`: pengumuman yang lebih baru, paling lama dulu, maks 20
+ */
 export async function feed(ctx, query) {
   const afterRaw = qstr(query, 'after', 24)
   if (afterRaw && !ID.test(afterRaw)) throw badRequest('"after" tidak valid')
@@ -38,6 +49,7 @@ export async function feed(ctx, query) {
   return { latestId, items: rows.map(view) }
 }
 
+/** Riwayat pengumuman untuk panel OWNER, terbaru dulu. */
 export async function listBroadcasts(ctx, actor, query) {
   needOwner(actor)
   const page = qint(query, 'page', 1, 1, 200)
@@ -45,6 +57,7 @@ export async function listBroadcasts(ctx, actor, query) {
   return { page, hasMore: rows.length > PAGE_SIZE, items: rows.slice(0, PAGE_SIZE).map(view) }
 }
 
+/** Tarik pengumuman: HP yang belum mengambilnya tidak akan menerimanya (yang sudah menerima tetap punya notifikasinya). */
 export async function removeBroadcast(ctx, actor, id) {
   needOwner(actor)
   const uid = idParam(id)

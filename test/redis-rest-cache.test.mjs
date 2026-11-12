@@ -21,6 +21,7 @@ test('Redis REST cache round-trips encoded HTTP response and uses namespaced has
     return new Response(JSON.stringify({ error: 'unsupported' }), { status: 400 })
   }
   t.after(() => { globalThis.fetch = originalFetch })
+
   const cache = new RedisRestCache({ url: 'https://redis.example', token: 'secret', prefix: 'test:', timeoutMs: 100 })
   const raw = Buffer.from('{"ok":true}')
   const entry = { body: raw, gzipped: gzipSync(raw), etag: '"abc"' }
@@ -43,6 +44,7 @@ test('Redis REST cache fails open when Redis is unavailable or payload is malfor
   const cache = new RedisRestCache({ url: 'https://redis.example', token: 'secret' })
   assert.equal(await cache.get('/api/offline'), null)
   assert.equal(await cache.set('/api/offline', { body: Buffer.from('x'), etag: '"x"' }, 10), false)
+
   globalThis.fetch = async () => new Response(JSON.stringify({ result: '{bad json' }), { status: 200 })
   assert.equal(await cache.get('/api/bad'), null)
 })
@@ -65,6 +67,7 @@ test('Redis REST rate limiter shares atomic fixed-window counts across instances
     return new Response(JSON.stringify({ result: [current, 30_000] }), { status: 200 })
   }
   t.after(() => { globalThis.fetch = originalFetch })
+
   const a = new RedisRestCache({ url: 'https://redis.example', token: 'secret', prefix: 'test:' })
   const b = new RedisRestCache({ url: 'https://redis.example', token: 'secret', prefix: 'test:' })
   const first = await a.consumeRateLimit('user-123', { max: 2, windowMs: 60_000 }, 'community:write')
@@ -75,6 +78,7 @@ test('Redis REST rate limiter shares atomic fixed-window counts across instances
   assert.equal(third.ok, false)
   assert.equal(third.retryAfter, 30)
 })
+
 
 test('hybrid limiter uses shared Redis counts and bounded local fallback on Redis failure', async t => {
   const originalFetch = globalThis.fetch
@@ -89,6 +93,7 @@ test('hybrid limiter uses shared Redis counts and bounded local fallback on Redi
     return new Response(JSON.stringify({ result: [count, 5000] }), { status: 200 })
   }
   t.after(() => { globalThis.fetch = originalFetch })
+
   const shared = new RedisRestCache({ url: 'https://redis.example', token: 'secret' })
   const a = createHybridRateLimiter({ max: 1, windowMs: 5000, sharedCache: shared, namespace: 'test' })
   const b = createHybridRateLimiter({ max: 1, windowMs: 5000, sharedCache: shared, namespace: 'test' })
@@ -100,6 +105,7 @@ test('hybrid limiter uses shared Redis counts and bounded local fallback on Redi
   a.close(); b.close()
 })
 
+
 test('Redis REST cache opens a circuit breaker after repeated failures and recovers after cooldown', async t => {
   const originalFetch = globalThis.fetch
   let calls = 0
@@ -108,9 +114,11 @@ test('Redis REST cache opens a circuit breaker after repeated failures and recov
     throw new Error('offline')
   }
   t.after(() => { globalThis.fetch = originalFetch })
+
   const cache = new RedisRestCache({ url: 'https://redis.example', token: 'secret' })
   for (let i = 0; i < 6; i++) await cache.get('/api/down')
   assert.equal(calls, 3)
+
   cache.downUntil = Date.now() - 1
   await cache.get('/api/down')
   assert.equal(calls, 4)
@@ -122,6 +130,7 @@ test('Redis REST cache still reads legacy entries that stored both body and gzip
   const legacy = JSON.stringify({ body: raw.toString('base64'), gzipped: gzipSync(raw).toString('base64'), etag: '"old"' })
   globalThis.fetch = async () => new Response(JSON.stringify({ result: legacy }), { status: 200 })
   t.after(() => { globalThis.fetch = originalFetch })
+
   const cache = new RedisRestCache({ url: 'https://redis.example', token: 'secret' })
   const restored = await cache.get('/api/legacy')
   assert.equal(restored.body.toString(), raw.toString())
