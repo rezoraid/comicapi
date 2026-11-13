@@ -1,8 +1,8 @@
 import * as cheerio from 'cheerio'
-import { createMirrorHttp, relaysFromEnv, trackHost, clean, num, UA } from './utils.js'
+import { createMirrorHttp, relaysFromEnv, clean, num, UA } from './utils.js'
 
 const BASES = ['https://03.lumosgg.com', 'https://02.lumosgg.com', 'https://lumoskomik.com']
-const IMG_DEFAULT = { proxyEnabled: false, base: 'https://lms.imgsvr.my.id' }
+const IMG_DEFAULT = { proxyEnabled: false, base: 'https://lms.imgsvr.my.id/file' }
 
 const MIN = 60 * 1000
 const http = createMirrorHttp({ bases: BASES, timeout: 10000, retries: 2, relay: relaysFromEnv('LUMOS_RELAY', 'RELAY_URL') })
@@ -39,26 +39,12 @@ function readImgCfg(html) {
   } catch {}
 }
 
-// Konfigurasi gambar (CDN atau proxy situs) hanya ada di HTML. Endpoint JSON (search/latest) tidak membawanya,
-// jadi dibaca dulu sekali supaya URL cover tidak ditebak dari nilai bawaan yang bisa sudah usang.
-let cfgTriedAt = 0
-async function ensureImgCfg() {
-  if (imgCfg || Date.now() - cfgTriedAt < 60 * 1000) return
-  cfgTriedAt = Date.now()
-  await Promise.race([
-    http.get('/', { ttl: 5 * MIN }).then(readImgCfg, () => {}),
-    new Promise(resolve => setTimeout(resolve, 3000).unref?.())
-  ])
-}
-
-const THUMB = /^\/api\/image\/(thumbnail|p\/)/
-
 function resolveImage(src) {
   if (!src) return ''
   src = String(src).trim()
-  if (/^https?:\/\//.test(src)) return trackHost(imageHosts, src)
+  if (/^https?:\/\//.test(src)) return src
   const abs = site() + (src.startsWith('/') ? src : '/' + src)
-  if (THUMB.test(src)) return abs
+  if (/^\/api\/image\/(thumbnail|p\/)/.test(src)) return abs
   const c = imgCfg || IMG_DEFAULT
   if (c.proxyEnabled === false && c.base && !src.includes('?stitch=')) {
     let n = src
@@ -66,32 +52,9 @@ function resolveImage(src) {
     else if (n.startsWith('/uploads/')) n = n.slice(9)
     else return abs
     if (n.includes('?')) n = n.slice(0, n.indexOf('?'))
-    if (n) return trackHost(imageHosts, `${c.base.replace(/\/+$/, '')}/${n}`)
+    if (n) return `${c.base.replace(/\/+$/, '')}/${n}`
   }
   return abs
-}
-
-/**
- * Cadangan kalau gambar gagal diambil: CDN <-> proxy situs, atau mirror berikutnya.
- * Dipanggil image proxy (satu kali) saat percobaan pertama gagal.
- */
-function imageFallback(target) {
-  try {
-    const c = imgCfg || IMG_DEFAULT
-    const cdn = c.base ? new URL(c.base) : null
-    const cdnPath = cdn ? cdn.pathname.replace(/\/+$/, '') : ''
-    if (cdn && target.hostname === cdn.hostname && target.pathname.startsWith(cdnPath + '/')) {
-      return `${site()}/api/image/${target.pathname.slice(cdnPath.length + 1)}${target.search}`
-    }
-    const i = BASES.findIndex(b => new URL(b).hostname === target.hostname)
-    if (i < 0) return null
-    if (cdn && target.pathname.startsWith('/api/image/') && !THUMB.test(target.pathname)) {
-      return `${cdn.origin}${cdnPath}/${target.pathname.slice(11)}`
-    }
-    return BASES[(i + 1) % BASES.length] + target.pathname + target.search
-  } catch {
-    return null
-  }
 }
 
 function sortChapters(list) {
@@ -145,7 +108,6 @@ function fromApi(i) {
 }
 
 export async function search(query, { limit = 10 } = {}) {
-  await ensureImgCfg()
   let items = []
   try {
     const data = await http.get(`/api/search?q=${encodeURIComponent(query)}&limit=${limit}`, { json: true, ttl: MIN })
@@ -156,7 +118,6 @@ export async function search(query, { limit = 10 } = {}) {
 }
 
 export async function latest({ page = 1 } = {}) {
-  await ensureImgCfg()
   let data = null
   try {
     data = await http.get(`/api/home-latest?page=${page}`, { json: true, ttl: MIN })
@@ -462,11 +423,7 @@ export async function chapter(slug, chapterSlug) {
   }
 }
 
-export const resetCache = () => {
-  imgCfg = null
-  cfgTriedAt = 0
-  http.clear()
-}
+export const resetCache = () => http.clear()
 
 export default {
   id: 'lumos',
@@ -476,7 +433,6 @@ export default {
     return { 'user-agent': UA, referer: site() + '/' }
   },
   imageHosts,
-  imageFallback,
   filters: { types: TYPES, statuses: STATUSES, sorts: SORTS },
   search,
   latest,

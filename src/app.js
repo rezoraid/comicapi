@@ -7,6 +7,7 @@ import { TtlCache } from './lib/cache.js'
 import { RedisRestCache } from './lib/redis-rest-cache.js'
 import { registerRoutes } from './routes.js'
 import { registerCommunityRoutes } from './community/routes.js'
+import { createCatalog } from './catalog-sync.js'
 
 /** Key cache: path + query yang diurutkan (?a=1&b=2 sama dengan ?b=2&a=1). */
 function cacheKey(url) {
@@ -17,7 +18,7 @@ function cacheKey(url) {
   return `${url.pathname}?${params.toString()}`
 }
 
-export function createApp({ registry, config, logger = console, community = null, sharedCache: injectedSharedCache = null }) {
+export function createApp({ registry, config, logger = console, community = null, sharedCache: injectedSharedCache = null, catalog: injectedCatalog }) {
   const cache = new TtlCache({
     max: config.cacheMax,
     maxBytes: (config.cacheMaxMb ?? 96) * 1024 * 1024,
@@ -31,9 +32,23 @@ export function createApp({ registry, config, logger = console, community = null
     prefix: config.redisKeyPrefix,
     timeoutMs: config.redisTimeoutMs
   })
+  // hasil parse body ter-cache dipakai bersama semua request (overlay tidak boleh mengubahnya, hanya membuat salinan)
+  const parsed = new WeakMap()
+  const dataOf = value => {
+    let d = parsed.get(value)
+    if (d === undefined) {
+      d = JSON.parse(value.body.toString('utf8')).data
+      parsed.set(value, d)
+    }
+    return d
+  }
+  // Katalog internal. server.js memasang versi lengkap (metadata luar + crawler); tanpa itu katalog hanya di memori dan tanpa jaringan tambahan.
+  const catalog = injectedCatalog !== undefined
+    ? injectedCatalog
+    : createCatalog({ registry, collection: () => (typeof community === 'function' ? community() : community)?.c?.catalog ?? null, logger, crawl: false })
   const router = new Router()
-  registerCommunityRoutes(router, { registry, community })
-  registerRoutes(router, { registry, config, community })
+  registerCommunityRoutes(router, { registry, community, catalog })
+  registerRoutes(router, { registry, config, community, catalog })
 
   const limiters = {
     default: createRateLimiter(config.rateLimit),
@@ -165,11 +180,21 @@ export function createApp({ registry, config, logger = console, community = null
       }
 
       const ctx = { req, res, params, query: url.searchParams, ip: clientIp(req, config.trustProxy), warm }
-      if (route.body) ctx.body = await readJson(req, url.pathname.endsWith('/me/avatar') ? 512 * 1024 : 16_384)
+      if (route.body) ctx.body = await readJson(req, route.bodyLimit ?? (url.pathname.endsWith('/me/avatar') ? 512 * 1024 : 16_384))
       if (route.raw) return await route.handler(ctx)
 
       if (route.ttl > 0) {
         const { value, state } = await cachedEntry(url, route, ctx)
+        if (route.overlay) {
+          // views + data edit OWNER ditempel di atas hasil cache. Gagal (mis. MongoDB down) = sajikan hasil cache apa adanya, katalog tetap terbaca.
+          try {
+            const base = dataOf(value)
+            const data = await withTimeout(Promise.resolve(route.overlay(base, ctx)), config.requestTimeoutMs)
+            if (data !== base) return send(req, res, await encode({ ok: true, data }, { gzip: acceptsGzip(req), level: 4 }), { revalidate: true, cacheState: state })
+          } catch (err) {
+            logger.error(`[overlay] ${url.pathname} → ${err?.message || err}`)
+          }
+        }
         return send(req, res, value, { cacheSeconds: route.ttl, cacheState: state })
       }
       // dinamis: kompres hanya kalau klien meminta, level ringan
@@ -186,6 +211,7 @@ export function createApp({ registry, config, logger = console, community = null
   return {
     handler,
     cache,
+    catalog,
     startWarmer,
     warmOnce,
     close() {

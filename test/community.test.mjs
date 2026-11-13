@@ -6,6 +6,7 @@ import { loadConfig } from '../src/config.js'
 import { createCommunity } from '../src/community/index.js'
 import { createGoogleVerifier } from '../src/community/google.js'
 import { createTokens } from '../src/community/tokens.js'
+import { newId } from '../src/community/util.js'
 import { levelFromXp, xpForLevel, isQuality } from '../src/community/xp.js'
 import { quiet, listen, makeRegistry } from './helpers.mjs'
 import { fakeDb } from './fake-mongo.mjs'
@@ -33,6 +34,16 @@ const cfg = () => loadConfig({
   OWNER_EMAILS: 'owner@example.com', MODERATOR_EMAILS: 'dev@example.com'
 }).community
 
+const fcm = { calls: [], dead: new Set(), fail: false }
+const fakeMessaging = {
+  async sendEachForMulticast(m) {
+    if (fcm.fail) throw new Error('fcm down')
+    fcm.calls.push(m)
+    return { responses: m.tokens.map(t => (fcm.dead.has(t) ? { success: false, error: { code: 'messaging/registration-token-not-registered' } } : { success: true })) }
+  }
+}
+const tok = n => `tok${String(n).padStart(4, '0')}:APA91b${'x'.repeat(40)}`
+
 let jwksCalls = 0
 const fetchJwks = async () => (jwksCalls++, { keys: [jwk], maxAge: 3600 })
 let env, srv, app, community
@@ -59,7 +70,7 @@ const me = token => call('GET', '/api/community/me', { token }).then(r => r.data
 
 before(async () => {
   env = { db: fakeDb() }
-  community = await createCommunity(cfg(), { db: env.db, fetchJwks, now, logger: quiet, limits: { commentBurst: { max: 1000 }, commentHour: { max: 1000 }, write: { max: 1000 }, like: { max: 1000 }, report: { max: 1000 }, login: { max: 10000 }, readTime: { max: 100000 } } })
+  community = await createCommunity(cfg(), { db: env.db, messaging: fakeMessaging, fetchJwks, now, logger: quiet, limits: { commentBurst: { max: 1000 }, commentHour: { max: 1000 }, write: { max: 1000 }, like: { max: 1000 }, report: { max: 1000 }, login: { max: 10000 }, readTime: { max: 100000 } } })
   app = createApp({ registry: makeRegistry(0), config: loadConfig({ LOG_REQUESTS: 'false', RATE_LIMIT_MAX: '100000' }), logger: quiet, community })
   srv = await listen(app.handler)
 })
@@ -952,4 +963,101 @@ test('pengumuman OWNER: kirim, feed publik untuk HP, riwayat, tarik, dan hak aks
   assert.equal((await call('DELETE', `/api/community/admin/broadcasts/${a.data.broadcast.id}`, { token: owner.token })).status, 200)
   assert.equal((await call('DELETE', `/api/community/admin/broadcasts/${a.data.broadcast.id}`, { token: owner.token })).status, 404)
   assert.deepEqual((await call('GET', `/api/community/broadcasts?after=${base}`)).data.items.map(i => i.title), ['Chapter baru!'])
+})
+
+test('FCM: token tersimpan di MongoDB, pengumuman OWNER langsung dikirim, token mati dibuang', async () => {
+  const col = env.db.collection('push_tokens')
+  col.docs = []
+  fcm.calls.length = 0
+  fcm.dead.clear()
+  const u = await login('fcm-user', 'fcm-user@example.com')
+  const owner = await login('fcm-owner', 'owner@example.com')
+  const put = (token, t) => call('PUT', '/api/community/push-token', { token: t, body: { token, appVersion: '1.2.0' } })
+
+  assert.equal((await put('pendek')).status, 400)
+  assert.equal((await call('PUT', '/api/community/push-token', { body: {} })).status, 400)
+  assert.equal((await put(tok(1))).status, 200)
+  assert.equal((await put(tok(2), u.token)).status, 200)
+  assert.equal((await put(tok(3), owner.token)).status, 200)
+  assert.equal((await put(tok(1))).status, 200)
+  assert.equal(col.docs.length, 3)
+  assert.equal(col.docs.find(d => d.token === tok(2)).userId, u.user.id)
+  assert.equal(col.docs.find(d => d.token === tok(1)).userId, null)
+  assert.equal(col.docs.find(d => d.token === tok(1)).appVersion, '1.2.0')
+
+  await put(tok(2))
+  assert.equal(col.docs.length, 3)
+  assert.equal(col.docs.find(d => d.token === tok(2)).userId, null)
+  await put(tok(2), u.token)
+
+  assert.equal((await call('PUT', '/api/community/push-token', { token: 'sesi.rusak.token', body: { token: tok(1) } })).status, 200)
+  assert.equal((await call('PUT', '/api/community/push-token', { body: { token: tok(4), previous: tok(1) } })).status, 200)
+  assert.deepEqual(col.docs.map(d => d.token).sort(), [tok(2), tok(3), tok(4)])
+  await put(tok(1))
+  assert.equal(col.docs.length, 4)
+  await call('POST', '/api/community/push-token/unregister', { body: { token: tok(4) } })
+  assert.equal(col.docs.length, 3)
+
+  assert.equal((await call('GET', '/api/community/admin/push-status', { token: u.token })).status, 403)
+  const st = await call('GET', '/api/community/admin/push-status', { token: owner.token })
+  assert.deepEqual([st.data.enabled, st.data.devices, st.data.linkedToAccount], [true, 3, 2])
+
+  fcm.dead.add(tok(3))
+  const sent = await call('POST', '/api/community/admin/broadcasts', { token: owner.token, body: { title: 'Halo FCM', body: 'Isi pesan', source: 'mock', slug: 'solo-leveling' } })
+  assert.equal(sent.status, 200)
+  await community.push.flush()
+  assert.equal(fcm.calls.length, 1)
+  const m = fcm.calls[0]
+  assert.deepEqual([...m.tokens].sort(), [tok(1), tok(2), tok(3)])
+  assert.equal(m.notification, undefined)
+  assert.deepEqual(m.data, { type: 'broadcast', id: sent.data.broadcast.id, title: 'Halo FCM', body: 'Isi pesan', source: 'mock', slug: 'solo-leveling', createdAt: String(sent.data.broadcast.createdAt) })
+  assert.equal(m.android.priority, 'high')
+  assert.equal(m.android.ttl, 3 * 86_400_000)
+  assert.deepEqual(col.docs.map(d => d.token).sort(), [tok(1), tok(2)])
+  const stored = env.db.collection('broadcasts').docs.find(d => d._id === sent.data.broadcast.id)
+  assert.deepEqual([stored.push.sent, stored.push.failed], [2, 1])
+
+  const feed = await call('GET', `/api/community/broadcasts?after=${'0'.repeat(24)}`)
+  assert.ok(feed.data.items.some(i => i.id === sent.data.broadcast.id))
+  assert.equal(feed.data.items[0].push, undefined)
+  assert.equal((await call('GET', '/api/community/admin/broadcasts', { token: owner.token })).data.items[0].id, sent.data.broadcast.id)
+
+  fcm.fail = true
+  const down = await call('POST', '/api/community/admin/broadcasts', { token: owner.token, body: { title: 'FCM mati', body: 'Tetap tersimpan' } })
+  await community.push.flush()
+  fcm.fail = false
+  assert.equal(down.status, 200)
+  assert.equal(col.docs.length, 2)
+  assert.ok((await call('GET', `/api/community/broadcasts?after=${'0'.repeat(24)}`)).data.items.some(i => i.id === down.data.broadcast.id))
+
+  assert.equal((await call('POST', '/api/community/push-token/unregister', { body: { token: tok(1) } })).status, 200)
+  assert.deepEqual(col.docs.map(d => d.token), [tok(2)])
+  assert.equal((await call('POST', '/api/community/push-token/unregister', { body: { token: 'x' } })).status, 400)
+
+  assert.equal((await call('DELETE', '/api/community/me', { token: u.token })).status, 200)
+  assert.equal(col.docs.length, 0)
+})
+
+test('FCM: banyak perangkat dikirim per 500 token, token basi dibersihkan', async () => {
+  const col = env.db.collection('push_tokens')
+  col.docs = []
+  fcm.calls.length = 0
+  const owner = await login('fcm-owner2', 'owner@example.com')
+  const t0 = clock.t
+  for (let i = 0; i < 1203; i++) col.docs.push({ _id: newId(), token: tok(i + 10), userId: null, updatedAt: t0, createdAt: t0 })
+  col.docs.push({ _id: newId(), token: tok(9999), userId: null, updatedAt: t0 - 61 * 86_400_000, createdAt: t0 - 90 * 86_400_000 })
+  const r = await call('POST', '/api/community/admin/broadcasts', { token: owner.token, body: { title: 'Massal', body: 'Tes' } })
+  assert.equal(r.status, 200)
+  await community.push.flush()
+  assert.deepEqual(fcm.calls.map(c => c.tokens.length), [500, 500, 203])
+  assert.equal(new Set(fcm.calls.flatMap(c => c.tokens)).size, 1203)
+  assert.equal(col.docs.some(d => d.token === tok(9999)), false)
+  col.docs = []
+})
+
+test('FCM tidak dikonfigurasi: pengumuman tetap jalan lewat feed', async () => {
+  const c2 = await createCommunity(cfg(), { db: env.db, messaging: null, fetchJwks, now, logger: quiet })
+  assert.equal(c2.push.enabled, false)
+  assert.deepEqual(await c2.push.dispatch({ _id: 'a'.repeat(24), title: 't', body: 'b', createdAt: 1 }), { sent: 0, failed: 0, skipped: true })
+  await c2.close()
 })

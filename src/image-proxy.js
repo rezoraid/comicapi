@@ -58,7 +58,7 @@ export function imageProxy(registry, { cacheMb = 48, headerTimeoutMs = 12_000, b
   const FETCH_RETRIES = retries
   const cache = createImageCache(cacheMb)
   const limiter = createLimiter({ max: concurrency, maxQueue, waitMs: queueWaitMs })
-  const handle = async ({ req, res, query }) => {
+  return async ({ req, res, query }) => {
     const raw = query.get('url')
     if (!raw) throw badRequest('Parameter "url" wajib diisi')
 
@@ -236,26 +236,6 @@ export function imageProxy(registry, { cacheMb = 48, headerTimeoutMs = 12_000, b
       res.destroy() // klien putus, timeout, atau upstream melewati batas ukuran
     } finally {
       clearTimer()
-    }
-  }
-
-  // Kalau sumber gagal, coba sekali lewat alamat cadangan milik scraper (mis. CDN <-> proxy situs, mirror lain)
-  return async ctx => {
-    try {
-      return await handle(ctx)
-    } catch (error) {
-      if (!(error instanceof HttpError) || ![404, 502, 504].includes(error.status) || ctx.res.headersSent) throw error
-      let alt = null
-      try {
-        const u = new URL(ctx.query.get('url'))
-        alt = registry.findByImageHost(u.hostname)?.imageFallback?.(u) || null
-      } catch {}
-      if (!alt || alt === ctx.query.get('url')) throw error
-      try {
-        return await handle({ ...ctx, query: new URLSearchParams({ url: alt }) })
-      } catch {
-        throw error
-      }
     }
   }
 }
