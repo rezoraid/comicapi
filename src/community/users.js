@@ -24,7 +24,7 @@ export const OWNER_LEVEL = 99999
 // Dokumen penuh (belum ber-flag) tetap dikenali lewat customPicture.
 export const hasAvatar = u => (typeof u.hasAvatar === 'boolean' ? u.hasAvatar : !!u.customPicture)
 
-// OWNER tampil dengan level tetap; level pengguna lain murni dari XP di server. Nomor # = urutan akun dibuat.
+// OWNER selalu tampil sebagai #1 dengan level tetap; level pengguna lain murni dari XP di server.
 export const publicUser = (u, self = false) => {
   const owner = u.role === 'OWNER'
   const p = progress(u.xp || 0)
@@ -37,7 +37,7 @@ export const publicUser = (u, self = false) => {
     role: u.role,
     // OWNER selalu terverifikasi; akun lain diberi centang oleh OWNER lewat panel admin.
     verified: owner || !!u.verified,
-    publicNo: u.publicNo || 0,
+    publicNo: owner ? 1 : u.publicNo || 0,
     level: owner ? OWNER_LEVEL : p.level,
     ...(self ? { email: u.email, ...p, ...(owner ? { level: OWNER_LEVEL, xpCurrentLevel: p.xp, xpNextLevel: p.xp } : {}), usernameChangeableAt: u.usernameChangedAt ? u.usernameChangedAt + USERNAME_COOLDOWN : 0, joinedAt: u.createdAt || 0 } : {})
   }
@@ -83,7 +83,7 @@ export async function loginWithGoogle(ctx, idToken) {
       }
       try {
         await ctx.c.users.insertOne(doc)
-        user = await assignPublicNo(ctx, doc)
+        user = doc
       } catch (e) {
         if (!isDup(e)) throw e
         user = await ctx.c.users.findOne({ googleSub: g.sub }, NO_BLOB)
@@ -122,34 +122,28 @@ export async function authenticate(ctx, req, { optional = false } = {}) {
   return user
 }
 
-const nextNo = async ctx => (await ctx.c.counters.findOneAndUpdate({ _id: 'publicNo' }, { $inc: { seq: 1 } }, { upsert: true, returnDocument: 'after' })).seq
+const nextNo = async ctx => {
+  let row = await ctx.c.counters.findOneAndUpdate({ _id: 'publicNo' }, { $inc: { seq: 1 } }, { upsert: true, returnDocument: 'after' })
+  // Nomor 1 dicadangkan untuk OWNER.
+  if (row.seq === 1) row = await ctx.c.counters.findOneAndUpdate({ _id: 'publicNo' }, { $inc: { seq: 1 } }, { upsert: true, returnDocument: 'after' })
+  return row.seq
+}
 
-async function assignPublicNo(ctx, u) {
-  const seq = await nextNo(ctx)
-  await ctx.c.users.updateOne({ _id: u._id, publicNo: { $exists: false } }, { $set: { publicNo: seq } })
-  return { ...u, publicNo: seq }
+async function claimOwnerNo(ctx, u) {
+  if (u.publicNo === 1) return u
+  const holder = await ctx.c.users.findOne({ publicNo: 1, _id: { $ne: u._id } }, NO_BLOB)
+  // Pemegang lama nomor 1 (bukan owner) menerima nomor owner sebelumnya supaya tidak ada dua #1.
+  if (holder && holder.role !== 'OWNER') await ctx.c.users.updateOne({ _id: holder._id }, { $set: { publicNo: u.publicNo > 1 ? u.publicNo : await nextNo(ctx) } })
+  await ctx.c.users.updateOne({ _id: u._id }, { $set: { publicNo: 1 } })
+  return { ...u, publicNo: 1 }
 }
 
 export async function ensurePublicNo(ctx, u) {
+  if (u.role === 'OWNER') return claimOwnerNo(ctx, u)
   if (u.publicNo) return u
-  await assignPublicNo(ctx, u)
+  const seq = await nextNo(ctx)
+  await ctx.c.users.updateOne({ _id: u._id, publicNo: { $exists: false } }, { $set: { publicNo: seq } })
   return (await ctx.c.users.findOne({ _id: u._id }, NO_BLOB)) || u
-}
-
-export async function renumberByCreation(ctx, logger = console) {
-  try {
-    if (await ctx.c.counters.findOne({ _id: 'publicNoByCreation' })) return
-    const rows = await ctx.c.users.find({}, { projection: { _id: 1, createdAt: 1, publicNo: 1 } }).toArray()
-    rows.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0) || (a._id < b._id ? -1 : 1))
-    for (let i = 0; i < rows.length; i += 50) {
-      await Promise.all(rows.slice(i, i + 50).map((r, j) => (r.publicNo === i + j + 1 ? null : ctx.c.users.updateOne({ _id: r._id }, { $set: { publicNo: i + j + 1 } }))))
-    }
-    const counter = await ctx.c.counters.findOne({ _id: 'publicNo' })
-    if ((counter?.seq || 0) < rows.length) await ctx.c.counters.updateOne({ _id: 'publicNo' }, { $set: { seq: rows.length } }, { upsert: true })
-    await ctx.c.counters.updateOne({ _id: 'publicNoByCreation' }, { $set: { at: ctx.now() } }, { upsert: true })
-  } catch (err) {
-    logger.error(`penomoran ulang akun gagal: ${err?.message || err}`)
-  }
 }
 
 export const monthsSince = (ctx, ts) => (ts > 0 ? Math.max(0, Math.floor((ctx.now() - ts) / (30.4375 * DAY))) : 0)

@@ -10,9 +10,10 @@
  */
 import lumos from './lumos.js'
 import manta from './manta.js'
+import mangaplus from './mangaplus.js'
 import shinigami from './shinigami.js'
 
-const PROVIDERS = [lumos, manta, shinigami]
+const PROVIDERS = [lumos, manta, mangaplus, shinigami]
 const METHODS = ['search', 'latest', 'popular', 'browse', 'genres', 'detail', 'chapter']
 
 const providers = new Map()

@@ -1,8 +1,8 @@
 import * as cheerio from 'cheerio'
-import { createMirrorHttp, relaysFromEnv, trackHost, clean, num, UA } from './utils.js'
+import { createMirrorHttp, relaysFromEnv, clean, num, UA } from './utils.js'
 
 const BASES = ['https://03.lumosgg.com', 'https://02.lumosgg.com', 'https://lumoskomik.com']
-const IMG_DEFAULT = { proxyEnabled: false, base: 'https://lms.imgsvr.my.id' }
+const IMG_DEFAULT = { proxyEnabled: false, base: 'https://lms.imgsvr.my.id/file' }
 
 const MIN = 60 * 1000
 const http = createMirrorHttp({ bases: BASES, timeout: 10000, retries: 2, relay: relaysFromEnv('LUMOS_RELAY', 'RELAY_URL') })
@@ -39,26 +39,12 @@ function readImgCfg(html) {
   } catch {}
 }
 
-// Konfigurasi gambar (CDN atau proxy situs) hanya ada di HTML. Endpoint JSON (search/latest) tidak membawanya,
-// jadi dibaca dulu sekali supaya URL cover tidak ditebak dari nilai bawaan yang bisa sudah usang.
-let cfgTriedAt = 0
-async function ensureImgCfg() {
-  if (imgCfg || Date.now() - cfgTriedAt < 60 * 1000) return
-  cfgTriedAt = Date.now()
-  await Promise.race([
-    http.get('/', { ttl: 5 * MIN }).then(readImgCfg, () => {}),
-    new Promise(resolve => setTimeout(resolve, 3000).unref?.())
-  ])
-}
-
-const THUMB = /^\/api\/image\/(thumbnail|p\/)/
-
 function resolveImage(src) {
   if (!src) return ''
   src = String(src).trim()
-  if (/^https?:\/\//.test(src)) return trackHost(imageHosts, src)
+  if (/^https?:\/\//.test(src)) return src
   const abs = site() + (src.startsWith('/') ? src : '/' + src)
-  if (THUMB.test(src)) return abs
+  if (/^\/api\/image\/(thumbnail|p\/)/.test(src)) return abs
   const c = imgCfg || IMG_DEFAULT
   if (c.proxyEnabled === false && c.base && !src.includes('?stitch=')) {
     let n = src
@@ -66,32 +52,9 @@ function resolveImage(src) {
     else if (n.startsWith('/uploads/')) n = n.slice(9)
     else return abs
     if (n.includes('?')) n = n.slice(0, n.indexOf('?'))
-    if (n) return trackHost(imageHosts, `${c.base.replace(/\/+$/, '')}/${n}`)
+    if (n) return `${c.base.replace(/\/+$/, '')}/${n}`
   }
   return abs
-}
-
-/**
- * Cadangan kalau gambar gagal diambil: CDN <-> proxy situs, atau mirror berikutnya.
- * Dipanggil image proxy (satu kali) saat percobaan pertama gagal.
- */
-function imageFallback(target) {
-  try {
-    const c = imgCfg || IMG_DEFAULT
-    const cdn = c.base ? new URL(c.base) : null
-    const cdnPath = cdn ? cdn.pathname.replace(/\/+$/, '') : ''
-    if (cdn && target.hostname === cdn.hostname && target.pathname.startsWith(cdnPath + '/')) {
-      return `${site()}/api/image/${target.pathname.slice(cdnPath.length + 1)}${target.search}`
-    }
-    const i = BASES.findIndex(b => new URL(b).hostname === target.hostname)
-    if (i < 0) return null
-    if (cdn && target.pathname.startsWith('/api/image/') && !THUMB.test(target.pathname)) {
-      return `${cdn.origin}${cdnPath}/${target.pathname.slice(11)}`
-    }
-    return BASES[(i + 1) % BASES.length] + target.pathname + target.search
-  } catch {
-    return null
-  }
 }
 
 function sortChapters(list) {
@@ -108,18 +71,10 @@ function sortChapters(list) {
 function pickList(data) {
   if (Array.isArray(data)) return data
   if (!data || typeof data !== 'object') return []
-  for (const k of ['results', 'data', 'comics', 'items', 'komik', 'list']) {
+  for (const k of ['results', 'data', 'comics', 'items']) {
     const v = data[k]
     if (Array.isArray(v)) return v
     if (v && typeof v === 'object') {
-      const inner = pickList(v)
-      if (inner.length) return inner
-    }
-  }
-  // bentuk tak dikenal: ambil larik objek pertama yang tampak seperti daftar komik
-  for (const v of Object.values(data)) {
-    if (Array.isArray(v) && v.length && typeof v[0] === 'object' && (v[0].slug || v[0].title)) return v
-    if (v && typeof v === 'object' && !Array.isArray(v)) {
       const inner = pickList(v)
       if (inner.length) return inner
     }
@@ -153,7 +108,6 @@ function fromApi(i) {
 }
 
 export async function search(query, { limit = 10 } = {}) {
-  await ensureImgCfg()
   let items = []
   try {
     const data = await http.get(`/api/search?q=${encodeURIComponent(query)}&limit=${limit}`, { json: true, ttl: MIN })
@@ -164,7 +118,6 @@ export async function search(query, { limit = 10 } = {}) {
 }
 
 export async function latest({ page = 1 } = {}) {
-  await ensureImgCfg()
   let data = null
   try {
     data = await http.get(`/api/home-latest?page=${page}`, { json: true, ttl: MIN })
@@ -236,57 +189,33 @@ export async function allSeries({ sort = 'popular', page = 1, type = '', status 
   return { items, page, pages: Math.max(pages, page), total: items.length }
 }
 
-const POP_PERIODS = { daily: 'daily', weekly: 'weekly', monthly: 'monthly', all: 'all', alltime: 'all' }
-
-async function popularApi({ period = 'all', type = '', limit = 10 } = {}) {
-  const qs = new URLSearchParams({ tab: 'komik', period })
-  if (type) qs.set('type', type)
-  const data = await http.get(`/api/popular?${qs}`, { json: true, ttl: 5 * MIN })
-  return pickList(data).map(fromApi).filter(x => x.slug).slice(0, limit)
-}
-
-async function popularWidget(period, limit) {
-  const html = await http.get('/', { ttl: 5 * MIN })
-  readImgCfg(html)
-  const $ = cheerio.load(html)
-  const out = []
-  $(`#ht-pop-${period} .ht-wpop-item`).each((_, el) => {
-    const $el = $(el)
-    const slug = slugOf($el.find('a').first().attr('href'))
-    if (!slug) return
-    out.push(
-      item({
-        title: clean($el.find('.ht-wpop-title').text()),
-        slug,
-        cover: resolveImage(imgSrc($el.find('img').first())),
-        rating: num($el.find('.ht-wpop-score').text())
-      })
-    )
-  })
-  return out.slice(0, limit)
-}
-
-export async function popular({ period = '', type = '', limit = 10 } = {}) {
-  await ensureImgCfg()
-  const apiPeriod = POP_PERIODS[period]
-  if (apiPeriod) {
-    // Halaman "Populer" situs memakai /api/popular (daily | weekly | all, filter type), jadi itu sumber utama
-    try {
-      const items = await popularApi({ period: apiPeriod, type, limit })
-      if (items.length) return items
-    } catch {}
-    if (['weekly', 'monthly', 'alltime'].includes(period)) {
-      try {
-        const items = await popularWidget(period, limit)
-        if (items.length) return items
-      } catch {}
-    }
+export async function popular({ period = '', limit = 10 } = {}) {
+  if (['weekly', 'monthly', 'alltime'].includes(period)) {
+    const html = await http.get('/', { ttl: 5 * MIN })
+    readImgCfg(html)
+    const $ = cheerio.load(html)
+    const out = []
+    $(`#ht-pop-${period} .ht-wpop-item`).each((_, el) => {
+      const $el = $(el)
+      const slug = slugOf($el.find('a').first().attr('href'))
+      if (!slug) return
+      out.push(
+        item({
+          title: clean($el.find('.ht-wpop-title').text()),
+          slug,
+          cover: resolveImage(imgSrc($el.find('img').first())),
+          rating: num($el.find('.ht-wpop-score').text())
+        })
+      )
+    })
+    return out.slice(0, limit)
   }
   try {
-    const { items } = await allSeries({ sort: 'popular', page: 1, type })
+    const { items } = await allSeries({ sort: 'popular', page: 1 })
     if (items.length) return items.slice(0, limit)
   } catch {}
-  return popularApi({ period: 'all', type, limit })
+  const data = await http.get(`/api/popular?tab=komik&period=all&perPage=${limit}`, { json: true, ttl: 5 * MIN })
+  return pickList(data).map(fromApi).filter(x => x.slug).slice(0, limit)
 }
 
 export async function browse({ q = '', sort = '', status = '', type = '', genre = [], minChapters = '', page = 1 } = {}) {
@@ -453,16 +382,6 @@ export async function detail(slug) {
   }
 }
 
-// Toolbar pembaca adalah island Astro; props-nya (prevChapterSlug / nextChapterSlug) ikut tertanam di HTML
-export function parseReaderNav(html) {
-  const text = String(html).replace(/&quot;/g, '"').replace(/&#34;/g, '"')
-  const pick = key => {
-    const m = text.match(new RegExp(`"${key}":\\[0,"([^"\\\\]+)"\\]`))
-    return m ? m[1] : null
-  }
-  return { prev: pick('prevChapterSlug'), next: pick('nextChapterSlug') }
-}
-
 export async function chapter(slug, chapterSlug) {
   const html = await http.get(`/read/${encodeURIComponent(slug)}/${encodeURIComponent(chapterSlug)}`, { ttl: 5 * MIN })
   readImgCfg(html)
@@ -476,22 +395,21 @@ export async function chapter(slug, chapterSlug) {
     const raw = imgSrc($(el))
     if (!raw || /^\/api\/image\/(thumbnail|p\/|reactions)/.test(raw)) return
     const u = resolveImage(raw)
-    if (/\/(?:file\/)?comic\//.test(u) || $(el).closest('#reader-pages, [data-page-wrap]').length) add(u)
+    if (/\/file\/comic\//.test(u) || $(el).closest('#reader-pages').length) add(u)
   })
   if (!images.length) {
-    const re = /https?:\/\/[^"'\s\\)]+\/(?:file\/)?comic\/[^"'\s\\)]+\.(?:webp|jpe?g|png|avif)/gi
+    const re = /https?:\/\/[^"'\s\\)]+\/file\/comic\/[^"'\s\\)]+\.(?:webp|jpe?g|png|avif)/gi
     for (const mm of html.matchAll(re)) add(mm[0])
   }
 
-  const nav = parseReaderNav(html)
-  let prev = nav.prev
-  let next = nav.next
+  let prev = null
+  let next = null
   $('a[href*="/read/"]').each((_, a) => {
     const m = String($(a).attr('href')).match(/\/read\/([^/?#]+)\/([^/?#]+)/)
     if (!m || m[1] !== slug) return
     const t = clean($(a).text())
-    if (/^(Previous\s+)?Prev/i.test(t)) prev = prev || m[2]
-    else if (/^Next/i.test(t)) next = next || m[2]
+    if (/^(Previous\s+)?Prev/i.test(t)) prev = m[2]
+    else if (/^Next/i.test(t)) next = m[2]
   })
 
   return {
@@ -505,11 +423,7 @@ export async function chapter(slug, chapterSlug) {
   }
 }
 
-export const resetCache = () => {
-  imgCfg = null
-  cfgTriedAt = 0
-  http.clear()
-}
+export const resetCache = () => http.clear()
 
 export default {
   id: 'lumos',
@@ -519,7 +433,6 @@ export default {
     return { 'user-agent': UA, referer: site() + '/' }
   },
   imageHosts,
-  imageFallback,
   filters: { types: TYPES, statuses: STATUSES, sorts: SORTS },
   search,
   latest,

@@ -1,3 +1,4 @@
+import { badRequest } from '../lib/errors.js'
 import { hit } from './util.js'
 import { resolveTarget } from './comments.js'
 
@@ -39,4 +40,9 @@ export async function likeStatus(ctx, viewer, input, hasSource) {
     viewer ? ctx.c.likes.findOne({ _id: `${viewer._id}:${t.targetKey}` }) : null
   ])
   return { liked: !!mine, count }
+}
+
+export const requireBool = (v, name) => {
+  if (typeof v !== 'boolean') throw badRequest(`"${name}" harus berupa boolean`)
+  return v
 }

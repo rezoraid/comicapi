@@ -1,9 +1,9 @@
 import { badRequest, notFound, HttpError } from './lib/errors.js'
 import { imageProxy } from './image-proxy.js'
 import { playground } from './playground.js'
+import { requestScope } from './scrapers/utils.js'
 import { legalHandler, privacyPage, termsPage } from './legal.js'
 import { normalizeBrowse, normalizeDetail, normalizeList } from './normalize.js'
-import { decorateItems, decorateDetail, pagesOverride, withPages } from './community/catalog.js'
 
 const SLUG = /^[\w.~%-]{1,200}$/
 const CHAPTER = /^[\w.~%-]{1,50}$/
@@ -31,6 +31,9 @@ const slugParam = (v, name, re = SLUG) => {
 }
 
 export function registerRoutes(router, { registry, config, community = null }) {
+  const langOf = q => (q.get('lang') ?? '').trim().toLowerCase().slice(0, 5)
+  const withLang = h => ctx => requestScope.run({ lang: langOf(ctx.query) }, () => h(ctx))
+  const get = (path, handler, opts) => router.get(path, withLang(handler), opts)
   // community boleh berupa objek atau fungsi getter (komunitas bisa baru tersambung setelah server jalan)
   const cm = () => (typeof community === 'function' ? community() : community)
   const source = params => {
@@ -57,102 +60,98 @@ export function registerRoutes(router, { registry, config, community = null }) {
   router.get('/api/sources', () => ({ items: registry.list() }), { ttl: 3600 })
 
   /* ───── cari ke semua sumber ───── */
-  router.get(
+  get(
     '/api/search',
     async ({ query }) => {
       const q = str(query, 'q')
       if (!q) throw badRequest('Parameter "q" wajib diisi')
       const { items, failed } = await registry.searchAll(q, { limit: int(query, 'limit', 10, 1, 30) })
-      return { items: await decorateItems(cm(), normalizeList(items)), failed }
+      return { items: normalizeList(items), failed }
     },
     { ttl: 60 }
   )
 
   /* ───── per sumber ───── */
-  router.get(
+  get(
     '/api/:source/search',
     async ({ params, query }) => {
       const q = str(query, 'q')
       if (!q) throw badRequest('Parameter "q" wajib diisi')
       const p = source(params)
       const items = await call(p, 'search', q, { limit: int(query, 'limit', 10, 1, 30) })
-      return { items: await decorateItems(cm(), normalizeList(items, p.id)) }
+      return { items: normalizeList(items, p.id) }
     },
     { ttl: 60 }
   )
 
-  router.get(
+  get(
     '/api/:source/latest',
     async ({ params, query }) => {
       const page = int(query, 'page', 1, 1, 500)
       const p = source(params)
-      return { page, items: await decorateItems(cm(), normalizeList(await call(p, 'latest', { page }), p.id)) }
+      return { page, items: normalizeList(await call(p, 'latest', { page }), p.id) }
     },
     { ttl: 60 }
   )
 
-  router.get(
+  get(
     '/api/:source/popular',
     async ({ params, query }) => {
       const p = source(params)
       const items = await call(p, 'popular', {
         period: str(query, 'period', 20).toLowerCase(),
-        type: str(query, 'type', 20).toLowerCase(),
         limit: int(query, 'limit', 10, 1, 50)
       })
-      return { items: await decorateItems(cm(), normalizeList(items, p.id)) }
+      return { items: normalizeList(items, p.id) }
     },
     { ttl: 300 }
   )
 
-  router.get(
+  get(
     '/api/:source/browse',
     async ({ params, query }) => {
       const p = source(params)
       const f = p.filters || {}
-      const type = oneOf(str(query, 'type', 20).toLowerCase(), f.types, 'type')
-      const result = normalizeBrowse(await call(p, 'browse', {
+      return normalizeBrowse(await call(p, 'browse', {
         q: str(query, 'q'),
         genre: str(query, 'genre', 200).split(',').map(s => s.trim().toLowerCase()).filter(Boolean),
-        type,
+        type: oneOf(str(query, 'type', 20).toLowerCase(), f.types, 'type'),
         status: oneOf(str(query, 'status', 20).toLowerCase(), f.statuses, 'status'),
         sort: oneOf(str(query, 'sort', 20).toLowerCase(), f.sorts, 'sort'),
         minChapters: int(query, 'min', 0, 0, 10000) || '',
         page: int(query, 'page', 1, 1, 500)
       }), p.id)
-      if (Array.isArray(result)) return decorateItems(cm(), result, { type })
-      return result && Array.isArray(result.items) ? { ...result, items: await decorateItems(cm(), result.items, { type }) } : result
     },
     { ttl: 120 }
   )
 
-  router.get('/api/:source/genres', async ({ params }) => ({ items: await call(source(params), 'genres') }), { ttl: 3600 })
+  get('/api/:source/genres', async ({ params }) => ({ items: await call(source(params), 'genres') }), { ttl: 3600 })
 
-  router.get(
+  get(
     '/api/:source/comic/:slug',
     async ({ params }) => {
       const p = source(params)
-      return decorateDetail(cm(), normalizeDetail(await call(p, 'detail', slugParam(params.slug, 'slug')), p.id))
+      return normalizeDetail(await call(p, 'detail', slugParam(params.slug, 'slug')), p.id)
     },
     { ttl: 300 }
   )
 
-  router.get(
+  get(
     '/api/:source/chapter/:slug/:chapter',
-    async ({ params, warm }) => {
+    async ({ params, query, warm }) => {
       const p = source(params)
-      const slug = slugParam(params.slug, 'slug')
-      const chapter = slugParam(params.chapter, 'chapter', CHAPTER)
-      const pages = await pagesOverride(cm(), p.id, slug, chapter)
-      const data = pages ? await call(p, 'chapter', slug, chapter).catch(() => ({ images: [] })) : await call(p, 'chapter', slug, chapter)
-      if (!pages && warm && typeof data.next === 'string' && CHAPTER.test(data.next)) {
-        warm(`/api/${p.id}/chapter/${encodeURIComponent(params.slug)}/${encodeURIComponent(data.next)}`)
+      const data = await call(p, 'chapter', slugParam(params.slug, 'slug'), slugParam(params.chapter, 'chapter', CHAPTER))
+      // preload chapter berikutnya di background (hanya saat chapter ini baru diambil dari sumber)
+      if (warm && typeof data.next === 'string' && CHAPTER.test(data.next)) {
+        const lang = langOf(query)
+        warm(`/api/${p.id}/chapter/${encodeURIComponent(params.slug)}/${encodeURIComponent(data.next)}${lang ? `?lang=${encodeURIComponent(lang)}` : ''}`)
       }
-      return pages ? withPages(data, pages) : { ...data, proxy: data.images.map(u => `/api/image?url=${encodeURIComponent(u)}`) }
+      // path relatif: klien (APK) tinggal prefix dengan base URL server
+      return { ...data, proxy: data.images.map(u => `/api/image?url=${encodeURIComponent(u)}`) }
     },
     { ttl: 600 }
   )
 
   /* ───── image proxy (streaming, bukan JSON) ───── */
-  router.get('/api/image', imageProxy(registry, { cacheMb: config.imageCacheMb, headerTimeoutMs: config.imageHeaderTimeoutMs, bodyIdleMs: config.imageBodyIdleMs, retries: config.imageFetchRetries, concurrency: config.imageConcurrency, maxQueue: config.imageMaxQueue }), { raw: true, limiter: 'image' })
+  router.get('/api/image', imageProxy(registry, { cacheMb: config.imageCacheMb, headerTimeoutMs: config.imageHeaderTimeoutMs, bodyIdleMs: config.imageBodyIdleMs, retries: config.imageFetchRetries }), { raw: true, limiter: 'image' })
 }

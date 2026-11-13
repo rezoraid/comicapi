@@ -3,7 +3,6 @@ import net from 'node:net'
 import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { badRequest, HttpError } from './lib/errors.js'
-import { createLimiter } from './lib/limiter.js'
 
 const MAX_BYTES = 25 * 1024 * 1024
 const MAX_REDIRECTS = 3
@@ -50,15 +49,14 @@ function createImageCache(maxMb) {
  * menampilkan gambar tanpa kena hotlink-protection. Hanya host milik
  * scraper yang diizinkan (anti-SSRF), redirect divalidasi ulang.
  */
-export function imageProxy(registry, { cacheMb = 48, headerTimeoutMs = 12_000, bodyIdleMs = 15_000, retries = 1, concurrency = 128, maxQueue = 1024, queueWaitMs = 15_000 } = {}) {
+export function imageProxy(registry, { cacheMb = 48, headerTimeoutMs = 12_000, bodyIdleMs = 15_000, retries = 1 } = {}) {
   // headerTimeoutMs: tunggu sumber mulai merespons (per percobaan) · bodyIdleMs: batas diam saat unduh (reset tiap ada data)
   // retries: ulang kalau sumber timeout / koneksi putus (batal dari klien tidak pernah diulang)
   const HEADER_TIMEOUT_MS = headerTimeoutMs
   const BODY_IDLE_MS = bodyIdleMs
   const FETCH_RETRIES = retries
   const cache = createImageCache(cacheMb)
-  const limiter = createLimiter({ max: concurrency, maxQueue, waitMs: queueWaitMs })
-  const handle = async ({ req, res, query }) => {
+  return async ({ req, res, query }) => {
     const raw = query.get('url')
     if (!raw) throw badRequest('Parameter "url" wajib diisi')
 
@@ -118,12 +116,6 @@ export function imageProxy(registry, { cacheMb = 48, headerTimeoutMs = 12_000, b
         res.writeHead(200, { 'content-type': cached.type, 'cache-control': 'public, max-age=604800, immutable', 'x-content-type-options': 'nosniff', 'content-length': cached.buf.length, 'x-cache': 'HIT' })
         return res.end(req.method === 'HEAD' ? undefined : cached.buf)
       }
-      const release = await limiter.acquire()
-      if (clientGone) {
-        release()
-        throw new Error('client closed')
-      }
-      res.on('close', release)
       for (let hop = 0; ; hop++) {
         const known = registry.findByImageHost(target.hostname)
         if (hop === 0) {
@@ -236,26 +228,6 @@ export function imageProxy(registry, { cacheMb = 48, headerTimeoutMs = 12_000, b
       res.destroy() // klien putus, timeout, atau upstream melewati batas ukuran
     } finally {
       clearTimer()
-    }
-  }
-
-  // Kalau sumber gagal, coba sekali lewat alamat cadangan milik scraper (mis. CDN <-> proxy situs, mirror lain)
-  return async ctx => {
-    try {
-      return await handle(ctx)
-    } catch (error) {
-      if (!(error instanceof HttpError) || ![404, 502, 504].includes(error.status) || ctx.res.headersSent) throw error
-      let alt = null
-      try {
-        const u = new URL(ctx.query.get('url'))
-        alt = registry.findByImageHost(u.hostname)?.imageFallback?.(u) || null
-      } catch {}
-      if (!alt || alt === ctx.query.get('url')) throw error
-      try {
-        return await handle({ ...ctx, query: new URLSearchParams({ url: alt }) })
-      } catch {
-        throw error
-      }
     }
   }
 }

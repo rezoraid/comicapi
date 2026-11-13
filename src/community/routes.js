@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto'
 import { HttpError, badRequest } from '../lib/errors.js'
-import { etagMatches, send, encode } from '../http/respond.js'
-import { normalizeDetail } from '../normalize.js'
+import { etagMatches } from '../http/respond.js'
 import { qint, qstr, hit } from './util.js'
 import { loginWithGoogle, authenticate, me, updateProfile, updateAvatar, getUser } from './users.js'
 import { setLike, likeStatus } from './likes.js'
@@ -9,9 +8,6 @@ import { getProfile, listActivity } from './profile.js'
 import { resolveTarget, listComments, listReplies, createComment, chapterCounts, editComment, removeComment, likeComment, reportComment } from './comments.js'
 import { deleteAccount } from './account.js'
 import { saveProgress, trackReadingTime } from './reading.js'
-import { adminComic, saveComic, resetComic, getPages, savePages, resetPages, uploadMedia, serveMedia, trackView } from './catalog.js'
-import { registerToken, unregisterToken } from './push.js'
-import { createBroadcast, feed, listBroadcasts, removeBroadcast } from './broadcasts.js'
 import { listReports, resolveReport, findUser, userDetail, grantXp, resetMedia, setRole, setVerified, setBan, adminStats, listUsers, listAdminComments } from './admin.js'
 
 const P = '/api/community'
@@ -99,54 +95,6 @@ export function registerCommunityRoutes(router, { registry, community }) {
   router.put(`${P}/comments/:id/like`, authed((cm, { params }, user) => likeComment(cm, user, params.id, true)))
   router.delete(`${P}/comments/:id/like`, authed((cm, { params }, user) => likeComment(cm, user, params.id, false)))
   router.post(`${P}/comments/:id/report`, authed((cm, { params, body }, user) => reportComment(cm, user, params.id, body)))
-
-  // Pengumuman → notifikasi di semua HP. Feed publik (tanpa login, tanpa data pribadi); kirim/riwayat/tarik khusus OWNER.
-  router.get(`${P}/broadcasts`, guard((cm, { query }) => feed(cm, query)))
-  router.post(`${P}/admin/broadcasts`, authed(async (cm, { body }, user) => {
-    await hit(cm.limits.write, user._id, 'Terlalu banyak pengumuman')
-    return createBroadcast(cm, user, body, hasSource)
-  }))
-  router.get(`${P}/admin/broadcasts`, authed((cm, { query }, user) => listBroadcasts(cm, user, query)))
-  router.delete(`${P}/admin/broadcasts/:id`, authed((cm, { params }, user) => removeBroadcast(cm, user, params.id)))
-
-  router.put(`${P}/push-token`, maybe(async (cm, { body, ip }, user) => {
-    await hit(cm.limits.write, user?._id || ip, 'Terlalu banyak permintaan')
-    return registerToken(cm, user, body)
-  }))
-  router.post(`${P}/push-token/unregister`, guard(async (cm, { body, ip }) => {
-    await hit(cm.limits.write, ip, 'Terlalu banyak permintaan')
-    return unregisterToken(cm, body)
-  }))
-
-  const loadDetail = (source, slug) => () => {
-    if (!registry.has(source)) throw badRequest(`Sumber "${source}" tidak ada`)
-    return Promise.resolve(registry.get(source).detail(slug)).then(d => normalizeDetail(d, source))
-  }
-  const loadChapter = (source, slug, chapter) => () => {
-    if (!registry.has(source)) throw badRequest(`Sumber "${source}" tidak ada`)
-    return Promise.resolve(registry.get(source).chapter(slug, chapter))
-  }
-  router.get(`${P}/admin/comics/:source/:slug`, authed((cm, { params: p }, user) => adminComic(cm, user, p.source, p.slug, loadDetail(p.source, p.slug))))
-  router.put(`${P}/admin/comics/:source/:slug`, authed((cm, { params: p, body }, user) => saveComic(cm, user, p.source, p.slug, body, loadDetail(p.source, p.slug))))
-  router.delete(`${P}/admin/comics/:source/:slug/override`, authed((cm, { params: p }, user) => resetComic(cm, user, p.source, p.slug, loadDetail(p.source, p.slug))))
-  router.get(`${P}/admin/comics/:source/:slug/chapters/:chapter/pages`, authed((cm, { params: p }, user) => getPages(cm, user, p.source, p.slug, p.chapter, loadChapter(p.source, p.slug, p.chapter))))
-  router.put(`${P}/admin/comics/:source/:slug/chapters/:chapter/pages`, authed((cm, { params: p, body }, user) => savePages(cm, user, p.source, p.slug, p.chapter, body)))
-  router.delete(`${P}/admin/comics/:source/:slug/chapters/:chapter/pages`, authed((cm, { params: p }, user) => resetPages(cm, user, p.source, p.slug, p.chapter, loadChapter(p.source, p.slug, p.chapter))))
-  router.add('POST', `${P}/admin/media`, async ({ req, res }) => {
-    const cm = current()
-    if (!cm) throw new HttpError(503, 'COMMUNITY_DISABLED', 'Fitur komunitas belum diaktifkan di server')
-    const user = await authenticate(cm, req)
-    await hit(cm.limits.write, user._id, 'Terlalu banyak unggahan')
-    send(req, res, await encode({ ok: true, data: await uploadMedia(cm, user, req) }, { gzip: false }))
-  }, { raw: true })
-  router.get('/media/:id', async ({ req, res, params }) => {
-    const cm = current()
-    if (!cm) throw new HttpError(503, 'COMMUNITY_DISABLED', 'Fitur komunitas belum diaktifkan di server')
-    await serveMedia(cm, req, res, params.id)
-  }, { raw: true, public: true })
-  const deviceOf = (req, ip) => ({ deviceId: String(req.headers['x-device-id'] || '').slice(0, 64), ip })
-  router.post(`${P}/views/comic`, maybe(async (cm, { req, body, ip }, user) => trackView(cm, user, deviceOf(req, ip), 'comic', body)))
-  router.post(`${P}/views/chapter`, maybe(async (cm, { req, body, ip }, user) => trackView(cm, user, deviceOf(req, ip), 'chapter', body)))
 
   router.get(`${P}/admin/reports`, authed((cm, { query }, user) => listReports(cm, user, { status: qstr(query, 'status', 10) || 'open', page: qint(query, 'page', 1, 1, 200), limit: 20 })))
   router.post(`${P}/admin/reports/:id/resolve`, authed((cm, { params, body }, user) => resolveReport(cm, user, params.id, body.action)))
