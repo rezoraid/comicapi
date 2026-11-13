@@ -3,7 +3,6 @@ import assert from 'node:assert/strict'
 import { createApp } from '../src/app.js'
 import { loadConfig } from '../src/config.js'
 import { TtlCache } from '../src/lib/cache.js'
-import { createCatalog } from '../src/catalog-sync.js'
 
 import { PNG, quiet, listen, makeRegistry } from './helpers.mjs'
 
@@ -23,9 +22,7 @@ before(async () => {
     res.writeHead(404).end()
   })
   registry = makeRegistry(img.port)
-  // katalog melengkapi semua item sekaligus di respons pertama (mock instan), jadi ETag respons kedua identik
-  const catalog = createCatalog({ registry, logger: quiet, inlineMax: 100, crawl: false })
-  app = createApp({ registry, config: loadConfig({ LOG_REQUESTS: 'false' }), logger: quiet, catalog })
+  app = createApp({ registry, config: loadConfig({ LOG_REQUESTS: 'false' }), logger: quiet })
   api = await listen(app.handler)
 })
 

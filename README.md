@@ -67,26 +67,6 @@ Kalau `API_KEY` diisi, kirim header `x-api-key`.
 
 Koleksi baru: `likes`, `counters` (ID publik berurutan, diberikan sekali per pengguna saat pertama dibutuhkan). Menit membaca = akumulasi `users.readSeconds`; per komik tersimpan di `reading_progress.readSeconds`. Pengguna lama mulai dari 0 menit karena durasi sebelumnya memang tidak pernah dicatat.
 
-### Katalog mandiri: views, edit komik, gambar chapter (untuk APK)
-
-Kontrak lengkap: `BACKEND_KATALOG.md` di proyek APK. Kode: `src/community/catalog.js`.
-
-| Endpoint | Fungsi |
-|---|---|
-| `POST /api/community/views/comic` `{source, slug}` | catat 1 view komik (login atau anonim, header `X-Device-Id`); dedupe per userId/deviceId/IP per komik, jendela 6 jam; balas `{viewCount}` |
-| `POST /api/community/views/chapter` `{source, comic, chapter}` | sama untuk chapter |
-| `GET\|PUT /api/community/admin/comics/:source/:slug` | OWNER: data gabungan / simpan override (`title, cover, synopsis, genres[], type, status, author, artist`) |
-| `DELETE /api/community/admin/comics/:source/:slug/override` | OWNER: kembali ke data scraper |
-| `GET\|PUT\|DELETE /api/community/admin/comics/:source/:slug/chapters/:chapter/pages` | OWNER: daftar gambar chapter (PUT = daftar lengkap berurutan, 1–500 item) |
-| `POST /api/community/admin/media` | OWNER: unggah gambar (multipart, field `file`, JPEG/PNG/WebP/GIF, maks 10 MB, dicek byte-nya) → `{url: "/media/<id>"}` |
-| `GET /media/:id` | sajikan gambar unggahan (`Cache-Control: immutable`, ETag) |
-
-- `viewCount` ditambahkan ke item daftar (`latest`, `popular`, `search`, `browse`, `/api/search`) dan detail komik (+ tiap `chapters[]`). Field `views` dari scraper dibiarkan apa adanya (APK mengabaikannya).
-- Override menggantikan field scraper di semua respons; field kosong = pakai scraper. Override `type`/`status`/`genres` ikut dihitung di `browse` (komik yang dipindahkan keluar disaring, yang dipindahkan masuk muncul di halaman 1).
-- Cache scraper (memori + Redis) tidak diubah dan tidak perlu dibuang: views dan override ditempel di atas hasil cache tiap request (`overlay` di `app.js`). Kalau MongoDB bermasalah, respons cache disajikan apa adanya.
-- Koleksi baru: `comic_stats`, `chapter_stats`, `view_dedupe` (indeks TTL 6 jam), `comic_overrides`, `chapter_overrides`, `media`. File di `media` tidak dihapus otomatis kalau tidak lagi dipakai.
-- Header `X-Device-Id` kini diizinkan CORS.
-
 Filter per sumber ada di `/api/sources` → `filters` (mis. manta: `types`).
 
 ### Menampilkan gambar di APK
@@ -199,26 +179,7 @@ Endpoint (header `Authorization: Bearer <token>`):
 | `DELETE /api/community/admin/broadcasts/:id` | hanya OWNER: tarik pengumuman (HP yang belum mengambilnya tidak akan menerimanya) |
 | `GET /api/community/broadcasts?after=<id>` | publik (tanpa login, tanpa data pribadi), dipakai APK. Tanpa `after` → hanya `{latestId}` (posisi awal untuk HP baru). Dengan `after` → `{latestId, items}` yang lebih baru, paling lama dulu, maks 20 |
 
-Koleksi: `broadcasts`. Pengumuman OWNER kini langsung didorong lewat Firebase Cloud Messaging (FCM) ke semua perangkat terdaftar. Feed di atas tetap ada sebagai cadangan: APK tetap mengambilnya tiap ±30 menit, dan pengumuman yang sudah tampil dari FCM tidak ditampilkan lagi (dedupe per ID di perangkat).
-
-### FCM
-
-| Endpoint | Keterangan |
-|---|---|
-| `PUT /api/community/push-token` | `{token, appVersion?, previous?}`. Login opsional: kalau ada sesi valid token ditautkan ke akun, kalau tidak `userId: null`. Upsert per token (satu token = satu dokumen). `previous` = token lama perangkat yang sama, langsung dihapus |
-| `POST /api/community/push-token/unregister` | `{token}`. Dipanggil APK saat notifikasi dimatikan |
-| `GET /api/community/admin/push-status` | hanya OWNER: `{enabled, devices, linkedToAccount}` untuk cek konfigurasi |
-
-Koleksi `push_tokens`: `{token (unik), userId|null, appVersion, createdAt, updatedAt}`. Token yang ditolak FCM (`registration-token-not-registered`/`invalid-registration-token`) dihapus otomatis, token yang tidak diperbarui > 60 hari dibersihkan saat pengiriman, dan token ikut terhapus saat akun dihapus. APK menyinkronkan ulang tiap 7 hari.
-
-Pesan yang dikirim berupa **data-only** (tanpa blok `notification`) dengan prioritas `high` dan TTL 3 hari, supaya `onMessageReceived` di APK selalu jalan (juga saat aplikasi ditutup) dan tidak ada notifikasi ganda dari sistem. Hasil pengiriman disimpan di dokumen pengumuman (`push: {sent, failed, at}`).
-
-Env yang dibutuhkan di server (Railway):
-
-- `FIREBASE_SERVICE_ACCOUNT`: isi file JSON service account (Firebase Console → Project settings → Service accounts → Generate new private key), boleh JSON mentah atau base64.
-- `FIREBASE_PROJECT_ID`: opsional, bawaan `komikta-id`.
-
-Tanpa `FIREBASE_SERVICE_ACCOUNT`, FCM nonaktif dan semua fitur lain (termasuk polling pengumuman) tetap berjalan.
+Koleksi baru: `broadcasts`. APK mengambil feed ini tiap ±30 menit lewat WorkManager lalu memposting notifikasi lokal (bukan push instan).
 
 XP: komentar +5, balasan +3, like diterima +2. Hanya komentar bermutu (min. 8 karakter, 2 kata, bukan huruf berulang), batas 50 XP/hari dari posting dan 20 XP/hari dari like, like hanya dihitung dari akun berumur > 1 jam dan maks 3 per pasangan akun per hari, komentar identik 24 jam ditolak, menghapus komentar membalikkan XP-nya. Level = `floor((1+sqrt(1+4*xp/25))/2)`, maks 100. Rate limit per pengguna ada di memori proses (cukup untuk 1 instance).
 
@@ -235,14 +196,3 @@ Halaman publik `/privacy` (Kebijakan Privasi) dan `/terms` (Ketentuan) tersedia 
 ## Performa & operasional
 
 Ringkasan optimasi dan variabel env baru: lihat [`OPTIMIZATION.md`](OPTIMIZATION.md).
-
-## Katalog internal & kelengkapan data
-
-Semua daftar (latest/popular/search/browse) dan detail melewati `catalog` (koleksi Mongo `comic_catalog`):
-data yang kosong dilengkapi dari detail sumber, sumber lain (judul sama), lalu AniList (hanya judul dikirim).
-Nilai hasil turunan (status/tahun/sinopsis) ditandai di `derived[]`. Crawler latar belakang mengisi seluruh katalog bertahap (butuh MongoDB).
-
-Env: `CATALOG` (true), `META_ENRICH` (true; `false` menonaktifkan AniList), `CATALOG_CRAWL` (true),
-`CATALOG_CRAWL_PAGES` (8), `CATALOG_CRAWL_INTERVAL_MIN` (20), `CATALOG_CRAWL_DELAY_MS` (400), `CATALOG_INLINE_MAX` (12).
-
-Admin (OWNER): `GET {prefix}/admin/catalog/status`, `POST {prefix}/admin/catalog/sync` body `{source?, slug?, pages?}`.

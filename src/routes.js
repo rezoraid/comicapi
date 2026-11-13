@@ -2,7 +2,6 @@ import { badRequest, notFound, HttpError } from './lib/errors.js'
 import { imageProxy } from './image-proxy.js'
 import { playground } from './playground.js'
 import { legalHandler, privacyPage, termsPage } from './legal.js'
-import { overlayList, overlayDetail, overlayChapter, browseWant } from './community/catalog.js'
 import { normalizeBrowse, normalizeDetail, normalizeList } from './normalize.js'
 
 const SLUG = /^[\w.~%-]{1,200}$/
@@ -30,7 +29,7 @@ const slugParam = (v, name, re = SLUG) => {
   return v
 }
 
-export function registerRoutes(router, { registry, config, community = null, catalog = null }) {
+export function registerRoutes(router, { registry, config, community = null }) {
   // community boleh berupa objek atau fungsi getter (komunitas bisa baru tersambung setelah server jalan)
   const cm = () => (typeof community === 'function' ? community() : community)
   const source = params => {
@@ -40,22 +39,6 @@ export function registerRoutes(router, { registry, config, community = null, cat
   const call = (p, fn, ...args) => {
     if (typeof p[fn] !== 'function') throw new HttpError(501, 'NOT_SUPPORTED', `${p.id} tidak mendukung ${fn}`)
     return p[fn](...args)
-  }
-
-  // Views + data hasil edit OWNER ditempel di atas hasil cache scraper (data cache tidak pernah diubah). Komunitas mati = data apa adanya.
-  const overlaid = fn => async (data, ctx) => {
-    const c = cm()
-    return c ? fn(c, data, ctx) : data
-  }
-
-  // Daftar/detail: data asli katalog internal -> override + views OWNER -> nilai turunan. Tiap tahap membuat salinan (data cache dipakai bersama).
-  const completed = (kind, fn) => async (data, ctx) => {
-    const source = ctx.params?.source || ''
-    let d = data
-    if (catalog) d = kind === 'detail' ? await catalog.fillOne(d, source, ctx.params.slug) : await catalog.fillList(d, source)
-    const c = cm()
-    if (c && fn) d = await fn(c, d, ctx)
-    return catalog ? catalog.finalize(kind, d, source) : d
   }
 
   /* ───── info ───── */
@@ -81,7 +64,7 @@ export function registerRoutes(router, { registry, config, community = null, cat
       const { items, failed } = await registry.searchAll(q, { limit: int(query, 'limit', 10, 1, 30) })
       return { items: normalizeList(items), failed }
     },
-    { ttl: 60, overlay: completed('list', (c, d) => overlayList(c, d, '')) }
+    { ttl: 60 }
   )
 
   /* ───── per sumber ───── */
@@ -94,7 +77,7 @@ export function registerRoutes(router, { registry, config, community = null, cat
       const items = await call(p, 'search', q, { limit: int(query, 'limit', 10, 1, 30) })
       return { items: normalizeList(items, p.id) }
     },
-    { ttl: 60, overlay: completed('list', (c, d, { params }) => overlayList(c, d, params.source)) }
+    { ttl: 60 }
   )
 
   router.get(
@@ -104,7 +87,7 @@ export function registerRoutes(router, { registry, config, community = null, cat
       const p = source(params)
       return { page, items: normalizeList(await call(p, 'latest', { page }), p.id) }
     },
-    { ttl: 60, overlay: completed('list', (c, d, { params }) => overlayList(c, d, params.source)) }
+    { ttl: 60 }
   )
 
   router.get(
@@ -113,11 +96,12 @@ export function registerRoutes(router, { registry, config, community = null, cat
       const p = source(params)
       const items = await call(p, 'popular', {
         period: str(query, 'period', 20).toLowerCase(),
+        type: str(query, 'type', 20).toLowerCase(),
         limit: int(query, 'limit', 10, 1, 50)
       })
       return { items: normalizeList(items, p.id) }
     },
-    { ttl: 300, overlay: completed('list', (c, d, { params }) => overlayList(c, d, params.source)) }
+    { ttl: 300 }
   )
 
   router.get(
@@ -135,7 +119,7 @@ export function registerRoutes(router, { registry, config, community = null, cat
         page: int(query, 'page', 1, 1, 500)
       }), p.id)
     },
-    { ttl: 120, overlay: completed('list', (c, d, { params, query }) => overlayList(c, d, params.source, browseWant(query))) }
+    { ttl: 120 }
   )
 
   router.get('/api/:source/genres', async ({ params }) => ({ items: await call(source(params), 'genres') }), { ttl: 3600 })
@@ -144,11 +128,9 @@ export function registerRoutes(router, { registry, config, community = null, cat
     '/api/:source/comic/:slug',
     async ({ params }) => {
       const p = source(params)
-      const detail = normalizeDetail(await call(p, 'detail', slugParam(params.slug, 'slug')), p.id)
-      catalog?.ingest({ ...detail, slug: params.slug }, p.id) // setiap scrape detail memperbarui katalog internal
-      return detail
+      return normalizeDetail(await call(p, 'detail', slugParam(params.slug, 'slug')), p.id)
     },
-    { ttl: 300, overlay: completed('detail', (c, d, { params }) => overlayDetail(c, d, params.source, params.slug)) }
+    { ttl: 300 }
   )
 
   router.get(
@@ -163,7 +145,7 @@ export function registerRoutes(router, { registry, config, community = null, cat
       // path relatif: klien (APK) tinggal prefix dengan base URL server
       return { ...data, proxy: data.images.map(u => `/api/image?url=${encodeURIComponent(u)}`) }
     },
-    { ttl: 600, overlay: overlaid((c, d, { params }) => overlayChapter(c, d, params.source, params.slug, params.chapter)) }
+    { ttl: 600 }
   )
 
   /* ───── image proxy (streaming, bukan JSON) ───── */

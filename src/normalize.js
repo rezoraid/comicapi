@@ -22,9 +22,7 @@ const TYPES = [
   ['novel', /novel/i],
   ['manhwa', /korea/i],
   ['manhua', /china|chinese/i],
-  ['manga', /japan/i],
-  // Manta menamai seluruh komik vertikalnya "comic": itu format webtoon (TYPES.slice(0, 5) di atas sengaja tidak mencakup ini)
-  ['webtoon', /^comics?$/i]
+  ['manga', /japan/i]
 ]
 
 export function canonType(raw, genres = []) {
@@ -108,22 +106,13 @@ const count = v => {
 
 const year = v => (/^(19|20)\d{2}$/.test(clean(v)) ? clean(v) : '')
 
-/** Tanggal rilis absolut -> ISO 8601 (APK membacanya jadi "3 jam lalu"); '' kalau tidak valid. */
-export function isoDate(v) {
-  if (v == null || v === '') return ''
-  const t = typeof v === 'number' ? (v < 1e11 ? v * 1000 : v) : /^\d{9,13}$/.test(String(v)) ? (String(v).length <= 10 ? Number(v) * 1000 : Number(v)) : Date.parse(String(v))
-  return Number.isFinite(t) && t > 0 ? new Date(t).toISOString() : ''
-}
-
 export function normChapter(c = {}) {
-  const releaseDate = c.releaseDate || null
   return {
     slug: clean(c.slug),
     number: clean(c.number),
     title: clean(c.title),
-    // Sumber yang hanya mengirim tanggal rilis (Manta, Shinigami) tetap mengisi waktu update chapter.
-    timeAgo: clean(c.timeAgo) || isoDate(releaseDate),
-    releaseDate,
+    timeAgo: clean(c.timeAgo),
+    releaseDate: c.releaseDate || null,
     isNew: !!c.isNew
   }
 }
@@ -144,8 +133,6 @@ export function normalizeItem(it = {}, source = '') {
     chapterCount: count(it.chapterCount) ?? (chapters.length > 1 ? chapters.length : null),
     genres,
     author: person(it.author),
-    artist: person(it.artist),
-    year: year(it.year),
     views: normViews(it.views),
     chapters,
     source: it.source || source

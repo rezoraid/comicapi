@@ -3,7 +3,7 @@ import { HttpError, badRequest } from '../lib/errors.js'
 
 export function applyCors(res, requestOrigin, allowed) {
   res.setHeader('access-control-allow-methods', 'GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS')
-  res.setHeader('access-control-allow-headers', 'x-api-key, content-type, if-none-match, authorization, x-device-id')
+  res.setHeader('access-control-allow-headers', 'x-api-key, content-type, if-none-match, authorization')
   res.setHeader('access-control-expose-headers', 'x-cache, etag, x-ratelimit-remaining')
   if (allowed === '*') {
     res.setHeader('access-control-allow-origin', '*')

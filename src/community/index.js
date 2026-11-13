@@ -4,7 +4,6 @@ import { createProgressWriter } from './progress-writer.js'
 import { createTtlMap } from '../lib/ttl-map.js'
 import { createGoogleVerifier } from './google.js'
 import { createTokens } from './tokens.js'
-import { createPush, createMessaging } from './push.js'
 
 const defaultLimits = {
   commentBurst: { max: 4, windowMs: 30_000 },
@@ -13,8 +12,7 @@ const defaultLimits = {
   like: { max: 60, windowMs: 60_000 },
   report: { max: 10, windowMs: 3_600_000 },
   login: { max: 20, windowMs: 60_000 },
-  readTime: { max: 12, windowMs: 60_000 },
-  view: { max: 120, windowMs: 60_000 }
+  readTime: { max: 12, windowMs: 60_000 }
 }
 
 export function missingConfig(cfg) {
@@ -38,13 +36,11 @@ export async function createCommunity(cfg, opts = {}) {
   await backfillAvatarFlag(c, logger)
   const cfgLimits = Object.fromEntries(Object.entries(defaultLimits).map(([k, v]) => [k, createHybridRateLimiter({ ...v, ...limits[k], sharedCache, namespace: `community:${k}` })]))
   const progress = createProgressWriter(c.readingProgress, { flushMs: opts.progressFlushMs ?? cfg.progressFlushMs ?? 1000, logger })
-  const messaging = opts.messaging !== undefined ? opts.messaging : await createMessaging(cfg, logger)
   const ctx = {
     c,
     cfg,
     now,
     progress,
-    push: createPush({ c, messaging, now, logger }),
     // cache angka murah-dibuang (per proses); kunci diinvalidasi saat data berubah di instance ini
     // cache foto profil (id → bytes siap kirim); foto base64 besar tidak perlu dibaca ulang dari MongoDB tiap tampil
     avatars: createTtlMap({ ttlMs: 300_000, max: 120, now }),
@@ -59,7 +55,6 @@ export async function createCommunity(cfg, opts = {}) {
     limits: cfgLimits,
     close: async () => {
       Object.values(cfgLimits).forEach(l => l.close())
-      await ctx.push.flush()
       await progress.close() // tulis sisa progres baca yang masih antre sebelum koneksi ditutup
       await conn.close()
     }

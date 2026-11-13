@@ -31,17 +31,7 @@ export const collections = db => ({
   likes: db.collection('likes'),
   chapterReads: db.collection('chapter_reads'),
   counters: db.collection('counters'),
-  broadcasts: db.collection('broadcasts'),
-  pushTokens: db.collection('push_tokens'),
-  // katalog mandiri: views, edit komik, gambar chapter, file unggahan
-  comicStats: db.collection('comic_stats'),
-  chapterStats: db.collection('chapter_stats'),
-  viewDedupe: db.collection('view_dedupe'),
-  comicOverrides: db.collection('comic_overrides'),
-  chapterOverrides: db.collection('chapter_overrides'),
-  media: db.collection('media'),
-  // katalog internal: satu rekaman lengkap per komik hasil sinkronisasi (lihat catalog-sync.js)
-  catalog: db.collection('comic_catalog')
+  broadcasts: db.collection('broadcasts')
 })
 
 // Indeks yang sudah ada TIDAK diubah (mengubah opsi indeks yang sama membuat createIndex error).
@@ -81,14 +71,7 @@ const INDEXES = c => [
   [c.xpEvents, { userId: 1, group: 1, createdAt: -1 }],
   [c.xpEvents, { userId: 1, reversed: 1, xp: 1 }], // total XP (aggregate $sum) terlayani langsung dari indeks
   [c.xpEvents, { commentId: 1 }],
-  [c.broadcasts, { deleted: 1, _id: 1 }], // pengumuman OWNER (feed HP + riwayat panel)
-  [c.pushTokens, { token: 1 }, { unique: true }],
-  [c.pushTokens, { userId: 1 }],
-  [c.pushTokens, { updatedAt: 1 }],
-  // kunci dedupe views kedaluwarsa otomatis (jendela 6 jam; lihat VIEW_WINDOW_MS di catalog.js)
-  [c.viewDedupe, { at: 1 }, { expireAfterSeconds: 21_600 }],
-  [c.comicOverrides, { type: 1 }, { sparse: true }],
-  [c.catalog, { nt: 1 }, { sparse: true }] // komik yang sama di sumber lain (judul identik)
+  [c.broadcasts, { deleted: 1, _id: 1 }] // pengumuman OWNER (feed HP + riwayat panel)
 ]
 
 const sameKey = (a, b) => JSON.stringify(Object.entries(a || {})) === JSON.stringify(Object.entries(b || {}))
