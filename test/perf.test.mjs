@@ -545,3 +545,48 @@ test('startCommunity: env belum lengkap (null) tidak di-retry; stop() membangunk
   await s2.stop()
   assert.ok(Date.now() - t0 < 500)
 })
+
+import { createLimiter } from '../src/lib/limiter.js'
+import { Router } from '../src/http/router.js'
+
+test('limiter: membatasi konkurensi, antre, dan menolak bila antrean penuh', async () => {
+  const limiter = createLimiter({ max: 2, maxQueue: 1, waitMs: 1000 })
+  let running = 0
+  let peak = 0
+  const job = () => limiter.run(async () => {
+    peak = Math.max(peak, ++running)
+    await new Promise(r => setTimeout(r, 20))
+    running--
+  })
+  const settled = await Promise.allSettled([job(), job(), job(), job()])
+  assert.equal(peak, 2)
+  assert.equal(settled.filter(r => r.status === 'fulfilled').length, 3)
+  assert.equal(settled.find(r => r.status === 'rejected').reason.status, 503)
+  assert.equal(limiter.active, 0)
+  assert.equal(limiter.queued, 0)
+})
+
+test('limiter: antrean yang terlalu lama ditolak dan tidak membocorkan slot', async () => {
+  const limiter = createLimiter({ max: 1, maxQueue: 5, waitMs: 20 })
+  const release = await limiter.acquire()
+  await assert.rejects(limiter.acquire(), err => err.status === 503)
+  assert.equal(limiter.queued, 0)
+  release()
+  release()
+  assert.equal(limiter.active, 0)
+  const again = await limiter.acquire()
+  again()
+})
+
+test('router: path dengan/tanpa slash akhir, 405, dan 404 tetap benar setelah dibagi per jumlah segmen', () => {
+  const r = new Router()
+  r.get('/', () => 'root')
+  r.get('/api/:source/latest', () => 'latest')
+  r.post('/api/x', () => 'post')
+  assert.ok(r.match('/').route)
+  assert.ok(r.match('/api/a/latest/').route)
+  assert.equal(r.match('/api/a/latest').params.source, 'a')
+  assert.deepEqual(r.match('/api/x', 'GET').allowed, ['POST'])
+  assert.equal(r.match('/api/none'), null)
+  assert.equal(r.match('/api/%E0%A4%A/latest').bad, true)
+})

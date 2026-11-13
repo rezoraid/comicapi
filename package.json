@@ -10,8 +10,7 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "test": "node --test test/*.test.mjs",
-    "smoke": "node scripts/smoke-test.mjs",
-    "reset-db": "node scripts/reset-db.mjs"
+    "smoke": "node scripts/smoke-test.mjs"
   },
   "dependencies": {
     "cheerio": "^1.0.0",

@@ -1,4 +1,8 @@
 import { createHash } from 'node:crypto'
+import { gunzipSync } from 'node:zlib'
+
+const BREAKER_THRESHOLD = 3
+const BREAKER_COOLDOWN_MS = 10_000
 
 /**
  * Optional shared L2 cache for Upstash Redis REST (no native module required).
@@ -12,6 +16,16 @@ export class RedisRestCache {
     this.prefix = prefix
     this.timeoutMs = timeoutMs
     this.enabled = Boolean(this.url && this.token)
+    this.failures = 0
+    this.downUntil = 0
+  }
+
+  #fail() {
+    if (++this.failures >= BREAKER_THRESHOLD) {
+      this.failures = 0
+      this.downUntil = Date.now() + BREAKER_COOLDOWN_MS
+    }
+    return null
   }
 
   key(input) {
@@ -20,7 +34,7 @@ export class RedisRestCache {
   }
 
   async #command(command) {
-    if (!this.enabled) return null
+    if (!this.enabled || Date.now() < this.downUntil) return null
     try {
       const response = await fetch(this.url, {
         method: 'POST',
@@ -31,12 +45,14 @@ export class RedisRestCache {
         body: JSON.stringify(command),
         signal: AbortSignal.timeout(this.timeoutMs)
       })
+      if (response.status >= 500 || response.status === 429) return this.#fail()
       if (!response.ok) return null
       const payload = await response.json()
+      this.failures = 0
       if (payload?.error) return null
       return payload?.result ?? null
     } catch {
-      return null
+      return this.#fail()
     }
   }
 
@@ -45,12 +61,11 @@ export class RedisRestCache {
     if (typeof raw !== 'string') return null
     try {
       const parsed = JSON.parse(raw)
-      if (typeof parsed?.body !== 'string' || typeof parsed?.etag !== 'string') return null
-      return {
-        body: Buffer.from(parsed.body, 'base64'),
-        gzipped: typeof parsed.gzipped === 'string' ? Buffer.from(parsed.gzipped, 'base64') : null,
-        etag: parsed.etag
-      }
+      if (typeof parsed?.etag !== 'string') return null
+      const gzipped = typeof parsed.gzipped === 'string' ? Buffer.from(parsed.gzipped, 'base64') : null
+      if (typeof parsed.body === 'string') return { body: Buffer.from(parsed.body, 'base64'), gzipped, etag: parsed.etag }
+      if (!gzipped) return null
+      return { body: gunzipSync(gzipped), gzipped, etag: parsed.etag }
     } catch {
       return null
     }
@@ -76,11 +91,11 @@ export class RedisRestCache {
 
   async set(input, entry, ttlSeconds) {
     if (!this.enabled || !Number.isFinite(ttlSeconds) || ttlSeconds < 1) return false
-    const value = JSON.stringify({
-      body: entry.body.toString('base64'),
-      gzipped: entry.gzipped?.toString('base64') ?? null,
-      etag: entry.etag
-    })
+    const value = JSON.stringify(
+      entry.gzipped
+        ? { gzipped: entry.gzipped.toString('base64'), etag: entry.etag }
+        : { body: entry.body.toString('base64'), etag: entry.etag }
+    )
     const result = await this.#command(['SET', this.key(input), value, 'EX', Math.max(1, Math.floor(ttlSeconds))])
     return result === 'OK'
   }

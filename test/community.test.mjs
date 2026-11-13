@@ -894,3 +894,62 @@ test('verified: OWNER otomatis, hanya OWNER yang bisa memberi/mencabut, muncul d
   assert.equal((await setV(owner.token, u.user.id, false)).data.user.verified, false)
   assert.equal((await call('GET', '/api/community/admin/users?verified=1&q=vf1', { token: owner.token })).data.items.length, 0)
 })
+
+test('pengumuman OWNER: kirim, feed publik untuk HP, riwayat, tarik, dan hak akses', async () => {
+  const u = await login('bc-user', 'bc-user@example.com')
+  const dev = await login('bc-dev', 'dev@example.com')
+  const owner = await login('bc-owner', 'owner@example.com')
+  const send = (t, body) => call('POST', '/api/community/admin/broadcasts', { token: t, body })
+
+  // hanya OWNER
+  assert.equal((await send(u.token, { title: 'Halo', body: 'Tes' })).status, 403)
+  assert.equal((await send(dev.token, { title: 'Halo', body: 'Tes' })).status, 403)
+  assert.equal((await call('POST', '/api/community/admin/broadcasts', { body: { title: 'a', body: 'b' } })).status, 401)
+  assert.equal((await call('GET', '/api/community/admin/broadcasts', { token: dev.token })).status, 403)
+
+  // validasi
+  assert.equal((await send(owner.token, { title: '', body: 'isi' })).status, 400)
+  assert.equal((await send(owner.token, { title: 'Judul', body: '' })).status, 400)
+  assert.equal((await send(owner.token, { title: 'x'.repeat(61), body: 'isi' })).status, 400)
+  assert.equal((await send(owner.token, { title: 'Judul', body: 'x'.repeat(201) })).status, 400)
+  assert.equal((await send(owner.token, { title: 'Judul', body: 'isi', source: 'mock' })).status, 400) // slug wajib ikut
+  assert.equal((await send(owner.token, { title: 'Judul', body: 'isi', source: 'tidak-ada', slug: 'a' })).status, 400)
+  assert.equal((await send(owner.token, { title: 'Judul', body: 'isi', source: 'mock', slug: 'a b/c' })).status, 400)
+
+  // HP baru: tanpa `after` hanya dapat posisi awal, pengumuman lama tidak dikirim ulang
+  const before = await call('GET', '/api/community/broadcasts')
+  assert.equal(before.status, 200)
+  assert.deepEqual(before.data.items, [])
+  const base = before.data.latestId
+  assert.match(base, /^[0-9a-f]{24}$/)
+
+  const a = await send(owner.token, { title: 'Server maintenance', body: 'Besok pukul 02.00\nselama 30 menit' })
+  assert.equal(a.status, 200, JSON.stringify(a))
+  assert.equal(a.data.broadcast.title, 'Server maintenance')
+  assert.equal(a.data.broadcast.source, '')
+  await new Promise(r => setTimeout(r, 5)) // newId() memakai jam asli; pastikan urutan ID jelas
+  const b = await send(owner.token, { title: 'Chapter baru!', body: 'Solo Leveling sudah update', source: 'mock', slug: 'solo-leveling' })
+  assert.equal(b.status, 200)
+  assert.equal(b.data.broadcast.slug, 'solo-leveling')
+
+  // feed publik (tanpa login): urut lama -> baru, hanya yang lebih baru dari `after`
+  const feedNow = await call('GET', `/api/community/broadcasts?after=${base}`)
+  assert.equal(feedNow.data.items.length, 2)
+  assert.deepEqual(feedNow.data.items.map(i => i.title), ['Server maintenance', 'Chapter baru!'])
+  assert.equal(feedNow.data.items[0].body, 'Besok pukul 02.00\nselama 30 menit')
+  assert.equal(feedNow.data.latestId, b.data.broadcast.id)
+  assert.equal(feedNow.data.items[1].source, 'mock')
+  assert.equal((await call('GET', `/api/community/broadcasts?after=${b.data.broadcast.id}`)).data.items.length, 0)
+  assert.equal((await call('GET', '/api/community/broadcasts?after=bukan-id')).status, 400)
+  assert.equal((await call('GET', '/api/community/broadcasts')).data.latestId, b.data.broadcast.id)
+
+  // riwayat OWNER, terbaru dulu
+  const hist = await call('GET', '/api/community/admin/broadcasts', { token: owner.token })
+  assert.equal(hist.data.items[0].id, b.data.broadcast.id)
+
+  // tarik pengumuman
+  assert.equal((await call('DELETE', `/api/community/admin/broadcasts/${a.data.broadcast.id}`, { token: dev.token })).status, 403)
+  assert.equal((await call('DELETE', `/api/community/admin/broadcasts/${a.data.broadcast.id}`, { token: owner.token })).status, 200)
+  assert.equal((await call('DELETE', `/api/community/admin/broadcasts/${a.data.broadcast.id}`, { token: owner.token })).status, 404)
+  assert.deepEqual((await call('GET', `/api/community/broadcasts?after=${base}`)).data.items.map(i => i.title), ['Chapter baru!'])
+})

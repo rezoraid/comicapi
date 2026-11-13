@@ -8,6 +8,7 @@ import { getProfile, listActivity } from './profile.js'
 import { resolveTarget, listComments, listReplies, createComment, chapterCounts, editComment, removeComment, likeComment, reportComment } from './comments.js'
 import { deleteAccount } from './account.js'
 import { saveProgress, trackReadingTime } from './reading.js'
+import { createBroadcast, feed, listBroadcasts, removeBroadcast } from './broadcasts.js'
 import { listReports, resolveReport, findUser, userDetail, grantXp, resetMedia, setRole, setVerified, setBan, adminStats, listUsers, listAdminComments } from './admin.js'
 
 const P = '/api/community'
@@ -95,6 +96,15 @@ export function registerCommunityRoutes(router, { registry, community }) {
   router.put(`${P}/comments/:id/like`, authed((cm, { params }, user) => likeComment(cm, user, params.id, true)))
   router.delete(`${P}/comments/:id/like`, authed((cm, { params }, user) => likeComment(cm, user, params.id, false)))
   router.post(`${P}/comments/:id/report`, authed((cm, { params, body }, user) => reportComment(cm, user, params.id, body)))
+
+  // Pengumuman → notifikasi di semua HP. Feed publik (tanpa login, tanpa data pribadi); kirim/riwayat/tarik khusus OWNER.
+  router.get(`${P}/broadcasts`, guard((cm, { query }) => feed(cm, query)))
+  router.post(`${P}/admin/broadcasts`, authed(async (cm, { body }, user) => {
+    await hit(cm.limits.write, user._id, 'Terlalu banyak pengumuman')
+    return createBroadcast(cm, user, body, hasSource)
+  }))
+  router.get(`${P}/admin/broadcasts`, authed((cm, { query }, user) => listBroadcasts(cm, user, query)))
+  router.delete(`${P}/admin/broadcasts/:id`, authed((cm, { params }, user) => removeBroadcast(cm, user, params.id)))
 
   router.get(`${P}/admin/reports`, authed((cm, { query }, user) => listReports(cm, user, { status: qstr(query, 'status', 10) || 'open', page: qint(query, 'page', 1, 1, 200), limit: 20 })))
   router.post(`${P}/admin/reports/:id/resolve`, authed((cm, { params, body }, user) => resolveReport(cm, user, params.id, body.action)))

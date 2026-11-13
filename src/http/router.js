@@ -1,10 +1,19 @@
+const segmentCount = path => {
+  const trimmed = path.length > 1 && path.endsWith('/') ? path.slice(0, -1) : path
+  let n = 0
+  for (let i = 0; i < trimmed.length; i++) if (trimmed.charCodeAt(i) === 47) n++
+  return trimmed === '/' ? 0 : n
+}
+
 export class Router {
-  #routes = []
+  #buckets = new Map()
 
   add(method, path, handler, opts = {}) {
     const keys = []
     const re = new RegExp('^' + path.replace(/:([a-zA-Z]+)/g, (_, k) => (keys.push(k), '([^/]+)')) + '/?$')
-    this.#routes.push({ method, re, keys, handler, ...opts })
+    const bucket = segmentCount(path)
+    if (!this.#buckets.has(bucket)) this.#buckets.set(bucket, [])
+    this.#buckets.get(bucket).push({ method, re, keys, handler, ...opts })
     return this
   }
 
@@ -16,8 +25,10 @@ export class Router {
 
   match(pathname, method = 'GET') {
     const verb = method === 'HEAD' ? 'GET' : method
+    const routes = this.#buckets.get(segmentCount(pathname))
+    if (!routes) return null
     const allowed = new Set()
-    for (const route of this.#routes) {
+    for (const route of routes) {
       const m = route.re.exec(pathname)
       if (!m) continue
       if (route.method !== verb) {

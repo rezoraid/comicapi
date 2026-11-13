@@ -10,9 +10,6 @@ export const chaptersRead = async (ctx, userId) => {
 
 export const forgetChaptersRead = (ctx, userId) => ctx.stats?.chaptersRead.delete(userId)
 
-export const chaptersReadByComic = (ctx, userId, source, slug) =>
-  ctx.c.chapterReads.countDocuments({ userId, source, slug, counted: true })
-
 // Satu aggregate untuk banyak komik sekaligus (menggantikan satu COUNT per baris riwayat). Hasil: Map "source:slug" → jumlah.
 export async function chaptersReadByComics(ctx, userId, rows) {
   const out = new Map()

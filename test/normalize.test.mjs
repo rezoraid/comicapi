@@ -38,18 +38,16 @@ test('item dari sumber berbeda punya kolom baku yang sama', () => {
   const lumos = normalizeItem({ title: ' Solo  Leveling ', slug: 'solo', type: 'Manhwa', status: 'Ongoing', genres: ['action', 'fantasy'], rating: '8.1', chapters: [{ slug: 'c1', number: '200', timeAgo: '1 hour ago' }] }, 'lumos')
   const shini = normalizeItem({ title: 'Berserk', slug: 'b', type: 'Manga', status: 'completed', rating: 87, genres: ['Action'], views: '1.2M' }, 'shinigami')
   const manta = normalizeItem({ title: 'X', slug: 'x', type: '', status: '', genres: ['Manhwa', 'drama'], author: 'Updating' }, 'manta')
-  const plus = normalizeItem({ title: 'One Piece', slug: '100020', type: 'manga', status: 'ongoing', genres: ['Action'], author: 'Eiichiro Oda' }, 'mangaplus')
   const core = ['title', 'slug', 'url', 'cover', 'type', 'status', 'rating', 'chapterCount', 'genres', 'author', 'views', 'chapters', 'source']
-  for (const it of [lumos, shini, manta, plus]) for (const k of core) assert.ok(k in it, `${it.source} kehilangan ${k}`)
+  for (const it of [lumos, shini, manta]) for (const k of core) assert.ok(k in it, `${it.source} kehilangan ${k}`)
   assert.deepEqual([lumos.title, lumos.type, lumos.status, lumos.genres, lumos.rating, lumos.source], ['Solo Leveling', 'manhwa', 'ongoing', ['Action', 'Fantasy'], 8.1, 'lumos'])
   assert.deepEqual([shini.type, shini.status, shini.rating, shini.views], ['manga', 'completed', 8.7, 1200000])
   assert.deepEqual([manta.type, manta.status, manta.author], ['manhwa', '', ''])
-  assert.deepEqual([plus.type, plus.status, plus.author, plus.rating, plus.views], ['manga', 'ongoing', 'Eiichiro Oda', null, null])
 })
 
 test('detail: kolom baku selalu ada walau sumber tidak punya datanya', () => {
-  const d = normalizeDetail({ title: 'One Piece', slug: '1', status: 'Ongoing', type: 'manga', genres: ['action'], chapters: [{ slug: 'a', number: '1' }, { slug: 'b', number: '2' }], artist: 'N/A', year: 'abc', alt: ['One Piece', 'ワンピース'] }, 'mangaplus')
-  assert.deepEqual([d.artist, d.year, d.rating, d.views, d.totalChapters, d.alt, d.genres, d.status, d.source], ['', '', null, null, 2, ['ワンピース'], ['Action'], 'ongoing', 'mangaplus'])
+  const d = normalizeDetail({ title: 'One Piece', slug: '1', status: 'Ongoing', type: 'manga', genres: ['action'], chapters: [{ slug: 'a', number: '1' }, { slug: 'b', number: '2' }], artist: 'N/A', year: 'abc', alt: ['One Piece', 'ワンピース'] }, 'manta')
+  assert.deepEqual([d.artist, d.year, d.rating, d.views, d.totalChapters, d.alt, d.genres, d.status, d.source], ['', '', null, null, 2, ['ワンピース'], ['Action'], 'ongoing', 'manta'])
   assert.equal(d.chapters[0].timeAgo, '')
   assert.equal(d.chapters[0].releaseDate, null)
 })

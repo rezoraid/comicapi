@@ -116,19 +116,6 @@ Server menjaga daftar Home (`latest?page=1`, `popular`), detail komik teratas, d
 
 Env (semua opsional): `WARM_ENABLED` (default true; `false` untuk mematikan), `WARM_INTERVAL_SEC` (30), `WARM_DETAILS` (6 komik per sumber), `WARM_CHAPTERS` (3 chapter terbaru per sumber), `WARM_SOURCES` (daftar id dipisah koma; kosong = semua sumber).
 
-### MANGA Plus: bahasa benar-benar sesuai pilihan (v12)
-
-Penyebab bug "pilih Indonesia tapi isinya bahasa lain": server MANGA Plus mengelompokkan daftar judul per serial, dan satu grup berisi **varian bahasa** (judul + ID berbeda per bahasa, chapter-nya pun terpisah). Scraper lama hanya membaca varian pertama tiap grup, jadi `?lang=ind` tetap menghasilkan ID/chapter bahasa lain.
-
-| Perubahan | Efek |
-|---|---|
-| Baca semua varian tiap grup + bahasa tiap judul (enum Language protobuf: 0 eng, 1 esp, 2 fra, 3 ind, 4 ptb, 5 rus, 6 tha, 7 deu, 8 vie) | ID judul = ID bahasa yang dipilih |
-| Satu serial = satu judul di search/browse/latest/popular: bahasa terpilih, kalau tidak ada → English | Tidak ada data ganda antar bahasa |
-| `detail` mengembalikan `language` dan `languages: [{code, slug}]` (hanya bahasa yang tersedia) | APK menampilkan pilihan bahasa yang benar-benar ada |
-| Chapter di `detail` disaring: hanya milik ID judul itu | Chapter bahasa lain tidak bisa tercampur |
-
-Tes: `test/mangaplus-lang.test.mjs` (fixture multi-bahasa).
-
 ### Katalog seragam semua sumber (v12)
 
 Semua respons komik (`search`, `latest`, `popular`, `browse`, `comic`, `/api/search`) kini melewati `src/normalize.js` sebelum dikirim, jadi APK menerima bentuk data yang sama dari sumber mana pun.
@@ -144,4 +131,17 @@ Semua respons komik (`search`, `latest`, `popular`, `browse`, `comic`, `/api/sea
 | `chapters[]` | `{ slug, number, title, timeAgo, releaseDate, isNew }` |
 | `source` | selalu ada |
 
-MANGA Plus dilengkapi: status (dari daftar Serializing/Completed/One-shot), nama genre, dan views, juga untuk `latest`, `popular`, dan `detail`. Tes: `test/normalize.test.mjs`.
+Tes: `test/normalize.test.mjs`.
+
+## v13 — stabilitas saat banyak pengguna
+
+| Area | Perubahan |
+|---|---|
+| Koneksi ke situs sumber | Setiap klien scraper kini membatasi jumlah request keluar yang berjalan bersamaan (`UPSTREAM_CONCURRENCY`, default 10 per sumber/mirror). Kelebihan masuk antrean (`UPSTREAM_MAX_QUEUE`, default 200); antrean penuh atau menunggu terlalu lama dijawab `503 BUSY` dengan cepat, dan data lama di cache tetap disajikan (stale-if-error). Mencegah ratusan scrape serentak membanjiri sumber dan memakan memori/socket. |
+| Image proxy | Unduhan gambar ke sumber dibatasi (`IMAGE_CONCURRENCY`, default 128) dengan antrean (`IMAGE_MAX_QUEUE`, default 1024, tunggu maks 15 dtk). Gambar yang ada di cache memori tidak melewati batas ini. Slot selalu dilepas saat respons selesai, putus, atau error; klien yang batal saat mengantre tidak menahan slot. |
+| Redis REST | Circuit breaker: setelah 3 kegagalan beruntun (timeout, 5xx, 429) Redis dilewati 10 dtk, sehingga Redis yang mati tidak lagi menambah hingga 250 ms ke setiap cache miss dan setiap cek rate limit. Entri yang disimpan hanya berisi versi gzip bila ada (sekitar 4–5× lebih kecil); entri lama yang berisi `body` + `gzipped` tetap terbaca. |
+| Router | Rute dikelompokkan per jumlah segmen path, jadi tiap request hanya mencocokkan regex dari kelompoknya, bukan seluruh ±50 rute. Perilaku 404/405/slash akhir tidak berubah. |
+
+Env baru (semua opsional): `UPSTREAM_CONCURRENCY` (10) · `UPSTREAM_MAX_QUEUE` (200) · `IMAGE_CONCURRENCY` (128) · `IMAGE_MAX_QUEUE` (1024)
+
+Dihapus: `scripts/reset-db.mjs` dan perintah `npm run reset-db`. Koneksi MongoDB, indeks, `ensureIndexes`, dan `backfillAvatarFlag` tidak disentuh.

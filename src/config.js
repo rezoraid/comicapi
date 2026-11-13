@@ -33,6 +33,8 @@ export function loadConfig(env = process.env) {
     imageHeaderTimeoutMs: int(env.IMAGE_HEADER_TIMEOUT_MS, 12_000),
     imageBodyIdleMs: int(env.IMAGE_BODY_IDLE_MS, 15_000),
     imageFetchRetries: int(env.IMAGE_FETCH_RETRIES, 1),
+    imageConcurrency: int(env.IMAGE_CONCURRENCY, 128),
+    imageMaxQueue: int(env.IMAGE_MAX_QUEUE, 1024),
     // pemanas cache: daftar utama + detail/chapter teratas dijaga hangat di server (0 detik interval = mati lewat WARM_ENABLED=false)
     warmEnabled: env.WARM_ENABLED !== 'false',
     warmIntervalSec: int(env.WARM_INTERVAL_SEC, 30),
