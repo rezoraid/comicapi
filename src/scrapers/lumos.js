@@ -2,7 +2,7 @@ import * as cheerio from 'cheerio'
 import { createMirrorHttp, relaysFromEnv, trackHost, clean, num, UA } from './utils.js'
 
 const BASES = ['https://03.lumosgg.com', 'https://02.lumosgg.com', 'https://lumoskomik.com']
-const IMG_DEFAULT = { proxyEnabled: false, base: 'https://lms.imgsvr.my.id/file' }
+const IMG_DEFAULT = { proxyEnabled: false, base: 'https://lms.imgsvr.my.id' }
 
 const MIN = 60 * 1000
 const http = createMirrorHttp({ bases: BASES, timeout: 10000, retries: 2, relay: relaysFromEnv('LUMOS_RELAY', 'RELAY_URL') })
@@ -462,7 +462,11 @@ export async function chapter(slug, chapterSlug) {
   }
 }
 
-export const resetCache = () => http.clear()
+export const resetCache = () => {
+  imgCfg = null
+  cfgTriedAt = 0
+  http.clear()
+}
 
 export default {
   id: 'lumos',
