@@ -3,6 +3,7 @@ import { imageProxy } from './image-proxy.js'
 import { playground } from './playground.js'
 import { legalHandler, privacyPage, termsPage } from './legal.js'
 import { normalizeBrowse, normalizeDetail, normalizeList } from './normalize.js'
+import { decorateItems, decorateDetail, pagesOverride, withPages } from './community/catalog.js'
 
 const SLUG = /^[\w.~%-]{1,200}$/
 const CHAPTER = /^[\w.~%-]{1,50}$/
@@ -62,7 +63,7 @@ export function registerRoutes(router, { registry, config, community = null }) {
       const q = str(query, 'q')
       if (!q) throw badRequest('Parameter "q" wajib diisi')
       const { items, failed } = await registry.searchAll(q, { limit: int(query, 'limit', 10, 1, 30) })
-      return { items: normalizeList(items), failed }
+      return { items: await decorateItems(cm(), normalizeList(items)), failed }
     },
     { ttl: 60 }
   )
@@ -75,7 +76,7 @@ export function registerRoutes(router, { registry, config, community = null }) {
       if (!q) throw badRequest('Parameter "q" wajib diisi')
       const p = source(params)
       const items = await call(p, 'search', q, { limit: int(query, 'limit', 10, 1, 30) })
-      return { items: normalizeList(items, p.id) }
+      return { items: await decorateItems(cm(), normalizeList(items, p.id)) }
     },
     { ttl: 60 }
   )
@@ -85,7 +86,7 @@ export function registerRoutes(router, { registry, config, community = null }) {
     async ({ params, query }) => {
       const page = int(query, 'page', 1, 1, 500)
       const p = source(params)
-      return { page, items: normalizeList(await call(p, 'latest', { page }), p.id) }
+      return { page, items: await decorateItems(cm(), normalizeList(await call(p, 'latest', { page }), p.id)) }
     },
     { ttl: 60 }
   )
@@ -99,7 +100,7 @@ export function registerRoutes(router, { registry, config, community = null }) {
         type: str(query, 'type', 20).toLowerCase(),
         limit: int(query, 'limit', 10, 1, 50)
       })
-      return { items: normalizeList(items, p.id) }
+      return { items: await decorateItems(cm(), normalizeList(items, p.id)) }
     },
     { ttl: 300 }
   )
@@ -109,15 +110,18 @@ export function registerRoutes(router, { registry, config, community = null }) {
     async ({ params, query }) => {
       const p = source(params)
       const f = p.filters || {}
-      return normalizeBrowse(await call(p, 'browse', {
+      const type = oneOf(str(query, 'type', 20).toLowerCase(), f.types, 'type')
+      const result = normalizeBrowse(await call(p, 'browse', {
         q: str(query, 'q'),
         genre: str(query, 'genre', 200).split(',').map(s => s.trim().toLowerCase()).filter(Boolean),
-        type: oneOf(str(query, 'type', 20).toLowerCase(), f.types, 'type'),
+        type,
         status: oneOf(str(query, 'status', 20).toLowerCase(), f.statuses, 'status'),
         sort: oneOf(str(query, 'sort', 20).toLowerCase(), f.sorts, 'sort'),
         minChapters: int(query, 'min', 0, 0, 10000) || '',
         page: int(query, 'page', 1, 1, 500)
       }), p.id)
+      if (Array.isArray(result)) return decorateItems(cm(), result, { type })
+      return result && Array.isArray(result.items) ? { ...result, items: await decorateItems(cm(), result.items, { type }) } : result
     },
     { ttl: 120 }
   )
@@ -128,7 +132,7 @@ export function registerRoutes(router, { registry, config, community = null }) {
     '/api/:source/comic/:slug',
     async ({ params }) => {
       const p = source(params)
-      return normalizeDetail(await call(p, 'detail', slugParam(params.slug, 'slug')), p.id)
+      return decorateDetail(cm(), normalizeDetail(await call(p, 'detail', slugParam(params.slug, 'slug')), p.id))
     },
     { ttl: 300 }
   )
@@ -137,13 +141,14 @@ export function registerRoutes(router, { registry, config, community = null }) {
     '/api/:source/chapter/:slug/:chapter',
     async ({ params, warm }) => {
       const p = source(params)
-      const data = await call(p, 'chapter', slugParam(params.slug, 'slug'), slugParam(params.chapter, 'chapter', CHAPTER))
-      // preload chapter berikutnya di background (hanya saat chapter ini baru diambil dari sumber)
-      if (warm && typeof data.next === 'string' && CHAPTER.test(data.next)) {
+      const slug = slugParam(params.slug, 'slug')
+      const chapter = slugParam(params.chapter, 'chapter', CHAPTER)
+      const pages = await pagesOverride(cm(), p.id, slug, chapter)
+      const data = pages ? await call(p, 'chapter', slug, chapter).catch(() => ({ images: [] })) : await call(p, 'chapter', slug, chapter)
+      if (!pages && warm && typeof data.next === 'string' && CHAPTER.test(data.next)) {
         warm(`/api/${p.id}/chapter/${encodeURIComponent(params.slug)}/${encodeURIComponent(data.next)}`)
       }
-      // path relatif: klien (APK) tinggal prefix dengan base URL server
-      return { ...data, proxy: data.images.map(u => `/api/image?url=${encodeURIComponent(u)}`) }
+      return pages ? withPages(data, pages) : { ...data, proxy: data.images.map(u => `/api/image?url=${encodeURIComponent(u)}`) }
     },
     { ttl: 600 }
   )

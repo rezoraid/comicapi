@@ -668,18 +668,17 @@ test('chapter dibaca: butuh waktu nyata, tidak dihitung dobel, XP dibatasi, tida
   assert.equal((await me(a.token)).xp, 80)
 })
 
-test('OWNER: #1, level 99999; pengguna lain tidak bisa mengaku #1', async () => {
+test('OWNER: level 99999; nomor # mengikuti urutan pembuatan akun', async () => {
   const u = await login('own-u', 'ownu@example.com')
   const o = await login('own-o', 'owner@example.com')
   const mo = await me(o.token)
   assert.equal(mo.role, 'OWNER')
   assert.equal(mo.level, 99999)
-  assert.equal(mo.publicNo, 1)
   const mu = await me(u.token)
-  assert.ok(mu.publicNo > 1)
+  assert.ok(mu.publicNo > 0 && mo.publicNo > mu.publicNo)
   assert.ok(mu.level < 100)
   const pub = await getp(`/users/${o.user.id}/profile`, u.token)
-  assert.equal(pub.data.user.publicNo, 1)
+  assert.equal(pub.data.user.publicNo, mo.publicNo)
   assert.equal(pub.data.user.level, 99999)
 })
 

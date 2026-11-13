@@ -145,6 +145,7 @@ Aktif otomatis kalau `MONGODB_URI`, `GOOGLE_CLIENT_ID`, dan `AUTH_SECRET` (min. 
 | `MONGODB_URI`, `MONGODB_DB` | koneksi MongoDB (default db `komikta`); index dibuat otomatis saat start |
 | `GOOGLE_CLIENT_ID` | Web client ID Google (boleh beberapa, pisah koma); dipakai memeriksa `aud` ID token |
 | `AUTH_SECRET` | kunci penanda token sesi |
+| `FCM_SERVICE_ACCOUNT` | JSON akun layanan Firebase (mentah atau base64) untuk push realtime: pengumuman OWNER ke semua HP dan chapter baru ke HP yang membookmark komiknya. Kosong = push mati |
 | `OWNER_EMAILS` | email yang otomatis jadi OWNER saat login (dicabut dari env → turun jadi USER) |
 | `MODERATOR_EMAILS` | email yang otomatis jadi MODERATOR saat login (selama role belum diatur manual oleh OWNER) |
 
@@ -196,3 +197,10 @@ Halaman publik `/privacy` (Kebijakan Privasi) dan `/terms` (Ketentuan) tersedia 
 ## Performa & operasional
 
 Ringkasan optimasi dan variabel env baru: lihat [`OPTIMIZATION.md`](OPTIMIZATION.md).
+
+
+## Push, katalog, dan nomor akun
+- `PUT /api/community/push-token` `{ token, previous? }` dan `POST /api/community/push-token/unregister` `{ token }` (login opsional).
+- Pengumuman OWNER dikirim lewat FCM ke semua token terdaftar. Chapter baru dikirim ke topik `c_<sha1(source|slug)[0..24]>`; APK berlangganan topik komik yang dibookmark.
+- Edit OWNER: `GET/PUT /admin/comics/:source/:slug`, `DELETE .../override`, `GET/PUT/DELETE .../chapters/:chapter/pages`, `POST /admin/media`; gambar tersaji di `GET /media/:id`. Views: `POST /views/comic|chapter`.
+- Nomor `#` akun = urutan pembuatan akun (akun pertama = #1). Akun lama disusun ulang sekali saat start berdasarkan `createdAt`.

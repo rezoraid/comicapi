@@ -7,6 +7,8 @@ import { TtlCache } from './lib/cache.js'
 import { RedisRestCache } from './lib/redis-rest-cache.js'
 import { registerRoutes } from './routes.js'
 import { registerCommunityRoutes } from './community/routes.js'
+import { catalogVersion } from './community/catalog.js'
+import { createChapterAlerts } from './community/push.js'
 
 /** Key cache: path + query yang diurutkan (?a=1&b=2 sama dengan ?b=2&a=1). */
 function cacheKey(url) {
@@ -14,7 +16,7 @@ function cacheKey(url) {
   // when a query value itself contains '&' or '=' characters.
   const params = new URLSearchParams(url.searchParams)
   params.sort()
-  return `${url.pathname}?${params.toString()}`
+  return `${url.pathname}?${params.toString()}#v${catalogVersion.n}`
 }
 
 export function createApp({ registry, config, logger = console, community = null, sharedCache: injectedSharedCache = null }) {
@@ -30,6 +32,11 @@ export function createApp({ registry, config, logger = console, community = null
     token: config.redisRestToken,
     prefix: config.redisKeyPrefix,
     timeoutMs: config.redisTimeoutMs
+  })
+  const cmNow = () => (typeof community === 'function' ? community() : community)
+  const alerts = createChapterAlerts({
+    fcm: { get enabled() { return !!cmNow()?.fcm?.enabled }, send: (...a) => cmNow().fcm.send(...a) },
+    logger
   })
   const router = new Router()
   registerCommunityRoutes(router, { registry, community })
@@ -93,6 +100,7 @@ export function createApp({ registry, config, logger = console, community = null
         const id = encodeURIComponent(s.id)
         try {
           const latest = await warmPath(`/api/${id}/latest?page=1`)
+          await alerts.observe(s.id, latest?.items).catch(() => {})
           const popular = s.features?.includes('popular') === false ? null : await warmPath(`/api/${id}/popular`)
           const slugs = [...new Set([...(latest?.items || []), ...(popular?.items || [])].map(i => i?.slug).filter(x => typeof x === 'string' && x))].slice(0, config.warmDetails ?? 6)
           let chapters = 0

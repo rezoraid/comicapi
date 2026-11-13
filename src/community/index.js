@@ -4,6 +4,8 @@ import { createProgressWriter } from './progress-writer.js'
 import { createTtlMap } from '../lib/ttl-map.js'
 import { createGoogleVerifier } from './google.js'
 import { createTokens } from './tokens.js'
+import { renumberByCreation } from './users.js'
+import { createFcm } from '../lib/fcm.js'
 
 const defaultLimits = {
   commentBurst: { max: 4, windowMs: 30_000 },
@@ -50,6 +52,7 @@ export async function createCommunity(cfg, opts = {}) {
       commentTotal: createTtlMap({ ttlMs: 5_000, now }),
       chapterCounts: createTtlMap({ ttlMs: 15_000, max: 500, now })
     },
+    fcm: opts.fcm || createFcm({ serviceAccount: cfg.fcmServiceAccount, logger }),
     google: createGoogleVerifier({ clientIds: cfg.googleClientIds, fetchJwks, now }),
     tokens: createTokens({ secret: cfg.authSecret, ttlDays: cfg.tokenTtlDays, now }),
     limits: cfgLimits,
@@ -59,5 +62,6 @@ export async function createCommunity(cfg, opts = {}) {
       await conn.close()
     }
   }
+  await renumberByCreation(ctx, logger)
   return ctx
 }
