@@ -59,8 +59,10 @@ export function loadConfig(env = process.env) {
       dbName: env.MONGODB_DB || 'komikta',
       googleClientIds: list(env.GOOGLE_CLIENT_ID),
       authSecret: env.AUTH_SECRET || '',
-      // akun layanan Firebase (JSON mentah atau base64) untuk notifikasi push FCM; kosong = push mati
-      fcmServiceAccount: env.FCM_SERVICE_ACCOUNT || '',
+      // akun layanan Firebase (JSON mentah atau base64) untuk push FCM realtime.
+      // Terima FCM_SERVICE_ACCOUNT atau alias FIREBASE_SERVICE_ACCOUNT (Railway).
+      // Kosong = push mati → notifikasi hanya lewat polling cadangan (~15 menit).
+      fcmServiceAccount: env.FCM_SERVICE_ACCOUNT || env.FIREBASE_SERVICE_ACCOUNT || '',
       ownerEmails: list(env.OWNER_EMAILS).map(s => s.toLowerCase()),
       moderatorEmails: list(env.MODERATOR_EMAILS).map(s => s.toLowerCase()),
       tokenTtlDays: int(env.AUTH_TOKEN_TTL_DAYS, 30),

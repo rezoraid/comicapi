@@ -38,15 +38,46 @@ export function createFcm({ serviceAccount, fetchImpl = fetch, now = Date.now, l
 
   const send = async (target, data, { ttl = 3600 } = {}) => {
     try {
+      // data wajib string; + notification agar sistem langsung tampilkan saat APK di background/killed
+      // (data-only saja sering ditunda OEM / Doze sampai job 15–30 menit)
+      const payload = Object.fromEntries(Object.entries(data || {}).map(([k, v]) => [k, String(v ?? '')]))
+      const title = payload.title || (payload.type === 'chapter' ? (payload.comicTitle || payload.slug || 'Chapter baru') : '')
+      const body =
+        payload.body ||
+        (payload.type === 'chapter'
+          ? (payload.chapter ? `Chapter ${payload.chapter} sudah rilis` : 'Chapter baru sudah rilis')
+          : '')
+      const message = {
+        ...target,
+        data: payload,
+        android: {
+          priority: 'HIGH',
+          ttl: `${ttl}s`,
+          // direct_boot_ok + high priority mempercepat delivery
+          direct_boot_ok: true
+        }
+      }
+      if (title) {
+        message.notification = { title, body: body || title }
+        message.android.notification = {
+          channel_id: payload.type === 'broadcast' ? 'announcements' : 'chapter_updates',
+          priority: 'HIGH',
+          default_sound: true,
+          default_vibrate_timings: true
+        }
+      }
       const res = await fetchImpl(`https://fcm.googleapis.com/v1/projects/${sa.project}/messages:send`, {
         method: 'POST',
         headers: { authorization: `Bearer ${await accessToken()}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ message: { ...target, data: Object.fromEntries(Object.entries(data).map(([k, v]) => [k, String(v ?? '')])), android: { priority: 'HIGH', ttl: `${ttl}s` } } }),
+        body: JSON.stringify({ message }),
         signal: AbortSignal.timeout(8000)
       })
       if (res.ok) return { ok: true }
       const text = await res.text().catch(() => '')
-      const gone = res.status === 404 || (res.status === 400 && /INVALID_ARGUMENT/.test(text) && /registration token/i.test(text)) || /UNREGISTERED/.test(text)
+      const gone =
+        res.status === 404 ||
+        (res.status === 400 && /INVALID_ARGUMENT/.test(text) && /registration token/i.test(text)) ||
+        /UNREGISTERED/.test(text)
       if (!gone) logger.error(`[fcm] kirim gagal ${res.status} ${text.slice(0, 160)}`)
       return { ok: false, gone }
     } catch (err) {
